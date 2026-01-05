@@ -414,6 +414,33 @@ body {
     align-items: center;
     justify-content: center;
     backdrop-filter: blur(5px);
+    transition: border-color 0.3s ease;
+}
+
+#joystick-base.active {
+    border-color: var(--accent-orange);
+    box-shadow: 0 0 15px rgba(255, 107, 53, 0.3);
+}
+
+.joystick-ripple {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+    transform: translate(-50%, -50%) scale(0.5);
+    border: 2px solid var(--accent-orange);
+    opacity: 1;
+    animation: rippleEffect 0.5s ease-out forwards;
+    pointer-events: none;
+}
+
+@keyframes rippleEffect {
+    to {
+        transform: translate(-50%, -50%) scale(1.5);
+        opacity: 0;
+    }
 }
 
 #joystick-knob {

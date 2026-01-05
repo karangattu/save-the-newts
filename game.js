@@ -83,8 +83,121 @@ const Utils = {
     isMobile() {
         return window.matchMedia('(max-width: 768px)').matches ||
             window.matchMedia('(pointer: coarse)').matches;
+    },
+
+    vibrate(pattern) {
+        if (navigator.vibrate) {
+            navigator.vibrate(pattern);
+        }
     }
 };
+
+// ===== WEATHER SYSTEM =====
+class RainDrop {
+    constructor() {
+        this.reset();
+        // Start at random y to fill screen initially
+        this.y = Utils.random(-50, CONFIG.CANVAS_HEIGHT);
+    }
+
+    reset() {
+        this.x = Utils.random(-100, CONFIG.CANVAS_WIDTH + 100);
+        this.y = Utils.random(-50, -10);
+        this.len = Utils.random(10, 20);
+        this.speed = Utils.random(8, 15);
+        this.wind = Utils.random(-1, 2);
+    }
+
+    update() {
+        this.y += this.speed;
+        this.x += this.wind;
+
+        if (this.y > CONFIG.CANVAS_HEIGHT) {
+            this.reset();
+        }
+    }
+
+    draw(ctx) {
+        ctx.strokeStyle = 'rgba(174, 194, 224, 0.5)';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(this.x, this.y);
+        ctx.lineTo(this.x + this.wind, this.y + this.len);
+        ctx.stroke();
+    }
+}
+
+class WeatherSystem {
+    constructor() {
+        this.drops = [];
+        this.intensity = 0; // 0 = Clear, 1 = Heavy Rain
+        this.targetIntensity = 0;
+        this.timer = 0;
+        this.state = 'CLEAR'; // CLEAR, RAINING, STORM
+
+        // Pool of drops
+        for (let i = 0; i < 200; i++) {
+            this.drops.push(new RainDrop());
+        }
+    }
+
+    update() {
+        // State Machine
+        this.timer++;
+        if (this.timer > 1200) { // Change weather every ~20 seconds (shortened for demo)
+            this.timer = 0;
+            if (this.state === 'CLEAR') {
+                if (Math.random() < 0.6) this.changeState('RAINING');
+            } else if (this.state === 'RAINING') {
+                if (Math.random() < 0.4) this.changeState('STORM');
+                else this.changeState('CLEAR');
+            } else {
+                this.changeState('CLEAR');
+            }
+        }
+
+        // Smooth transition
+        if (this.intensity < this.targetIntensity) this.intensity += 0.005;
+        if (this.intensity > this.targetIntensity) this.intensity -= 0.005;
+
+        // Update drops
+        const activeDrops = Math.floor(this.drops.length * this.intensity);
+        for (let i = 0; i < activeDrops; i++) {
+            this.drops[i].update();
+        }
+    }
+
+    changeState(newState) {
+        this.state = newState;
+        console.log(`Weather changing to: ${newState}`);
+
+        switch (newState) {
+            case 'CLEAR':
+                this.targetIntensity = 0;
+                break;
+            case 'RAINING':
+                this.targetIntensity = 0.5;
+                break;
+            case 'STORM':
+                this.targetIntensity = 1.0;
+                break;
+        }
+    }
+
+    draw(ctx) {
+        if (this.intensity <= 0.01) return;
+
+        const activeDrops = Math.floor(this.drops.length * this.intensity);
+
+        ctx.save();
+        // Make rain a bit brighter/glowy
+        ctx.globalCompositeOperation = 'lighter';
+        for (let i = 0; i < activeDrops; i++) {
+            this.drops[i].draw(ctx);
+        }
+        ctx.restore();
+    }
+}
 
 // ===== PARTICLE SYSTEM =====
 class Particle {
@@ -110,10 +223,15 @@ class Particle {
     draw(ctx) {
         const alpha = this.life / this.maxLife;
         ctx.globalAlpha = alpha;
+        ctx.save();
+        ctx.globalCompositeOperation = 'lighter'; // Additive blending for glow
         ctx.fillStyle = this.color;
+
         ctx.beginPath();
         ctx.arc(this.x, this.y, this.size * alpha, 0, Math.PI * 2);
         ctx.fill();
+
+        ctx.restore();
         ctx.globalAlpha = 1;
     }
 }
@@ -799,6 +917,35 @@ class FloatingText {
     }
 }
 
+// ===== SCREEN SHAKE =====
+class ScreenShake {
+    constructor() {
+        this.intensity = 0;
+        this.duration = 0;
+        this.offsetX = 0;
+        this.offsetY = 0;
+    }
+
+    trigger(intensity, duration) {
+        this.intensity = intensity;
+        this.duration = duration;
+    }
+
+    update() {
+        if (this.duration > 0) {
+            this.offsetX = Utils.random(-this.intensity, this.intensity);
+            this.offsetY = Utils.random(-this.intensity, this.intensity);
+
+            // Dampen
+            this.intensity *= 0.9;
+            this.duration--;
+        } else {
+            this.offsetX = 0;
+            this.offsetY = 0;
+        }
+    }
+}
+
 // ===== VIRTUAL JOYSTICK =====
 class VirtualJoystick {
     constructor(game) {
@@ -834,6 +981,19 @@ class VirtualJoystick {
         const rect = this.base.getBoundingClientRect();
         this.startX = rect.left + rect.width / 2;
         this.startY = rect.top + rect.height / 2;
+
+        // Visual Feedback
+        this.base.classList.add('active');
+        this.createRipple(e);
+    }
+
+    createRipple(e) {
+        const ripple = document.createElement('div');
+        ripple.classList.add('joystick-ripple');
+        this.base.appendChild(ripple);
+
+        // Remove after animation
+        setTimeout(() => ripple.remove(), 500);
     }
 
     onMove(e) {
@@ -872,6 +1032,7 @@ class VirtualJoystick {
 
     onEnd(e) {
         this.active = false;
+        this.base.classList.remove('active');
         this.knob.style.transform = 'translate(0, 0)';
         this.game.player.mobileInputX = 0;
         this.game.player.mobileInputY = 0;
@@ -953,7 +1114,11 @@ class Game {
         this.cars = [];
         this.newts = [];
         this.particles = [];
+        this.particles = [];
+        this.particles = [];
         this.floatingTexts = [];
+        this.screenShake = new ScreenShake();
+        this.weather = new WeatherSystem();
 
         // Leaderboard
         this.leaderboard = new Leaderboard();
@@ -1308,6 +1473,9 @@ class Game {
         // Update floating texts
         this.floatingTexts = this.floatingTexts.filter(t => t.update());
 
+        // Update Weather
+        this.weather.update();
+
         // Check game over (no lives left)
         if (this.player.lives <= 0) {
             this.gameOver();
@@ -1356,6 +1524,10 @@ class Game {
                 '#f44336'
             ));
 
+            // Juice
+            this.screenShake.trigger(20, 20);
+            Utils.vibrate([200]); // Heavy vibration
+
             this.updateUI();
         }
     }
@@ -1380,6 +1552,10 @@ class Game {
             '#f44336'
         ));
 
+        // Juice
+        this.screenShake.trigger(5, 10);
+        Utils.vibrate(50); // Light vibration
+
         this.updateUI();
     }
 
@@ -1403,6 +1579,9 @@ class Game {
             `+${points}`,
             '#4caf50'
         ));
+
+        // Juice
+        Utils.vibrate([50, 50, 50]); // Pulse vibration
 
         this.updateUI();
     }
@@ -1471,6 +1650,13 @@ class Game {
     render() {
         const ctx = this.ctx;
 
+        // Apply Screen Shake
+        ctx.save();
+        if (this.screenShake.duration > 0) {
+            this.screenShake.update();
+            ctx.translate(this.screenShake.offsetX, this.screenShake.offsetY);
+        }
+
         // Clear canvas
         ctx.clearRect(0, 0, CONFIG.CANVAS_WIDTH, CONFIG.CANVAS_HEIGHT);
 
@@ -1492,19 +1678,24 @@ class Game {
         // Draw carried newts on top
         this.newts.filter(n => n.isBeingCarried).forEach(n => n.draw(ctx));
 
-        // Draw particles
+        // Apply Atmospheric Lighting (Night Mode)
+        this.drawLighting(ctx);
+
+        // Draw Weather (Rain) - On top of lighting for visibility
+        this.weather.draw(ctx);
+
+        // Draw particles (Post-lighting for distinct glow)
         this.particles.forEach(p => p.draw(ctx));
 
         // Draw floating texts
         this.floatingTexts.forEach(t => t.draw(ctx));
 
-        // Draw zone indicators
-        this.drawZoneIndicators(ctx);
-
         // Draw difficulty indicator (subtle)
         if (this.state === 'playing' && this.difficulty > 1) {
             this.drawDifficultyIndicator(ctx);
         }
+
+        ctx.restore(); // Restore shake
     }
 
     drawBackground(ctx) {
@@ -1627,6 +1818,64 @@ class Game {
         ctx.font = 'bold 16px Outfit';
         ctx.textAlign = 'center';
         ctx.fillText('ALMA BRIDGE ROAD', CONFIG.CANVAS_WIDTH / 2, CONFIG.ROAD_Y - 35);
+
+        // Draw Newt Crossing Sign (Right side)
+        this.drawNewtCrossingSign(ctx, CONFIG.CANVAS_WIDTH - 100, CONFIG.ROAD_Y - 80);
+    }
+
+    drawNewtCrossingSign(ctx, x, y) {
+        ctx.save();
+        ctx.translate(x, y);
+
+        // Pole
+        ctx.fillStyle = '#7f8c8d';
+        ctx.fillRect(-2, 0, 4, 80);
+
+        // Sign (Yellow Diamond)
+        ctx.translate(0, -40);
+        ctx.rotate(Math.PI / 4);
+        ctx.fillStyle = '#f1c40f'; // Warning Yellow
+        ctx.beginPath();
+        ctx.roundRect(-30, -30, 60, 60, 4);
+        ctx.fill();
+
+        // Border
+        ctx.strokeStyle = '#000';
+        ctx.lineWidth = 3;
+        ctx.stroke();
+
+        // Icon (Black Newt Silhouette)
+        ctx.rotate(-Math.PI / 4); // Reset rotation for icon
+        ctx.fillStyle = '#000';
+
+        // Simplified newt shape
+        ctx.beginPath();
+        // Body
+        ctx.ellipse(0, 5, 8, 15, 0, 0, Math.PI * 2);
+        // Head
+        ctx.ellipse(0, -8, 6, 5, 0, 0, Math.PI * 2);
+        // Tail
+        ctx.moveTo(0, 15);
+        ctx.quadraticCurveTo(5, 25, 0, 30);
+        ctx.lineTo(-2, 30);
+        ctx.quadraticCurveTo(3, 25, -2, 15);
+
+        ctx.fill();
+
+        // Legs
+        ctx.strokeStyle = '#000';
+        ctx.lineWidth = 2;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        // Front
+        ctx.moveTo(4, -5); ctx.lineTo(12, -8);
+        ctx.moveTo(-4, -5); ctx.lineTo(-12, -8);
+        // Back
+        ctx.moveTo(4, 10); ctx.lineTo(12, 12);
+        ctx.moveTo(-4, 10); ctx.lineTo(-12, 12);
+        ctx.stroke();
+
+        ctx.restore();
     }
 
     drawZoneIndicators(ctx) {
@@ -1665,6 +1914,85 @@ class Game {
             ctx.fillText(`Speed: ${Math.round(100 + diffPercent)}%`, CONFIG.CANVAS_WIDTH - 130, 20);
         }
     }
+}
+
+drawLighting(ctx) {
+    if (!this.lightCanvas) {
+        this.lightCanvas = document.createElement('canvas');
+        this.lightCanvas.width = CONFIG.CANVAS_WIDTH;
+        this.lightCanvas.height = CONFIG.CANVAS_HEIGHT;
+        this.lightCtx = this.lightCanvas.getContext('2d');
+    }
+
+    // Sync sizes if dynamic
+    if (this.lightCanvas.height !== CONFIG.CANVAS_HEIGHT) {
+        this.lightCanvas.height = CONFIG.CANVAS_HEIGHT;
+    }
+
+    const lCtx = this.lightCtx;
+    lCtx.clearRect(0, 0, CONFIG.CANVAS_WIDTH, CONFIG.CANVAS_HEIGHT);
+
+    // Fill with Darkness
+    lCtx.globalCompositeOperation = 'source-over';
+    lCtx.fillStyle = 'rgba(10, 15, 20, 0.75)'; // High darkness
+    lCtx.fillRect(0, 0, CONFIG.CANVAS_WIDTH, CONFIG.CANVAS_HEIGHT);
+
+    // Cut out lights (Lights become transparent on the mask)
+    lCtx.globalCompositeOperation = 'destination-out';
+
+    // Player Light (Flashlight/Glow)
+    const pGrad = lCtx.createRadialGradient(this.player.x, this.player.y, 10, this.player.x, this.player.y, 120);
+    pGrad.addColorStop(0, 'rgba(255, 255, 255, 1)');
+    pGrad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+    lCtx.fillStyle = pGrad;
+    lCtx.beginPath();
+    lCtx.arc(this.player.x, this.player.y, 120, 0, Math.PI * 2);
+    lCtx.fill();
+
+    // Car Headlights
+    this.cars.forEach(car => {
+        lCtx.save();
+        lCtx.translate(car.x + car.width / 2, car.y + car.height / 2);
+        if (car.direction === -1) lCtx.scale(-1, 1);
+        lCtx.translate(-car.width / 2, -car.height / 2);
+
+        // Beam
+        const beamLength = car.isMotorcycle ? 200 : 300;
+        const beamSpread = car.isMotorcycle ? 30 : 50;
+
+        const grad = lCtx.createLinearGradient(car.width, 0, car.width + beamLength, 0);
+        grad.addColorStop(0, 'rgba(255, 255, 255, 0.9)');
+        grad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+
+        lCtx.fillStyle = grad;
+        lCtx.beginPath();
+        lCtx.moveTo(car.width, car.height / 2);
+        lCtx.lineTo(car.width + beamLength, car.height / 2 - beamSpread);
+        lCtx.lineTo(car.width + beamLength, car.height / 2 + beamSpread);
+        lCtx.fill();
+        lCtx.restore();
+    });
+
+    // Safe Zones (Ambient Glow)
+    // Forest
+    const fGrad = lCtx.createLinearGradient(0, 0, 0, CONFIG.ZONE_HEIGHT);
+    fGrad.addColorStop(0, 'rgba(255, 255, 255, 0.3)');
+    fGrad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+    lCtx.fillStyle = fGrad;
+    lCtx.fillRect(0, 0, CONFIG.CANVAS_WIDTH, CONFIG.ZONE_HEIGHT);
+
+    // Lake
+    const lGrad = lCtx.createLinearGradient(0, CONFIG.CANVAS_HEIGHT - CONFIG.ZONE_HEIGHT, 0, CONFIG.CANVAS_HEIGHT);
+    lGrad.addColorStop(0, 'rgba(255, 255, 255, 0)');
+    lGrad.addColorStop(1, 'rgba(255, 255, 255, 0.3)');
+    lCtx.fillStyle = lGrad;
+    lCtx.fillRect(0, CONFIG.CANVAS_HEIGHT - CONFIG.ZONE_HEIGHT, CONFIG.CANVAS_WIDTH, CONFIG.ZONE_HEIGHT);
+
+    // Draw the Mask onto the main canvas
+    ctx.drawImage(this.lightCanvas, 0, 0);
+
+    ctx.restore();
+}
 }
 
 // ===== INITIALIZE GAME =====
