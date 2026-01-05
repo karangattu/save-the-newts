@@ -49,7 +49,10 @@ const CONFIG = {
         road: '#151515',
         roadLine: '#b08d2f',
         roadEdge: '#333',
-    }
+    },
+
+    // Zones
+    ZONE_HEIGHT: 120, // Height of the safe zones at top/bottom
 };
 
 // ===== UTILITY FUNCTIONS =====
@@ -524,6 +527,7 @@ class Player {
 
         this.mobileInputX = 0;
         this.mobileInputY = 0;
+        this.inputMagnitude = 0;
     }
 
     get bounds() {
@@ -557,8 +561,13 @@ class Player {
             dx /= length;
             dy /= length;
 
-            this.x += dx * this.speed;
-            this.y += dy * this.speed;
+            // Apply analog speed control if using joystick
+            const currentSpeed = this.inputMagnitude > 0
+                ? this.speed * this.inputMagnitude
+                : this.speed;
+
+            this.x += dx * currentSpeed;
+            this.y += dy * currentSpeed;
             this.isMoving = true;
 
             if (dx !== 0) this.direction = dx > 0 ? 1 : -1;
@@ -635,11 +644,11 @@ class Player {
     }
 
     isInForestZone() {
-        return this.y < 120; // Top Zone
+        return this.y < CONFIG.ZONE_HEIGHT; // Top Zone
     }
 
     isInLakeZone() {
-        return this.y > CONFIG.CANVAS_HEIGHT - 120; // Bottom Zone
+        return this.y > CONFIG.CANVAS_HEIGHT - CONFIG.ZONE_HEIGHT; // Bottom Zone
     }
 
     draw(ctx) {
@@ -856,6 +865,9 @@ class VirtualJoystick {
         // Update player input (-1 to 1)
         this.game.player.mobileInputX = dx / this.maxDistance;
         this.game.player.mobileInputY = dy / this.maxDistance;
+
+        // Calculate magnitude (0 to 1) for analog speed control
+        this.game.player.inputMagnitude = Math.min(distance / this.maxDistance, 1.0);
     }
 
     onEnd(e) {
@@ -863,6 +875,7 @@ class VirtualJoystick {
         this.knob.style.transform = 'translate(0, 0)';
         this.game.player.mobileInputX = 0;
         this.game.player.mobileInputY = 0;
+        this.game.player.inputMagnitude = 0;
     }
 }
 
@@ -920,6 +933,9 @@ class Game {
     constructor() {
         this.canvas = document.getElementById('game-canvas');
         this.ctx = this.canvas.getContext('2d');
+
+        // Configure layout for mobile
+        this.configureLayout();
 
         // Handle responsive canvas sizing
         this.setupCanvas();
@@ -989,6 +1005,31 @@ class Game {
         this.canvas.height = CONFIG.CANVAS_HEIGHT;
         this.canvas.style.width = `${CONFIG.CANVAS_WIDTH * scale}px`;
         this.canvas.style.height = `${CONFIG.CANVAS_HEIGHT * scale}px`;
+    }
+
+    configureLayout() {
+        if (!Utils.isMobile()) return;
+
+        const aspect = window.innerHeight / window.innerWidth;
+
+        // Calculate new height to fill more screen space
+        // Base aspect ratio is 0.7 (700/1000)
+        // Mobile screens are usually > 1.7
+
+        // We calculate height based on the fixed width of 1000
+        let newHeight = Math.floor(CONFIG.CANVAS_WIDTH * aspect);
+
+        // Clamp height to reasonable limits
+        // Min 700 (original), Max 1600 (very tall phone)
+        newHeight = Math.max(700, Math.min(newHeight, 1600));
+
+        CONFIG.CANVAS_HEIGHT = newHeight;
+
+        // Center the road vertically
+        CONFIG.ROAD_Y = (CONFIG.CANVAS_HEIGHT - CONFIG.ROAD_HEIGHT) / 2;
+
+        // Increase zone size slightly for taller screens, but keep reasonable
+        CONFIG.ZONE_HEIGHT = Math.max(120, (CONFIG.CANVAS_HEIGHT - CONFIG.ROAD_HEIGHT - 400) / 2);
     }
 
     generateTrees() {
@@ -1468,24 +1509,24 @@ class Game {
 
     drawBackground(ctx) {
         // Forest (Top Zone)
-        const forestGradient = ctx.createLinearGradient(0, 0, 0, 120);
+        const forestGradient = ctx.createLinearGradient(0, 0, 0, CONFIG.ZONE_HEIGHT);
         forestGradient.addColorStop(0, '#0a150a');
         forestGradient.addColorStop(1, '#152515');
         ctx.fillStyle = forestGradient;
-        ctx.fillRect(0, 0, CONFIG.CANVAS_WIDTH, 120);
+        ctx.fillRect(0, 0, CONFIG.CANVAS_WIDTH, CONFIG.ZONE_HEIGHT);
 
         // Draw trees (Top)
         this.trees.forEach(tree => {
-            if (tree.y < 120) // Only draw trees meant for top
+            if (tree.y < CONFIG.ZONE_HEIGHT) // Only draw trees meant for top
                 this.drawTree(ctx, tree.x, tree.y, tree.size, tree.shade);
         });
 
         // Lake (Bottom Zone)
-        const lakeGradient = ctx.createLinearGradient(0, CONFIG.CANVAS_HEIGHT - 120, 0, CONFIG.CANVAS_HEIGHT);
+        const lakeGradient = ctx.createLinearGradient(0, CONFIG.CANVAS_HEIGHT - CONFIG.ZONE_HEIGHT, 0, CONFIG.CANVAS_HEIGHT);
         lakeGradient.addColorStop(0, '#152535');
         lakeGradient.addColorStop(1, '#0a151f');
         ctx.fillStyle = lakeGradient;
-        ctx.fillRect(0, CONFIG.CANVAS_HEIGHT - 120, CONFIG.CANVAS_WIDTH, 120);
+        ctx.fillRect(0, CONFIG.CANVAS_HEIGHT - CONFIG.ZONE_HEIGHT, CONFIG.CANVAS_WIDTH, CONFIG.ZONE_HEIGHT);
 
         // Lake waves (Horizontal waves)
         const time = Date.now() / 1000;
@@ -1510,12 +1551,12 @@ class Game {
         ctx.fillStyle = grassGradient;
 
         // Top grass (Below Forest, Above Road)
-        ctx.fillRect(0, 120, CONFIG.CANVAS_WIDTH, CONFIG.ROAD_Y - 120);
+        ctx.fillRect(0, CONFIG.ZONE_HEIGHT, CONFIG.CANVAS_WIDTH, CONFIG.ROAD_Y - CONFIG.ZONE_HEIGHT);
 
         // Bottom grass (Below Road, Above Lake)
         ctx.fillRect(0, CONFIG.ROAD_Y + CONFIG.ROAD_HEIGHT,
             CONFIG.CANVAS_WIDTH,
-            CONFIG.CANVAS_HEIGHT - (CONFIG.ROAD_Y + CONFIG.ROAD_HEIGHT) - 120);
+            CONFIG.CANVAS_HEIGHT - (CONFIG.ROAD_Y + CONFIG.ROAD_HEIGHT) - CONFIG.ZONE_HEIGHT);
     }
 
     drawTree(ctx, x, y, size, shade) {
@@ -1592,13 +1633,13 @@ class Game {
         // Forest zone (Top)
         if (this.player.isInForestZone()) {
             ctx.fillStyle = 'rgba(76, 175, 80, 0.15)';
-            ctx.fillRect(0, 0, CONFIG.CANVAS_WIDTH, 120);
+            ctx.fillRect(0, 0, CONFIG.CANVAS_WIDTH, CONFIG.ZONE_HEIGHT);
         }
 
         // Lake zone (Bottom)
         if (this.player.isInLakeZone()) {
             ctx.fillStyle = 'rgba(33, 150, 243, 0.15)';
-            ctx.fillRect(0, CONFIG.CANVAS_HEIGHT - 120, CONFIG.CANVAS_WIDTH, 120);
+            ctx.fillRect(0, CONFIG.CANVAS_HEIGHT - CONFIG.ZONE_HEIGHT, CONFIG.CANVAS_WIDTH, CONFIG.ZONE_HEIGHT);
         }
 
         // Zone labels
