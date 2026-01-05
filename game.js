@@ -627,7 +627,10 @@ class Player {
     constructor() {
         this.x = CONFIG.CANVAS_WIDTH / 2;
         this.y = CONFIG.CANVAS_HEIGHT - 100;
-        this.size = CONFIG.PLAYER_SIZE;
+
+        // Dynamic size for mobile
+        this.size = Utils.isMobile() ? CONFIG.PLAYER_SIZE * 1.5 : CONFIG.PLAYER_SIZE;
+
         this.speed = CONFIG.PLAYER_SPEED;
         this.carrying = [];
         this.direction = 1;
@@ -1978,19 +1981,19 @@ class Game {
 
         // Fill with Darkness
         lCtx.globalCompositeOperation = 'source-over';
-        lCtx.fillStyle = 'rgba(10, 15, 20, 0.75)'; // High darkness
+        lCtx.fillStyle = 'rgba(10, 15, 20, 0.3)'; // Reduced darkness (was 0.75)
         lCtx.fillRect(0, 0, CONFIG.CANVAS_WIDTH, CONFIG.CANVAS_HEIGHT);
 
         // Cut out lights (Lights become transparent on the mask)
         lCtx.globalCompositeOperation = 'destination-out';
 
         // Player Light (Flashlight/Glow)
-        const pGrad = lCtx.createRadialGradient(this.player.x, this.player.y, 10, this.player.x, this.player.y, 120);
+        const pGrad = lCtx.createRadialGradient(this.player.x, this.player.y, 10, this.player.x, this.player.y, 160); // Increased radius
         pGrad.addColorStop(0, 'rgba(255, 255, 255, 1)');
         pGrad.addColorStop(1, 'rgba(255, 255, 255, 0)');
         lCtx.fillStyle = pGrad;
         lCtx.beginPath();
-        lCtx.arc(this.player.x, this.player.y, 120, 0, Math.PI * 2);
+        lCtx.arc(this.player.x, this.player.y, 160, 0, Math.PI * 2);
         lCtx.fill();
 
         // Car Headlights
@@ -2019,8 +2022,10 @@ class Game {
 
         // Safe Zones (Ambient Glow)
         // Forest
+        // Safe Zones (Ambient Glow)
+        // Forest
         const fGrad = lCtx.createLinearGradient(0, 0, 0, CONFIG.ZONE_HEIGHT);
-        fGrad.addColorStop(0, 'rgba(255, 255, 255, 0.3)');
+        fGrad.addColorStop(0, 'rgba(255, 255, 255, 0.5)'); // Slightly brighter ambient
         fGrad.addColorStop(1, 'rgba(255, 255, 255, 0)');
         lCtx.fillStyle = fGrad;
         lCtx.fillRect(0, 0, CONFIG.CANVAS_WIDTH, CONFIG.ZONE_HEIGHT);
@@ -2028,7 +2033,7 @@ class Game {
         // Lake
         const lGrad = lCtx.createLinearGradient(0, CONFIG.CANVAS_HEIGHT - CONFIG.ZONE_HEIGHT, 0, CONFIG.CANVAS_HEIGHT);
         lGrad.addColorStop(0, 'rgba(255, 255, 255, 0)');
-        lGrad.addColorStop(1, 'rgba(255, 255, 255, 0.3)');
+        lGrad.addColorStop(1, 'rgba(255, 255, 255, 0.5)'); // Slightly brighter ambient
         lCtx.fillStyle = lGrad;
         lCtx.fillRect(0, CONFIG.CANVAS_HEIGHT - CONFIG.ZONE_HEIGHT, CONFIG.CANVAS_WIDTH, CONFIG.ZONE_HEIGHT);
 
