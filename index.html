@@ -12,117 +12,54 @@
     <link
         href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;600;700&family=Outfit:wght@400;600;700&display=swap"
         rel="stylesheet">
-    <link rel="stylesheet" href="styles.css">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html,
+        body {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #000;
+        }
+
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-family: 'Outfit', sans-serif;
+        }
+
+        #game-container {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        canvas {
+            display: block;
+            max-width: 100%;
+            max-height: 100%;
+        }
+    </style>
 </head>
 
 <body>
-    <div id="game-container">
-        <!-- Start Screen -->
-        <div id="start-screen" class="overlay-screen">
-            <div class="screen-content">
-                <h1>🦎 Save the Newts</h1>
-                <p class="subtitle">Alma Bridge Road</p>
+    <!-- Game Container -->
+    <div id="game-container"></div>
 
-                <div class="project-info">
-                    <p>Did you know? Newts need our help safely crossing the road during migration!</p>
-                    <p>Learn more about the <strong><a href="https://www.bioblitz.club/newts" target="_blank">Newt
-                                Patrol Project</a></strong> and how you can sign up to help with <em>assisted
-                            migration</em>.</p>
-                </div>
+    <!-- Phaser.js Game Engine -->
+    <script src="https://cdn.jsdelivr.net/npm/phaser@3.70.0/dist/phaser.min.js"></script>
 
-                <div class="instructions">
-                    <h3>How to Play</h3>
-                    <ul>
-                        <li>🎮 <span class="desktop-only">Use <kbd>WASD</kbd> or <kbd>Arrow Keys</kbd></span><span
-                                class="mobile-only">Use the joystick</span> to move</li>
-                        <li>🦎 Walk into newts to pick them up (max 2)</li>
-                        <li>🌲 Carry newts to their destination (forest or lake)</li>
-                        <li>🚗 Avoid cars - they can hit YOU too!</li>
-                        <li>❤️ You have 3 lives - be careful!</li>
-                        <li>⭐ Score points for each newt saved</li>
-                    </ul>
-                </div>
+    <!-- Game Script -->
+    <script src="game-phaser.js"></script>
 
-                <div id="leaderboard-preview" class="leaderboard-section">
-                    <h3>Top Savers</h3>
-                    <ul id="leaderboard-list">
-                        <li>Loading...</li>
-                    </ul>
-                </div>
-
-                <button id="start-btn" class="glow-button">Start Game</button>
-            </div>
-        </div>
-
-        <!-- Game Canvas -->
-        <canvas id="game-canvas"></canvas>
-
-        <!-- HUD -->
-        <div id="hud">
-            <div id="lives-container">
-                <span class="label">Lives</span>
-                <div id="lives-display">
-                    <span class="heart">❤️</span>
-                    <span class="heart">❤️</span>
-                    <span class="heart">❤️</span>
-                </div>
-            </div>
-            <div id="score-container">
-                <span class="label">Score</span>
-                <span id="score">0</span>
-            </div>
-            <div id="carrying-container">
-                <span class="label">Carrying</span>
-                <div id="carrying-slots">
-                    <div class="slot empty"></div>
-                    <div class="slot empty"></div>
-                </div>
-            </div>
-            <div id="stats-container">
-                <span class="stat">💚 Saved: <span id="saved-count">0</span></span>
-                <span class="stat">💀 Lost: <span id="lost-count">0</span></span>
-            </div>
-        </div>
-
-
-
-        <!-- Game Over Screen -->
-        <div id="game-over-screen" class="overlay-screen hidden">
-            <div class="screen-content">
-                <h1>Game Over</h1>
-                <div class="final-stats">
-                    <p>Final Score: <span id="final-score">0</span></p>
-                    <p>Newts Saved: <span id="final-saved">0</span></p>
-                    <p>Newts Lost: <span id="final-lost">0</span></p>
-                </div>
-
-                <div id="submit-score-section">
-                    <input type="text" id="player-name" placeholder="Enter your name" maxlength="15">
-                    <button id="submit-score-btn" class="glow-button small">Submit Score</button>
-                </div>
-
-                <div class="leaderboard-section">
-                    <h3>Top Savers</h3>
-                    <ul id="game-over-leaderboard-list">
-                        <li>Loading...</li>
-                    </ul>
-                </div>
-
-                <button id="restart-btn" class="glow-button">Play Again</button>
-            </div>
-        </div>
-
-        <!-- Pause Indicator -->
-        <div id="pause-indicator" class="hidden">
-            <span>PAUSED</span>
-            <small>Press P to resume</small>
-        </div>
-
-        <!-- Player Hit Flash -->
-        <div id="hit-flash" class="hidden"></div>
-    </div>
-
-    <script src="game.js"></script>
 </body>
 
 </html>
