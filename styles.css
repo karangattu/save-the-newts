@@ -4,41 +4,41 @@
 
 /* CSS Variables - Color Palette */
 :root {
-    /* Nature Colors */
-    --forest-dark: #1a2f1a;
-    --forest-mid: #2d4a2d;
-    --forest-light: #4a7c4a;
-    --lake-dark: #1a3a4a;
-    --lake-mid: #2d5a7a;
-    --lake-light: #4a8ab0;
+    /* Nature Colors - Night Mode */
+    --forest-dark: #0a150a;
+    --forest-mid: #152515;
+    --forest-light: #253d25;
+    --lake-dark: #0a151f;
+    --lake-mid: #152535;
+    --lake-light: #253d4d;
 
     /* Road Colors */
-    --road-dark: #2a2a2a;
-    --road-mid: #3a3a3a;
-    --road-line: #f0c040;
+    --road-dark: #151515;
+    --road-mid: #222222;
+    --road-line: #b08d2f;
 
     /* UI Colors */
     --accent-orange: #ff6b35;
     --accent-yellow: #ffc107;
     --accent-green: #4caf50;
-    --accent-red: #f44336;
+    --accent-red: #ff3333;
     --accent-purple: #9c27b0;
 
     /* Newt Colors */
-    --newt-body: #ff7f50;
+    --newt-body: #d2691e;
     --newt-spots: #8b4513;
 
     /* Glass Effect */
-    --glass-bg: rgba(0, 0, 0, 0.6);
-    --glass-border: rgba(255, 255, 255, 0.1);
+    --glass-bg: rgba(0, 0, 0, 0.7);
+    --glass-border: rgba(255, 255, 255, 0.08);
 
     /* Fonts */
     --font-display: 'Fredoka', sans-serif;
     --font-body: 'Outfit', sans-serif;
 
     /* Shadows */
-    --shadow-glow: 0 0 20px rgba(255, 107, 53, 0.5);
-    --shadow-soft: 0 4px 20px rgba(0, 0, 0, 0.3);
+    --shadow-glow: 0 0 20px rgba(255, 107, 53, 0.4);
+    --shadow-soft: 0 4px 20px rgba(0, 0, 0, 0.5);
 }
 
 /* Reset & Base */

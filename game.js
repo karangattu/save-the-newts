@@ -10,8 +10,8 @@ const CONFIG = {
     CANVAS_HEIGHT: 700,
 
     // Road
-    ROAD_Y: 250,
-    ROAD_HEIGHT: 200,
+    ROAD_Y: 200,
+    ROAD_HEIGHT: 300,
     LANE_COUNT: 4,
 
     // Player
@@ -44,11 +44,11 @@ const CONFIG = {
 
     // Colors
     COLORS: {
-        forest: ['#1a3d1a', '#2d5a2d', '#3d7a3d'],
-        lake: ['#1a4d6d', '#2d6a8a', '#4d8aaa'],
-        road: '#3a3a3a',
-        roadLine: '#f0c040',
-        roadEdge: '#555',
+        forest: ['#0a150a', '#152515', '#253d25'],
+        lake: ['#0a151f', '#152535', '#253d4d'],
+        road: '#151515',
+        roadLine: '#b08d2f',
+        roadEdge: '#333',
     }
 };
 
@@ -163,8 +163,24 @@ class Car {
         }
         ctx.translate(-this.width / 2, -this.height / 2);
 
+        // Headlight beam (Night Mode)
+        ctx.save();
+        ctx.globalCompositeOperation = 'screen';
+        const gradient = ctx.createLinearGradient(this.width, this.height/2, this.width + 150, this.height/2);
+        gradient.addColorStop(0, 'rgba(255, 255, 200, 0.4)');
+        gradient.addColorStop(1, 'rgba(255, 255, 200, 0)');
+        
+        ctx.fillStyle = gradient;
+        ctx.beginPath();
+        ctx.moveTo(this.width - 5, this.height/2 - 5);
+        ctx.lineTo(this.width + 150, this.height/2 - 40);
+        ctx.lineTo(this.width + 150, this.height/2 + 40);
+        ctx.lineTo(this.width - 5, this.height/2 + 5);
+        ctx.fill();
+        ctx.restore();
+
         // Shadow
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
         ctx.fillRect(4, 4, this.width, this.height);
 
         // Car body
@@ -180,15 +196,20 @@ class Car {
         ctx.fill();
 
         // Windows
-        ctx.fillStyle = '#a8d8ea';
+        ctx.fillStyle = '#1a2530'; // Darker windows for night
         ctx.fillRect(20, 4, 18, 16);
         ctx.fillRect(42, 4, 18, 16);
 
-        // Front light
+        // Front light (Headlight source)
         ctx.fillStyle = '#fff9c4';
         ctx.beginPath();
         ctx.arc(this.width - 5, this.height / 2, 5, 0, Math.PI * 2);
         ctx.fill();
+        // Glow
+        ctx.shadowColor = '#fff9c4';
+        ctx.shadowBlur = 10;
+        ctx.fill();
+        ctx.shadowBlur = 0;
 
         // Rear light
         ctx.fillStyle = '#ff5252';
@@ -197,7 +218,7 @@ class Car {
         ctx.fill();
 
         // Wheels
-        ctx.fillStyle = '#2d2d2d';
+        ctx.fillStyle = '#0a0a0a';
         ctx.beginPath();
         ctx.arc(15, this.height, 8, 0, Math.PI * 2);
         ctx.arc(this.width - 15, this.height, 8, 0, Math.PI * 2);
@@ -210,24 +231,26 @@ class Car {
 // ===== NEWT CLASS =====
 class Newt {
     constructor(startSide) {
-        this.startSide = startSide; // 'forest' or 'lake'
-        this.direction = startSide === 'forest' ? 1 : -1;
+        this.startSide = startSide; // 'forest' (TOP) or 'lake' (BOTTOM)
+        this.direction = startSide === 'forest' ? 1 : -1; // 1 = down, -1 = up
         this.size = CONFIG.NEWT_SIZE;
         this.speed = CONFIG.NEWT_SPEED + Utils.random(-0.2, 0.2);
 
-        // Position
+        // Position - Top or Bottom spawning
+        this.x = Utils.random(50, CONFIG.CANVAS_WIDTH - 50);
+        
         if (startSide === 'forest') {
-            this.x = Utils.random(20, 80);
+            this.y = Utils.random(10, CONFIG.ROAD_Y - 20);
         } else {
-            this.x = CONFIG.CANVAS_WIDTH - Utils.random(20, 80);
+            this.y = Utils.random(CONFIG.ROAD_Y + CONFIG.ROAD_HEIGHT + 20, CONFIG.CANVAS_HEIGHT - 10);
         }
-        this.y = Utils.random(CONFIG.ROAD_Y - 20, CONFIG.ROAD_Y + CONFIG.ROAD_HEIGHT + 20);
 
         // State
         this.isBeingCarried = false;
         this.isSquished = false;
         this.squishedTime = 0;
-        this.targetX = this.direction === 1 ? CONFIG.CANVAS_WIDTH - 60 : 60;
+        // Target is just the other side Y coordinate
+        this.targetY = this.direction === 1 ? CONFIG.CANVAS_HEIGHT - 50 : 50;
 
         // Animation
         this.animFrame = 0;
@@ -255,7 +278,7 @@ class Newt {
         }
 
         if (!this.isBeingCarried) {
-            this.x += this.speed * this.direction;
+            this.y += this.speed * this.direction;
             this.wobble += 0.1;
             this.animTimer++;
             if (this.animTimer > 10) {
@@ -267,10 +290,10 @@ class Newt {
     }
 
     reachedDestination() {
-        if (this.direction === 1) {
-            return this.x >= CONFIG.CANVAS_WIDTH - 80;
-        } else {
-            return this.x <= 80;
+        if (this.direction === 1) { // Going Down
+            return this.y >= CONFIG.CANVAS_HEIGHT - 80;
+        } else { // Going Up
+            return this.y <= 80;
         }
     }
 
@@ -286,64 +309,75 @@ class Newt {
 
         ctx.save();
         ctx.translate(this.x, this.y);
-        if (this.direction === -1) {
-            ctx.scale(-1, 1);
+        
+        // Face the direction of movement (Up or Down)
+        if (this.direction === 1) { // Down
+            ctx.rotate(Math.PI / 2);
+        } else { // Up
+            ctx.rotate(-Math.PI / 2);
         }
 
-        // Wobble animation
+        // Wobble animation (side to side relative to movement)
         if (!this.isBeingCarried) {
             ctx.translate(0, Math.sin(this.wobble) * 2);
         }
 
         // Shadow
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
         ctx.beginPath();
-        ctx.ellipse(2, this.size / 2 + 2, this.size / 2, this.size / 4, 0, 0, Math.PI * 2);
+        ctx.ellipse(2, 2, this.size / 2, this.size / 4, 0, 0, Math.PI * 2);
         ctx.fill();
 
-        // Body
-        const gradient = ctx.createRadialGradient(0, 0, 0, 0, 0, this.size / 2);
-        gradient.addColorStop(0, '#ff8c5a');
-        gradient.addColorStop(1, '#ff6b35');
-        ctx.fillStyle = gradient;
+        // California Newt Colors (Taricha torosa)
+        // Dark brown/slate back, orange underside
+        
+        // Body (Back)
+        ctx.fillStyle = '#5d4037'; // Dark Brown/Slate
         ctx.beginPath();
-        ctx.ellipse(0, 0, this.size / 2, this.size / 3, 0, 0, Math.PI * 2);
+        ctx.ellipse(0, 0, this.size / 2, this.size / 3.5, 0, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Underside (peeking out)
+        ctx.fillStyle = '#ff6d00'; // Bright Orange
+        ctx.beginPath();
+        ctx.ellipse(0, 0, this.size / 2.2, this.size / 4, 0, 0, Math.PI * 2);
+        ctx.fill();
+        
+        // Re-draw Back to cover center (rough skin texture)
+        ctx.fillStyle = '#6d4c41'; 
+        ctx.beginPath();
+        ctx.ellipse(0, 0, this.size / 2.2, this.size / 4.5, 0, 0, Math.PI * 2);
         ctx.fill();
 
         // Head
-        ctx.fillStyle = '#ff7043';
+        ctx.fillStyle = '#5d4037';
         ctx.beginPath();
-        ctx.ellipse(this.size / 3, 0, this.size / 4, this.size / 5, 0, 0, Math.PI * 2);
+        ctx.ellipse(this.size / 2.5, 0, this.size / 4.5, this.size / 5, 0, 0, Math.PI * 2);
         ctx.fill();
 
         // Tail
-        ctx.fillStyle = '#ff6b35';
+        ctx.fillStyle = '#5d4037';
         ctx.beginPath();
         ctx.moveTo(-this.size / 2, 0);
-        ctx.quadraticCurveTo(-this.size * 0.8, -3, -this.size * 0.7, 0);
-        ctx.quadraticCurveTo(-this.size * 0.8, 3, -this.size / 2, 0);
+        ctx.quadraticCurveTo(-this.size * 0.9, -2, -this.size * 1.0, 0);
+        ctx.quadraticCurveTo(-this.size * 0.9, 2, -this.size / 2, 0);
         ctx.fill();
 
-        // Spots
-        ctx.fillStyle = '#e64a19';
+        // Eyes (Bulbous)
+        ctx.fillStyle = '#8d6e63'; 
         ctx.beginPath();
-        ctx.arc(-5, -4, 3, 0, Math.PI * 2);
-        ctx.arc(3, 3, 2, 0, Math.PI * 2);
-        ctx.arc(-8, 2, 2.5, 0, Math.PI * 2);
+        ctx.arc(this.size / 2.5, -3, 3, 0, Math.PI * 2);
+        ctx.arc(this.size / 2.5, 3, 3, 0, Math.PI * 2);
         ctx.fill();
-
-        // Eyes
-        ctx.fillStyle = 'white';
-        ctx.beginPath();
-        ctx.arc(this.size / 3, -3, 4, 0, Math.PI * 2);
-        ctx.fill();
+        
         ctx.fillStyle = 'black';
         ctx.beginPath();
-        ctx.arc(this.size / 3 + 1, -3, 2, 0, Math.PI * 2);
+        ctx.arc(this.size / 2.5 + 1, -3, 1.5, 0, Math.PI * 2);
+        ctx.arc(this.size / 2.5 + 1, 3, 1.5, 0, Math.PI * 2);
         ctx.fill();
 
         // Legs (animated)
-        ctx.strokeStyle = '#ff6b35';
+        ctx.strokeStyle = '#ff6d00'; // Orange legs
         ctx.lineWidth = 3;
         ctx.lineCap = 'round';
 
@@ -351,30 +385,19 @@ class Newt {
 
         // Front legs
         ctx.beginPath();
-        ctx.moveTo(5, -6);
-        ctx.lineTo(10 + legOffset, -12);
-        ctx.moveTo(5, 6);
-        ctx.lineTo(10 - legOffset, 12);
+        ctx.moveTo(5, -5);
+        ctx.lineTo(10 + legOffset, -14);
+        ctx.moveTo(5, 5);
+        ctx.lineTo(10 - legOffset, 14);
         ctx.stroke();
 
         // Back legs
         ctx.beginPath();
-        ctx.moveTo(-8, -6);
-        ctx.lineTo(-12 - legOffset, -12);
-        ctx.moveTo(-8, 6);
-        ctx.lineTo(-12 + legOffset, 12);
+        ctx.moveTo(-8, -5);
+        ctx.lineTo(-12 - legOffset, -14);
+        ctx.moveTo(-8, 5);
+        ctx.lineTo(-12 + legOffset, 14);
         ctx.stroke();
-
-        // Direction indicator (small arrow showing where newt wants to go)
-        if (!this.isBeingCarried) {
-            ctx.fillStyle = this.destination === 'lake' ? '#4fc3f7' : '#81c784';
-            ctx.beginPath();
-            ctx.moveTo(this.size / 2 + 8, 0);
-            ctx.lineTo(this.size / 2 + 3, -4);
-            ctx.lineTo(this.size / 2 + 3, 4);
-            ctx.closePath();
-            ctx.fill();
-        }
 
         ctx.restore();
     }
@@ -432,6 +455,9 @@ class Player {
         // Mobile input
         this.mobileInputX = 0;
         this.mobileInputY = 0;
+        
+        // Flashing light timer
+        this.lightTimer = 0;
     }
 
     get bounds() {
@@ -543,11 +569,11 @@ class Player {
     }
 
     isInForestZone() {
-        return this.x < 100;
+        return this.y < 120; // Top Zone
     }
 
     isInLakeZone() {
-        return this.x > CONFIG.CANVAS_WIDTH - 100;
+        return this.y > CONFIG.CANVAS_HEIGHT - 120; // Bottom Zone
     }
 
     draw(ctx) {
@@ -578,28 +604,57 @@ class Player {
         ctx.fillRect(-10 - legSpread, 10, 8, 20);
         ctx.fillRect(2 + legSpread, 10, 8, 20);
 
-        // Body (safety vest)
-        const vestGradient = ctx.createLinearGradient(-15, -10, 15, 10);
-        vestGradient.addColorStop(0, '#ff9800');
-        vestGradient.addColorStop(0.5, '#ffb74d');
-        vestGradient.addColorStop(1, '#ff9800');
+        // Body (Safety Vest - More Prominent)
+        // High visibility lime/orange
+        const vestGradient = ctx.createLinearGradient(-20, -20, 20, 20);
+        vestGradient.addColorStop(0, '#c6ff00'); // Neon Lime
+        vestGradient.addColorStop(0.5, '#ffff00'); // Yellow
+        vestGradient.addColorStop(1, '#c6ff00'); 
+        
         ctx.fillStyle = vestGradient;
         ctx.beginPath();
-        ctx.roundRect(-15, -15, 30, 30, 5);
+        ctx.roundRect(-20, -20, 40, 40, 8); // Bigger vest
         ctx.fill();
 
-        // Reflective stripes on vest
-        ctx.fillStyle = '#c0c0c0';
-        ctx.fillRect(-15, -5, 30, 4);
-        ctx.fillRect(-15, 5, 30, 4);
+        // Reflective stripes on vest (Silver)
+        ctx.fillStyle = '#e0e0e0';
+        // Vertical stripes
+        ctx.fillRect(-12, -20, 6, 40);
+        ctx.fillRect(6, -20, 6, 40);
+        // Horizontal band
+        ctx.fillRect(-20, -5, 40, 8);
+        
+        // Flashing Red Light
+        if (this.lightTimer % 500 < 250) { // Flash every 500ms
+            // Light source
+            ctx.fillStyle = '#ff0000';
+            ctx.beginPath();
+            ctx.arc(10, -10, 5, 0, Math.PI*2);
+            ctx.fill();
+            
+            // Glow
+            ctx.shadowColor = '#ff0000';
+            ctx.shadowBlur = 15;
+            ctx.fillStyle = 'rgba(255, 0, 0, 0.5)';
+            ctx.beginPath();
+            ctx.arc(10, -10, 12, 0, Math.PI*2);
+            ctx.fill();
+            ctx.shadowBlur = 0;
+        } else {
+             // Off state
+            ctx.fillStyle = '#5c0000';
+            ctx.beginPath();
+            ctx.arc(10, -10, 5, 0, Math.PI*2);
+            ctx.fill();
+        }
 
         // Glow effect for vest
-        ctx.shadowColor = '#ff9800';
+        ctx.shadowColor = '#c6ff00';
         ctx.shadowBlur = 10;
-        ctx.strokeStyle = '#ffc107';
-        ctx.lineWidth = 2;
+        ctx.strokeStyle = '#c6ff00';
+        ctx.lineWidth = 1;
         ctx.beginPath();
-        ctx.roundRect(-15, -15, 30, 30, 5);
+        ctx.roundRect(-20, -20, 40, 40, 8);
         ctx.stroke();
         ctx.shadowBlur = 0;
 
@@ -836,12 +891,14 @@ class Game {
 
     generateTrees() {
         const trees = [];
-        for (let i = 0; i < 30; i++) {
+        for (let i = 0; i < 40; i++) {
+            // Generate trees mostly in forest zone (top) but some scattered
+            const isForest = Math.random() < 0.8;
             trees.push({
-                x: Utils.random(10, 90),
-                y: Utils.random(30, CONFIG.CANVAS_HEIGHT - 30),
-                size: Utils.random(15, 35),
-                shade: Utils.random(0.8, 1.2)
+                x: Utils.random(20, CONFIG.CANVAS_WIDTH - 20),
+                y: isForest ? Utils.random(10, 110) : Utils.random(130, 180),
+                size: Utils.random(20, 45),
+                shade: Utils.random(0.5, 0.9) // Darker trees for night
             });
         }
         return trees.sort((a, b) => a.y - b.y);
@@ -1276,63 +1333,55 @@ class Game {
     }
 
     drawBackground(ctx) {
-        // Forest (left side)
-        const forestGradient = ctx.createLinearGradient(0, 0, 120, 0);
-        forestGradient.addColorStop(0, '#1a3d1a');
-        forestGradient.addColorStop(1, '#2d5a2d');
+        // Forest (Top Zone)
+        const forestGradient = ctx.createLinearGradient(0, 0, 0, 120);
+        forestGradient.addColorStop(0, '#0a150a');
+        forestGradient.addColorStop(1, '#152515');
         ctx.fillStyle = forestGradient;
-        ctx.fillRect(0, 0, 120, CONFIG.CANVAS_HEIGHT);
+        ctx.fillRect(0, 0, CONFIG.CANVAS_WIDTH, 120);
 
-        // Draw trees
+        // Draw trees (Top)
         this.trees.forEach(tree => {
-            this.drawTree(ctx, tree.x, tree.y, tree.size, tree.shade);
+            if (tree.y < 120) // Only draw trees meant for top
+                 this.drawTree(ctx, tree.x, tree.y, tree.size, tree.shade);
         });
 
-        // Lake (right side)
-        const lakeGradient = ctx.createLinearGradient(CONFIG.CANVAS_WIDTH - 120, 0, CONFIG.CANVAS_WIDTH, 0);
-        lakeGradient.addColorStop(0, '#2d6a8a');
-        lakeGradient.addColorStop(1, '#1a4d6d');
+        // Lake (Bottom Zone)
+        const lakeGradient = ctx.createLinearGradient(0, CONFIG.CANVAS_HEIGHT - 120, 0, CONFIG.CANVAS_HEIGHT);
+        lakeGradient.addColorStop(0, '#152535');
+        lakeGradient.addColorStop(1, '#0a151f');
         ctx.fillStyle = lakeGradient;
-        ctx.fillRect(CONFIG.CANVAS_WIDTH - 120, 0, 120, CONFIG.CANVAS_HEIGHT);
+        ctx.fillRect(0, CONFIG.CANVAS_HEIGHT - 120, CONFIG.CANVAS_WIDTH, 120);
 
-        // Lake waves
+        // Lake waves (Horizontal waves)
         const time = Date.now() / 1000;
-        ctx.strokeStyle = 'rgba(100, 200, 255, 0.3)';
+        ctx.strokeStyle = 'rgba(100, 200, 255, 0.1)'; // Fainter for night
         ctx.lineWidth = 2;
 
-        this.waves.forEach(wave => {
-            ctx.beginPath();
-            for (let x = CONFIG.CANVAS_WIDTH - 110; x < CONFIG.CANVAS_WIDTH - 10; x += 5) {
-                const y = wave.y + Math.sin((x * 0.05) + time + wave.offset) * wave.amplitude;
-                if (x === CONFIG.CANVAS_WIDTH - 110) {
-                    ctx.moveTo(x, y);
-                } else {
-                    ctx.lineTo(x, y);
-                }
-            }
-            ctx.stroke();
-        });
+        for (let i = 0; i < 3; i++) {
+             const waveY = CONFIG.CANVAS_HEIGHT - 100 + (i * 30);
+             ctx.beginPath();
+             for (let x = 0; x < CONFIG.CANVAS_WIDTH; x+=10) {
+                 const y = waveY + Math.sin((x * 0.02) + time + i) * 5;
+                 if (x === 0) ctx.moveTo(x, y);
+                 else ctx.lineTo(x, y);
+             }
+             ctx.stroke();
+        }
 
-        // Lake lillies
-        ctx.fillStyle = '#4caf50';
-        ctx.beginPath();
-        ctx.ellipse(CONFIG.CANVAS_WIDTH - 80, 150, 12, 8, 0.2, 0, Math.PI * 2);
-        ctx.ellipse(CONFIG.CANVAS_WIDTH - 40, 350, 10, 7, -0.3, 0, Math.PI * 2);
-        ctx.ellipse(CONFIG.CANVAS_WIDTH - 70, 550, 11, 7, 0.1, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Grass areas
+        // Grass areas (Between Road and Zones)
         const grassGradient = ctx.createLinearGradient(0, 0, 0, CONFIG.CANVAS_HEIGHT);
-        grassGradient.addColorStop(0, '#3d7a3d');
-        grassGradient.addColorStop(1, '#2d5a2d');
+        grassGradient.addColorStop(0, '#1a331a');
+        grassGradient.addColorStop(1, '#0f1f0f');
         ctx.fillStyle = grassGradient;
 
-        // Top grass
-        ctx.fillRect(120, 0, CONFIG.CANVAS_WIDTH - 240, CONFIG.ROAD_Y);
-        // Bottom grass
-        ctx.fillRect(120, CONFIG.ROAD_Y + CONFIG.ROAD_HEIGHT,
-            CONFIG.CANVAS_WIDTH - 240,
-            CONFIG.CANVAS_HEIGHT - CONFIG.ROAD_Y - CONFIG.ROAD_HEIGHT);
+        // Top grass (Below Forest, Above Road)
+        ctx.fillRect(0, 120, CONFIG.CANVAS_WIDTH, CONFIG.ROAD_Y - 120);
+        
+        // Bottom grass (Below Road, Above Lake)
+        ctx.fillRect(0, CONFIG.ROAD_Y + CONFIG.ROAD_HEIGHT,
+            CONFIG.CANVAS_WIDTH,
+            CONFIG.CANVAS_HEIGHT - (CONFIG.ROAD_Y + CONFIG.ROAD_HEIGHT) - 120);
     }
 
     drawTree(ctx, x, y, size, shade) {
@@ -1358,20 +1407,20 @@ class Game {
     drawRoad(ctx) {
         // Road base
         ctx.fillStyle = CONFIG.COLORS.road;
-        ctx.fillRect(120, CONFIG.ROAD_Y, CONFIG.CANVAS_WIDTH - 240, CONFIG.ROAD_HEIGHT);
+        ctx.fillRect(0, CONFIG.ROAD_Y, CONFIG.CANVAS_WIDTH, CONFIG.ROAD_HEIGHT);
 
         // Road edges
-        ctx.fillStyle = '#555';
-        ctx.fillRect(120, CONFIG.ROAD_Y, CONFIG.CANVAS_WIDTH - 240, 4);
-        ctx.fillRect(120, CONFIG.ROAD_Y + CONFIG.ROAD_HEIGHT - 4, CONFIG.CANVAS_WIDTH - 240, 4);
+        ctx.fillStyle = '#333';
+        ctx.fillRect(0, CONFIG.ROAD_Y, CONFIG.CANVAS_WIDTH, 4);
+        ctx.fillRect(0, CONFIG.ROAD_Y + CONFIG.ROAD_HEIGHT - 4, CONFIG.CANVAS_WIDTH, 4);
 
         // Center line (dashed)
         ctx.strokeStyle = CONFIG.COLORS.roadLine;
         ctx.lineWidth = 4;
         ctx.setLineDash([30, 20]);
         ctx.beginPath();
-        ctx.moveTo(120, CONFIG.ROAD_Y + CONFIG.ROAD_HEIGHT / 2);
-        ctx.lineTo(CONFIG.CANVAS_WIDTH - 120, CONFIG.ROAD_Y + CONFIG.ROAD_HEIGHT / 2);
+        ctx.moveTo(0, CONFIG.ROAD_Y + CONFIG.ROAD_HEIGHT / 2);
+        ctx.lineTo(CONFIG.CANVAS_WIDTH, CONFIG.ROAD_Y + CONFIG.ROAD_HEIGHT / 2);
         ctx.stroke();
         ctx.setLineDash([]);
 
@@ -1384,8 +1433,8 @@ class Game {
         for (let i = 1; i < CONFIG.LANE_COUNT; i++) {
             if (i === 2) continue; // Skip center line
             ctx.beginPath();
-            ctx.moveTo(120, CONFIG.ROAD_Y + i * laneHeight);
-            ctx.lineTo(CONFIG.CANVAS_WIDTH - 120, CONFIG.ROAD_Y + i * laneHeight);
+            ctx.moveTo(0, CONFIG.ROAD_Y + i * laneHeight);
+            ctx.lineTo(CONFIG.CANVAS_WIDTH, CONFIG.ROAD_Y + i * laneHeight);
             ctx.stroke();
         }
         ctx.setLineDash([]);
@@ -1406,34 +1455,29 @@ class Game {
     }
 
     drawZoneIndicators(ctx) {
-        // Forest zone
+        // Forest zone (Top)
         if (this.player.isInForestZone()) {
-            ctx.fillStyle = 'rgba(76, 175, 80, 0.2)';
-            ctx.fillRect(0, 0, 120, CONFIG.CANVAS_HEIGHT);
+            ctx.fillStyle = 'rgba(76, 175, 80, 0.15)';
+            ctx.fillRect(0, 0, CONFIG.CANVAS_WIDTH, 120);
         }
 
-        // Lake zone  
+        // Lake zone (Bottom)
         if (this.player.isInLakeZone()) {
-            ctx.fillStyle = 'rgba(33, 150, 243, 0.2)';
-            ctx.fillRect(CONFIG.CANVAS_WIDTH - 120, 0, 120, CONFIG.CANVAS_HEIGHT);
+            ctx.fillStyle = 'rgba(33, 150, 243, 0.15)';
+            ctx.fillRect(0, CONFIG.CANVAS_HEIGHT - 120, CONFIG.CANVAS_WIDTH, 120);
         }
 
         // Zone labels
-        ctx.font = 'bold 14px Fredoka';
+        ctx.font = 'bold 20px Fredoka';
         ctx.textAlign = 'center';
 
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
-        ctx.save();
-        ctx.translate(25, CONFIG.CANVAS_HEIGHT / 2);
-        ctx.rotate(-Math.PI / 2);
-        ctx.fillText('🌲 FOREST', 0, 0);
-        ctx.restore();
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
+        
+        // Forest Label
+        ctx.fillText('🌲 FOREST (SAFE)', CONFIG.CANVAS_WIDTH / 2, 40);
 
-        ctx.save();
-        ctx.translate(CONFIG.CANVAS_WIDTH - 25, CONFIG.CANVAS_HEIGHT / 2);
-        ctx.rotate(Math.PI / 2);
-        ctx.fillText('🌊 LAKE', 0, 0);
-        ctx.restore();
+        // Lake Label
+        ctx.fillText('🌊 LAKE (SAFE)', CONFIG.CANVAS_WIDTH / 2, CONFIG.CANVAS_HEIGHT - 40);
     }
 
     drawDifficultyIndicator(ctx) {
