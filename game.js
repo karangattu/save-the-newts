@@ -1911,88 +1911,86 @@ class Game {
             ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
             ctx.font = '12px Outfit';
             ctx.textAlign = 'right';
-            ctx.fillText(`Speed: ${Math.round(100 + diffPercent)}%`, CONFIG.CANVAS_WIDTH - 130, 20);
         }
     }
-}
 
-drawLighting(ctx) {
-    if (!this.lightCanvas) {
-        this.lightCanvas = document.createElement('canvas');
-        this.lightCanvas.width = CONFIG.CANVAS_WIDTH;
-        this.lightCanvas.height = CONFIG.CANVAS_HEIGHT;
-        this.lightCtx = this.lightCanvas.getContext('2d');
-    }
+    drawLighting(ctx) {
+        if (!this.lightCanvas) {
+            this.lightCanvas = document.createElement('canvas');
+            this.lightCanvas.width = CONFIG.CANVAS_WIDTH;
+            this.lightCanvas.height = CONFIG.CANVAS_HEIGHT;
+            this.lightCtx = this.lightCanvas.getContext('2d');
+        }
 
-    // Sync sizes if dynamic
-    if (this.lightCanvas.height !== CONFIG.CANVAS_HEIGHT) {
-        this.lightCanvas.height = CONFIG.CANVAS_HEIGHT;
-    }
+        // Sync sizes if dynamic
+        if (this.lightCanvas.height !== CONFIG.CANVAS_HEIGHT) {
+            this.lightCanvas.height = CONFIG.CANVAS_HEIGHT;
+        }
 
-    const lCtx = this.lightCtx;
-    lCtx.clearRect(0, 0, CONFIG.CANVAS_WIDTH, CONFIG.CANVAS_HEIGHT);
+        const lCtx = this.lightCtx;
+        lCtx.clearRect(0, 0, CONFIG.CANVAS_WIDTH, CONFIG.CANVAS_HEIGHT);
 
-    // Fill with Darkness
-    lCtx.globalCompositeOperation = 'source-over';
-    lCtx.fillStyle = 'rgba(10, 15, 20, 0.75)'; // High darkness
-    lCtx.fillRect(0, 0, CONFIG.CANVAS_WIDTH, CONFIG.CANVAS_HEIGHT);
+        // Fill with Darkness
+        lCtx.globalCompositeOperation = 'source-over';
+        lCtx.fillStyle = 'rgba(10, 15, 20, 0.75)'; // High darkness
+        lCtx.fillRect(0, 0, CONFIG.CANVAS_WIDTH, CONFIG.CANVAS_HEIGHT);
 
-    // Cut out lights (Lights become transparent on the mask)
-    lCtx.globalCompositeOperation = 'destination-out';
+        // Cut out lights (Lights become transparent on the mask)
+        lCtx.globalCompositeOperation = 'destination-out';
 
-    // Player Light (Flashlight/Glow)
-    const pGrad = lCtx.createRadialGradient(this.player.x, this.player.y, 10, this.player.x, this.player.y, 120);
-    pGrad.addColorStop(0, 'rgba(255, 255, 255, 1)');
-    pGrad.addColorStop(1, 'rgba(255, 255, 255, 0)');
-    lCtx.fillStyle = pGrad;
-    lCtx.beginPath();
-    lCtx.arc(this.player.x, this.player.y, 120, 0, Math.PI * 2);
-    lCtx.fill();
-
-    // Car Headlights
-    this.cars.forEach(car => {
-        lCtx.save();
-        lCtx.translate(car.x + car.width / 2, car.y + car.height / 2);
-        if (car.direction === -1) lCtx.scale(-1, 1);
-        lCtx.translate(-car.width / 2, -car.height / 2);
-
-        // Beam
-        const beamLength = car.isMotorcycle ? 200 : 300;
-        const beamSpread = car.isMotorcycle ? 30 : 50;
-
-        const grad = lCtx.createLinearGradient(car.width, 0, car.width + beamLength, 0);
-        grad.addColorStop(0, 'rgba(255, 255, 255, 0.9)');
-        grad.addColorStop(1, 'rgba(255, 255, 255, 0)');
-
-        lCtx.fillStyle = grad;
+        // Player Light (Flashlight/Glow)
+        const pGrad = lCtx.createRadialGradient(this.player.x, this.player.y, 10, this.player.x, this.player.y, 120);
+        pGrad.addColorStop(0, 'rgba(255, 255, 255, 1)');
+        pGrad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+        lCtx.fillStyle = pGrad;
         lCtx.beginPath();
-        lCtx.moveTo(car.width, car.height / 2);
-        lCtx.lineTo(car.width + beamLength, car.height / 2 - beamSpread);
-        lCtx.lineTo(car.width + beamLength, car.height / 2 + beamSpread);
+        lCtx.arc(this.player.x, this.player.y, 120, 0, Math.PI * 2);
         lCtx.fill();
-        lCtx.restore();
-    });
 
-    // Safe Zones (Ambient Glow)
-    // Forest
-    const fGrad = lCtx.createLinearGradient(0, 0, 0, CONFIG.ZONE_HEIGHT);
-    fGrad.addColorStop(0, 'rgba(255, 255, 255, 0.3)');
-    fGrad.addColorStop(1, 'rgba(255, 255, 255, 0)');
-    lCtx.fillStyle = fGrad;
-    lCtx.fillRect(0, 0, CONFIG.CANVAS_WIDTH, CONFIG.ZONE_HEIGHT);
+        // Car Headlights
+        this.cars.forEach(car => {
+            lCtx.save();
+            lCtx.translate(car.x + car.width / 2, car.y + car.height / 2);
+            if (car.direction === -1) lCtx.scale(-1, 1);
+            lCtx.translate(-car.width / 2, -car.height / 2);
 
-    // Lake
-    const lGrad = lCtx.createLinearGradient(0, CONFIG.CANVAS_HEIGHT - CONFIG.ZONE_HEIGHT, 0, CONFIG.CANVAS_HEIGHT);
-    lGrad.addColorStop(0, 'rgba(255, 255, 255, 0)');
-    lGrad.addColorStop(1, 'rgba(255, 255, 255, 0.3)');
-    lCtx.fillStyle = lGrad;
-    lCtx.fillRect(0, CONFIG.CANVAS_HEIGHT - CONFIG.ZONE_HEIGHT, CONFIG.CANVAS_WIDTH, CONFIG.ZONE_HEIGHT);
+            // Beam
+            const beamLength = car.isMotorcycle ? 200 : 300;
+            const beamSpread = car.isMotorcycle ? 30 : 50;
 
-    // Draw the Mask onto the main canvas
-    ctx.drawImage(this.lightCanvas, 0, 0);
+            const grad = lCtx.createLinearGradient(car.width, 0, car.width + beamLength, 0);
+            grad.addColorStop(0, 'rgba(255, 255, 255, 0.9)');
+            grad.addColorStop(1, 'rgba(255, 255, 255, 0)');
 
-    ctx.restore();
-}
+            lCtx.fillStyle = grad;
+            lCtx.beginPath();
+            lCtx.moveTo(car.width, car.height / 2);
+            lCtx.lineTo(car.width + beamLength, car.height / 2 - beamSpread);
+            lCtx.lineTo(car.width + beamLength, car.height / 2 + beamSpread);
+            lCtx.fill();
+            lCtx.restore();
+        });
+
+        // Safe Zones (Ambient Glow)
+        // Forest
+        const fGrad = lCtx.createLinearGradient(0, 0, 0, CONFIG.ZONE_HEIGHT);
+        fGrad.addColorStop(0, 'rgba(255, 255, 255, 0.3)');
+        fGrad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+        lCtx.fillStyle = fGrad;
+        lCtx.fillRect(0, 0, CONFIG.CANVAS_WIDTH, CONFIG.ZONE_HEIGHT);
+
+        // Lake
+        const lGrad = lCtx.createLinearGradient(0, CONFIG.CANVAS_HEIGHT - CONFIG.ZONE_HEIGHT, 0, CONFIG.CANVAS_HEIGHT);
+        lGrad.addColorStop(0, 'rgba(255, 255, 255, 0)');
+        lGrad.addColorStop(1, 'rgba(255, 255, 255, 0.3)');
+        lCtx.fillStyle = lGrad;
+        lCtx.fillRect(0, CONFIG.CANVAS_HEIGHT - CONFIG.ZONE_HEIGHT, CONFIG.CANVAS_WIDTH, CONFIG.ZONE_HEIGHT);
+
+        // Draw the Mask onto the main canvas
+        ctx.drawImage(this.lightCanvas, 0, 0);
+
+        ctx.restore();
+    }
 }
 
 // ===== INITIALIZE GAME =====
