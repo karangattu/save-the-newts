@@ -10,8 +10,8 @@ const CONFIG = {
     CANVAS_HEIGHT: 700,
 
     // Road
-    ROAD_Y: 200,
-    ROAD_HEIGHT: 300,
+    ROAD_Y: 150,
+    ROAD_HEIGHT: 500,
     LANE_COUNT: 4,
 
     // Player
@@ -52,7 +52,7 @@ const CONFIG = {
     },
 
     // Zones
-    ZONE_HEIGHT: 120, // Height of the safe zones at top/bottom
+    ZONE_HEIGHT: 60, // Height of the safe zones at top/bottom
 };
 
 // ===== UTILITY FUNCTIONS =====
@@ -947,96 +947,134 @@ class ScreenShake {
 }
 
 // ===== VIRTUAL JOYSTICK =====
-class VirtualJoystick {
+// ===== TOUCH CONTROLS =====
+class TouchControls {
     constructor(game) {
         this.game = game;
-        this.container = document.getElementById('joystick-container');
-        this.base = document.getElementById('joystick-base');
-        this.knob = document.getElementById('joystick-knob');
-
         this.active = false;
-        this.startX = 0;
-        this.startY = 0;
-        this.maxDistance = 35;
+        this.originX = 0;
+        this.originY = 0;
+        this.currentX = 0;
+        this.currentY = 0;
+        this.maxDistance = 60; // Max drag distance for full speed
+
+        this.joystickBase = null;
+        this.joystickKnob = null;
 
         this.setupEvents();
     }
 
     setupEvents() {
-        // Touch events
-        this.base.addEventListener('touchstart', (e) => this.onStart(e), { passive: false });
-        document.addEventListener('touchmove', (e) => this.onMove(e), { passive: false });
-        document.addEventListener('touchend', (e) => this.onEnd(e), { passive: false });
+        const zone = document.getElementById('game-container'); // Touch anywhere on game container
 
-        // Mouse events (for testing on desktop)
-        this.base.addEventListener('mousedown', (e) => this.onStart(e));
-        document.addEventListener('mousemove', (e) => this.onMove(e));
-        document.addEventListener('mouseup', (e) => this.onEnd(e));
+        zone.addEventListener('touchstart', (e) => this.onStart(e), { passive: false });
+        zone.addEventListener('touchmove', (e) => this.onMove(e), { passive: false });
+        zone.addEventListener('touchend', (e) => this.onEnd(e), { passive: false });
+        zone.addEventListener('touchcancel', (e) => this.onEnd(e), { passive: false });
+    }
+
+    createVisuals(x, y) {
+        // Remove existing if any
+        this.removeVisuals();
+
+        this.joystickBase = document.createElement('div');
+        this.joystickBase.className = 'dynamic-joystick-base';
+        this.joystickBase.style.left = `${x}px`;
+        this.joystickBase.style.top = `${y}px`;
+
+        this.joystickKnob = document.createElement('div');
+        this.joystickKnob.className = 'dynamic-joystick-knob';
+
+        this.joystickBase.appendChild(this.joystickKnob);
+        document.body.appendChild(this.joystickBase);
+    }
+
+    removeVisuals() {
+        if (this.joystickBase) {
+            this.joystickBase.remove();
+            this.joystickBase = null;
+            this.joystickKnob = null;
+        }
     }
 
     onStart(e) {
+        // Don't interfere with buttons
+        if (e.target.tagName === 'BUTTON' || e.target.closest('button')) return;
+
         e.preventDefault();
         this.active = true;
 
-        const rect = this.base.getBoundingClientRect();
-        this.startX = rect.left + rect.width / 2;
-        this.startY = rect.top + rect.height / 2;
+        const touch = e.touches[0];
+        this.originX = touch.clientX;
+        this.originY = touch.clientY;
+        this.currentX = touch.clientX;
+        this.currentY = touch.clientY;
 
-        // Visual Feedback
-        this.base.classList.add('active');
-        this.createRipple(e);
-    }
-
-    createRipple(e) {
-        const ripple = document.createElement('div');
-        ripple.classList.add('joystick-ripple');
-        this.base.appendChild(ripple);
-
-        // Remove after animation
-        setTimeout(() => ripple.remove(), 500);
+        this.createVisuals(this.originX, this.originY);
+        this.updateInput();
     }
 
     onMove(e) {
         if (!this.active) return;
         e.preventDefault();
 
-        let clientX, clientY;
-        if (e.touches) {
-            clientX = e.touches[0].clientX;
-            clientY = e.touches[0].clientY;
-        } else {
-            clientX = e.clientX;
-            clientY = e.clientY;
-        }
+        const touch = e.touches[0];
+        this.currentX = touch.clientX;
+        this.currentY = touch.clientY;
 
-        let dx = clientX - this.startX;
-        let dy = clientY - this.startY;
-
-        // Limit to max distance
-        const distance = Math.sqrt(dx * dx + dy * dy);
-        if (distance > this.maxDistance) {
-            dx = (dx / distance) * this.maxDistance;
-            dy = (dy / distance) * this.maxDistance;
-        }
-
-        // Move knob
-        this.knob.style.transform = `translate(${dx}px, ${dy}px)`;
-
-        // Update player input (-1 to 1)
-        this.game.player.mobileInputX = dx / this.maxDistance;
-        this.game.player.mobileInputY = dy / this.maxDistance;
-
-        // Calculate magnitude (0 to 1) for analog speed control
-        this.game.player.inputMagnitude = Math.min(distance / this.maxDistance, 1.0);
+        this.updateVisuals();
+        this.updateInput();
     }
 
     onEnd(e) {
         this.active = false;
-        this.base.classList.remove('active');
-        this.knob.style.transform = 'translate(0, 0)';
+        this.removeVisuals();
         this.game.player.mobileInputX = 0;
         this.game.player.mobileInputY = 0;
         this.game.player.inputMagnitude = 0;
+    }
+
+    updateVisuals() {
+        if (!this.joystickKnob) return;
+
+        let dx = this.currentX - this.originX;
+        let dy = this.currentY - this.originY;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+
+        if (distance > this.maxDistance) {
+            const ratio = this.maxDistance / distance;
+            dx *= ratio;
+            dy *= ratio;
+        }
+
+        this.joystickKnob.style.transform = `translate(${dx}px, ${dy}px)`;
+    }
+
+    updateInput() {
+        let dx = this.currentX - this.originX;
+        let dy = this.currentY - this.originY;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+
+        // Normalize
+        if (distance > 0) {
+            // Cap at maxDistance for input calculation
+            const inputDist = Math.min(distance, this.maxDistance);
+
+            // Normalized direction vector
+            const normX = dx / distance;
+            const normY = dy / distance;
+
+            // Magnitude 0 to 1 based on drag distance
+            const magnitude = inputDist / this.maxDistance;
+
+            this.game.player.mobileInputX = normX * magnitude;
+            this.game.player.mobileInputY = normY * magnitude;
+            this.game.player.inputMagnitude = magnitude;
+        } else {
+            this.game.player.mobileInputX = 0;
+            this.game.player.mobileInputY = 0;
+            this.game.player.inputMagnitude = 0;
+        }
     }
 }
 
@@ -1145,9 +1183,9 @@ class Game {
         this.setupEventListeners();
         this.setupUI();
 
-        // Mobile joystick
+        // Mobile touch controls
         if (Utils.isMobile()) {
-            this.joystick = new VirtualJoystick(this);
+            this.touchControls = new TouchControls(this);
         }
 
         // Start game loop
@@ -1185,16 +1223,22 @@ class Game {
         let newHeight = Math.floor(CONFIG.CANVAS_WIDTH * aspect);
 
         // Clamp height to reasonable limits
-        // Min 700 (original), Max 1600 (very tall phone)
-        newHeight = Math.max(700, Math.min(newHeight, 1600));
+        // Min 700 (original), Max 2000 (very tall phone)
+        newHeight = Math.max(700, Math.min(newHeight, 2000));
 
         CONFIG.CANVAS_HEIGHT = newHeight;
 
-        // Center the road vertically
-        CONFIG.ROAD_Y = (CONFIG.CANVAS_HEIGHT - CONFIG.ROAD_HEIGHT) / 2;
+        // === WIDE ROAD LAYOUT ===
+        // Minimize forest and lake to just safety zones
+        const minZoneHeight = 80;
 
-        // Increase zone size slightly for taller screens, but keep reasonable
-        CONFIG.ZONE_HEIGHT = Math.max(120, (CONFIG.CANVAS_HEIGHT - CONFIG.ROAD_HEIGHT - 400) / 2);
+        CONFIG.ZONE_HEIGHT = minZoneHeight;
+
+        // Road takes up everything else
+        CONFIG.ROAD_HEIGHT = CONFIG.CANVAS_HEIGHT - (minZoneHeight * 2) - 40; // 40px padding just in case
+
+        // Center the road
+        CONFIG.ROAD_Y = (CONFIG.CANVAS_HEIGHT - CONFIG.ROAD_HEIGHT) / 2;
     }
 
     generateTrees() {
@@ -1326,9 +1370,9 @@ class Game {
         this.carSpawnTimer = 0;
         this.newtSpawnTimer = 0;
 
-        // Re-setup joystick reference
-        if (this.joystick) {
-            this.joystick.game = this;
+        // Re-setup controls reference
+        if (this.touchControls) {
+            this.touchControls.game = this;
         }
 
         this.updateUI();
