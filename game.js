@@ -121,8 +121,18 @@ class Car {
         this.direction = direction; // 1 = right, -1 = left
         this.lane = lane;
         this.speed = speed;
-        this.width = CONFIG.CAR_WIDTH;
-        this.height = CONFIG.CAR_HEIGHT;
+
+        // 30% chance to be a motorcycle
+        this.isMotorcycle = Math.random() < 0.3;
+
+        if (this.isMotorcycle) {
+            this.width = 40;
+            this.height = 25;
+            this.speed = speed * 1.3; // Motorcycles are faster
+        } else {
+            this.width = CONFIG.CAR_WIDTH;
+            this.height = CONFIG.CAR_HEIGHT;
+        }
 
         // Position
         const laneHeight = CONFIG.ROAD_HEIGHT / CONFIG.LANE_COUNT;
@@ -163,66 +173,126 @@ class Car {
         }
         ctx.translate(-this.width / 2, -this.height / 2);
 
-        // Headlight beam (Night Mode)
+        // Headlight beam (Night Mode) - smaller for motorcycles
         ctx.save();
         ctx.globalCompositeOperation = 'screen';
-        const gradient = ctx.createLinearGradient(this.width, this.height/2, this.width + 150, this.height/2);
+        const beamLength = this.isMotorcycle ? 80 : 150;
+        const beamSpread = this.isMotorcycle ? 20 : 40;
+        const gradient = ctx.createLinearGradient(this.width, this.height / 2, this.width + beamLength, this.height / 2);
         gradient.addColorStop(0, 'rgba(255, 255, 200, 0.4)');
         gradient.addColorStop(1, 'rgba(255, 255, 200, 0)');
-        
+
         ctx.fillStyle = gradient;
         ctx.beginPath();
-        ctx.moveTo(this.width - 5, this.height/2 - 5);
-        ctx.lineTo(this.width + 150, this.height/2 - 40);
-        ctx.lineTo(this.width + 150, this.height/2 + 40);
-        ctx.lineTo(this.width - 5, this.height/2 + 5);
+        ctx.moveTo(this.width - 3, this.height / 2 - 3);
+        ctx.lineTo(this.width + beamLength, this.height / 2 - beamSpread);
+        ctx.lineTo(this.width + beamLength, this.height / 2 + beamSpread);
+        ctx.lineTo(this.width - 3, this.height / 2 + 3);
         ctx.fill();
         ctx.restore();
 
         // Shadow
         ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-        ctx.fillRect(4, 4, this.width, this.height);
+        ctx.fillRect(3, 3, this.width, this.height);
 
-        // Car body
-        ctx.fillStyle = this.colorPair[0];
-        ctx.beginPath();
-        ctx.roundRect(0, 8, this.width, this.height - 8, 6);
-        ctx.fill();
+        if (this.isMotorcycle) {
+            // === MOTORCYCLE DRAWING ===
 
-        // Car roof
-        ctx.fillStyle = this.colorPair[1];
-        ctx.beginPath();
-        ctx.roundRect(15, 0, this.width - 35, this.height - 10, 6);
-        ctx.fill();
+            // Motorcycle body (frame)
+            ctx.fillStyle = this.colorPair[0];
+            ctx.beginPath();
+            ctx.ellipse(this.width / 2, this.height / 2 + 2, this.width / 2.5, this.height / 4, 0, 0, Math.PI * 2);
+            ctx.fill();
 
-        // Windows
-        ctx.fillStyle = '#1a2530'; // Darker windows for night
-        ctx.fillRect(20, 4, 18, 16);
-        ctx.fillRect(42, 4, 18, 16);
+            // Seat
+            ctx.fillStyle = '#1a1a1a';
+            ctx.beginPath();
+            ctx.ellipse(this.width / 2.5, this.height / 2 - 2, 10, 5, 0, 0, Math.PI * 2);
+            ctx.fill();
 
-        // Front light (Headlight source)
-        ctx.fillStyle = '#fff9c4';
-        ctx.beginPath();
-        ctx.arc(this.width - 5, this.height / 2, 5, 0, Math.PI * 2);
-        ctx.fill();
-        // Glow
-        ctx.shadowColor = '#fff9c4';
-        ctx.shadowBlur = 10;
-        ctx.fill();
-        ctx.shadowBlur = 0;
+            // Rider body
+            ctx.fillStyle = '#2d2d2d'; // Dark jacket
+            ctx.beginPath();
+            ctx.ellipse(this.width / 2.5, this.height / 2 - 8, 6, 8, 0, 0, Math.PI * 2);
+            ctx.fill();
 
-        // Rear light
-        ctx.fillStyle = '#ff5252';
-        ctx.beginPath();
-        ctx.arc(5, this.height / 2, 4, 0, Math.PI * 2);
-        ctx.fill();
+            // Rider helmet
+            ctx.fillStyle = this.colorPair[1];
+            ctx.beginPath();
+            ctx.arc(this.width / 2.5, this.height / 2 - 16, 6, 0, Math.PI * 2);
+            ctx.fill();
 
-        // Wheels
-        ctx.fillStyle = '#0a0a0a';
-        ctx.beginPath();
-        ctx.arc(15, this.height, 8, 0, Math.PI * 2);
-        ctx.arc(this.width - 15, this.height, 8, 0, Math.PI * 2);
-        ctx.fill();
+            // Front wheel
+            ctx.fillStyle = '#0a0a0a';
+            ctx.beginPath();
+            ctx.arc(this.width - 8, this.height - 2, 8, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Rear wheel
+            ctx.beginPath();
+            ctx.arc(8, this.height - 2, 8, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Headlight
+            ctx.fillStyle = '#fff9c4';
+            ctx.beginPath();
+            ctx.arc(this.width - 3, this.height / 2, 3, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.shadowColor = '#fff9c4';
+            ctx.shadowBlur = 8;
+            ctx.fill();
+            ctx.shadowBlur = 0;
+
+            // Tail light
+            ctx.fillStyle = '#ff5252';
+            ctx.beginPath();
+            ctx.arc(3, this.height / 2, 2, 0, Math.PI * 2);
+            ctx.fill();
+
+        } else {
+            // === CAR DRAWING ===
+
+            // Car body
+            ctx.fillStyle = this.colorPair[0];
+            ctx.beginPath();
+            ctx.roundRect(0, 8, this.width, this.height - 8, 6);
+            ctx.fill();
+
+            // Car roof
+            ctx.fillStyle = this.colorPair[1];
+            ctx.beginPath();
+            ctx.roundRect(15, 0, this.width - 35, this.height - 10, 6);
+            ctx.fill();
+
+            // Windows
+            ctx.fillStyle = '#1a2530'; // Darker windows for night
+            ctx.fillRect(20, 4, 18, 16);
+            ctx.fillRect(42, 4, 18, 16);
+
+            // Front light (Headlight source)
+            ctx.fillStyle = '#fff9c4';
+            ctx.beginPath();
+            ctx.arc(this.width - 5, this.height / 2, 5, 0, Math.PI * 2);
+            ctx.fill();
+            // Glow
+            ctx.shadowColor = '#fff9c4';
+            ctx.shadowBlur = 10;
+            ctx.fill();
+            ctx.shadowBlur = 0;
+
+            // Rear light
+            ctx.fillStyle = '#ff5252';
+            ctx.beginPath();
+            ctx.arc(5, this.height / 2, 4, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Wheels
+            ctx.fillStyle = '#0a0a0a';
+            ctx.beginPath();
+            ctx.arc(15, this.height, 8, 0, Math.PI * 2);
+            ctx.arc(this.width - 15, this.height, 8, 0, Math.PI * 2);
+            ctx.fill();
+        }
 
         ctx.restore();
     }
@@ -238,7 +308,7 @@ class Newt {
 
         // Position - Top or Bottom spawning
         this.x = Utils.random(50, CONFIG.CANVAS_WIDTH - 50);
-        
+
         if (startSide === 'forest') {
             this.y = Utils.random(10, CONFIG.ROAD_Y - 20);
         } else {
@@ -309,7 +379,7 @@ class Newt {
 
         ctx.save();
         ctx.translate(this.x, this.y);
-        
+
         // Face the direction of movement (Up or Down)
         if (this.direction === 1) { // Down
             ctx.rotate(Math.PI / 2);
@@ -330,7 +400,7 @@ class Newt {
 
         // California Newt Colors (Taricha torosa)
         // Dark brown/slate back, orange underside
-        
+
         // Body (Back)
         ctx.fillStyle = '#5d4037'; // Dark Brown/Slate
         ctx.beginPath();
@@ -342,9 +412,9 @@ class Newt {
         ctx.beginPath();
         ctx.ellipse(0, 0, this.size / 2.2, this.size / 4, 0, 0, Math.PI * 2);
         ctx.fill();
-        
+
         // Re-draw Back to cover center (rough skin texture)
-        ctx.fillStyle = '#6d4c41'; 
+        ctx.fillStyle = '#6d4c41';
         ctx.beginPath();
         ctx.ellipse(0, 0, this.size / 2.2, this.size / 4.5, 0, 0, Math.PI * 2);
         ctx.fill();
@@ -364,12 +434,12 @@ class Newt {
         ctx.fill();
 
         // Eyes (Bulbous)
-        ctx.fillStyle = '#8d6e63'; 
+        ctx.fillStyle = '#8d6e63';
         ctx.beginPath();
         ctx.arc(this.size / 2.5, -3, 3, 0, Math.PI * 2);
         ctx.arc(this.size / 2.5, 3, 3, 0, Math.PI * 2);
         ctx.fill();
-        
+
         ctx.fillStyle = 'black';
         ctx.beginPath();
         ctx.arc(this.size / 2.5 + 1, -3, 1.5, 0, Math.PI * 2);
@@ -452,12 +522,8 @@ class Player {
         this.animTimer = 0;
         this.isMoving = false;
 
-        // Mobile input
         this.mobileInputX = 0;
         this.mobileInputY = 0;
-        
-        // Flashing light timer
-        this.lightTimer = 0;
     }
 
     get bounds() {
@@ -609,8 +675,8 @@ class Player {
         const vestGradient = ctx.createLinearGradient(-20, -20, 20, 20);
         vestGradient.addColorStop(0, '#c6ff00'); // Neon Lime
         vestGradient.addColorStop(0.5, '#ffff00'); // Yellow
-        vestGradient.addColorStop(1, '#c6ff00'); 
-        
+        vestGradient.addColorStop(1, '#c6ff00');
+
         ctx.fillStyle = vestGradient;
         ctx.beginPath();
         ctx.roundRect(-20, -20, 40, 40, 8); // Bigger vest
@@ -623,30 +689,8 @@ class Player {
         ctx.fillRect(6, -20, 6, 40);
         // Horizontal band
         ctx.fillRect(-20, -5, 40, 8);
-        
-        // Flashing Red Light
-        if (this.lightTimer % 500 < 250) { // Flash every 500ms
-            // Light source
-            ctx.fillStyle = '#ff0000';
-            ctx.beginPath();
-            ctx.arc(10, -10, 5, 0, Math.PI*2);
-            ctx.fill();
-            
-            // Glow
-            ctx.shadowColor = '#ff0000';
-            ctx.shadowBlur = 15;
-            ctx.fillStyle = 'rgba(255, 0, 0, 0.5)';
-            ctx.beginPath();
-            ctx.arc(10, -10, 12, 0, Math.PI*2);
-            ctx.fill();
-            ctx.shadowBlur = 0;
-        } else {
-             // Off state
-            ctx.fillStyle = '#5c0000';
-            ctx.beginPath();
-            ctx.arc(10, -10, 5, 0, Math.PI*2);
-            ctx.fill();
-        }
+
+
 
         // Glow effect for vest
         ctx.shadowColor = '#c6ff00';
@@ -822,6 +866,55 @@ class VirtualJoystick {
     }
 }
 
+// ===== LEADERBOARD CLASS =====
+class Leaderboard {
+    constructor() {
+        // Mock data for now, would be replaced by Supabase client
+        this.scores = [
+            { name: "NewtSVR", score: 150 },
+            { name: "ForestR", score: 120 },
+            { name: "Amphibian", score: 80 }
+        ];
+    }
+
+    async getScores() {
+        // Simulate API call
+        return new Promise(resolve => {
+            setTimeout(() => resolve(this.scores.sort((a, b) => b.score - a.score).slice(0, 5)), 500);
+        });
+    }
+
+    async submitScore(name, score) {
+        // Simulate submission
+        this.scores.push({ name, score });
+        return new Promise(resolve => setTimeout(resolve, 500));
+    }
+
+    render(elementId) {
+        const list = document.getElementById(elementId);
+        if (!list) return;
+
+        list.innerHTML = '<li>Loading...</li>';
+
+        this.getScores().then(data => {
+            list.innerHTML = '';
+            data.forEach((entry, index) => {
+                const li = document.createElement('li');
+                li.innerHTML = `
+                    <span class="rank">#${index + 1}</span>
+                    <span class="name">${entry.name}</span>
+                    <span class="score">${entry.score}</span>
+                `;
+                list.appendChild(li);
+            });
+
+            if (data.length === 0) {
+                list.innerHTML = '<li>No scores yet. Be the first!</li>';
+            }
+        });
+    }
+}
+
 // ===== MAIN GAME CLASS =====
 class Game {
     constructor() {
@@ -845,6 +938,10 @@ class Game {
         this.newts = [];
         this.particles = [];
         this.floatingTexts = [];
+
+        // Leaderboard
+        this.leaderboard = new Leaderboard();
+        this.leaderboard.render('leaderboard-list');
 
         // Timers
         this.carSpawnTimer = 0;
@@ -877,9 +974,14 @@ class Game {
     }
 
     setupCanvas() {
-        const container = document.getElementById('game-container');
-        const maxWidth = Math.min(window.innerWidth - 20, CONFIG.CANVAS_WIDTH);
-        const maxHeight = Math.min(window.innerHeight - (Utils.isMobile() ? 180 : 100), CONFIG.CANVAS_HEIGHT);
+        const isMobile = Utils.isMobile();
+
+        // On mobile, use almost the full screen
+        const horizontalPadding = isMobile ? 0 : 20;
+        const verticalPadding = isMobile ? 100 : 100; // Reserve space for HUD and joystick
+
+        const maxWidth = window.innerWidth - horizontalPadding;
+        const maxHeight = window.innerHeight - verticalPadding;
 
         const scale = Math.min(maxWidth / CONFIG.CANVAS_WIDTH, maxHeight / CONFIG.CANVAS_HEIGHT);
 
@@ -931,9 +1033,14 @@ class Game {
     setupUI() {
         const startBtn = document.getElementById('start-btn');
         const restartBtn = document.getElementById('restart-btn');
+        const submitBtn = document.getElementById('submit-score-btn');
 
         startBtn.addEventListener('click', () => this.startGame());
         restartBtn.addEventListener('click', () => this.restartGame());
+
+        if (submitBtn) {
+            submitBtn.addEventListener('click', () => this.submitScore());
+        }
 
         // Make buttons work on touch
         startBtn.addEventListener('touchend', (e) => {
@@ -944,6 +1051,23 @@ class Game {
             e.preventDefault();
             this.restartGame();
         });
+    }
+
+    async submitScore() {
+        const nameInput = document.getElementById('player-name');
+        const name = nameInput.value.trim() || 'Anonymous';
+        const submitBtn = document.getElementById('submit-score-btn');
+
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Saving...';
+
+        await this.leaderboard.submitScore(name, this.score);
+
+        // Refresh display
+        this.leaderboard.render('game-over-leaderboard-list');
+
+        // Hide input area after submission
+        document.getElementById('submit-score-section').style.display = 'none';
     }
 
     handleKeyDown(e) {
@@ -1262,6 +1386,16 @@ class Game {
         document.getElementById('final-score').textContent = this.score;
         document.getElementById('final-saved').textContent = this.savedCount;
         document.getElementById('final-lost').textContent = this.lostCount;
+
+        // Reset and show submission form
+        document.getElementById('submit-score-section').style.display = 'flex';
+        document.getElementById('submit-score-btn').disabled = false;
+        document.getElementById('submit-score-btn').textContent = 'Submit Score';
+        document.getElementById('player-name').value = '';
+
+        // Show leaderboard
+        this.leaderboard.render('game-over-leaderboard-list');
+
         document.getElementById('game-over-screen').classList.remove('hidden');
     }
 
@@ -1343,7 +1477,7 @@ class Game {
         // Draw trees (Top)
         this.trees.forEach(tree => {
             if (tree.y < 120) // Only draw trees meant for top
-                 this.drawTree(ctx, tree.x, tree.y, tree.size, tree.shade);
+                this.drawTree(ctx, tree.x, tree.y, tree.size, tree.shade);
         });
 
         // Lake (Bottom Zone)
@@ -1359,14 +1493,14 @@ class Game {
         ctx.lineWidth = 2;
 
         for (let i = 0; i < 3; i++) {
-             const waveY = CONFIG.CANVAS_HEIGHT - 100 + (i * 30);
-             ctx.beginPath();
-             for (let x = 0; x < CONFIG.CANVAS_WIDTH; x+=10) {
-                 const y = waveY + Math.sin((x * 0.02) + time + i) * 5;
-                 if (x === 0) ctx.moveTo(x, y);
-                 else ctx.lineTo(x, y);
-             }
-             ctx.stroke();
+            const waveY = CONFIG.CANVAS_HEIGHT - 100 + (i * 30);
+            ctx.beginPath();
+            for (let x = 0; x < CONFIG.CANVAS_WIDTH; x += 10) {
+                const y = waveY + Math.sin((x * 0.02) + time + i) * 5;
+                if (x === 0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            }
+            ctx.stroke();
         }
 
         // Grass areas (Between Road and Zones)
@@ -1377,7 +1511,7 @@ class Game {
 
         // Top grass (Below Forest, Above Road)
         ctx.fillRect(0, 120, CONFIG.CANVAS_WIDTH, CONFIG.ROAD_Y - 120);
-        
+
         // Bottom grass (Below Road, Above Lake)
         ctx.fillRect(0, CONFIG.ROAD_Y + CONFIG.ROAD_HEIGHT,
             CONFIG.CANVAS_WIDTH,
@@ -1472,7 +1606,7 @@ class Game {
         ctx.textAlign = 'center';
 
         ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
-        
+
         // Forest Label
         ctx.fillText('🌲 FOREST (SAFE)', CONFIG.CANVAS_WIDTH / 2, 40);
 
@@ -1493,6 +1627,11 @@ class Game {
 }
 
 // ===== INITIALIZE GAME =====
+// ===== INITIALIZE GAME =====
 window.addEventListener('DOMContentLoaded', () => {
+    // Preload Assets
+    window.newtImage = new Image();
+    window.newtImage.src = 'assets/newt.png';
+
     new Game();
 });

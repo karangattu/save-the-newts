@@ -22,6 +22,14 @@
             <div class="screen-content">
                 <h1>🦎 Save the Newts</h1>
                 <p class="subtitle">Alma Bridge Road</p>
+
+                <div class="project-info">
+                    <p>Did you know? Newts need our help safely crossing the road during migration!</p>
+                    <p>Learn more about the <strong><a href="https://www.bioblitz.club/newts" target="_blank">Newt
+                                Patrol Project</a></strong> and how you can sign up to help with <em>assisted
+                            migration</em>.</p>
+                </div>
+
                 <div class="instructions">
                     <h3>How to Play</h3>
                     <ul>
@@ -34,6 +42,14 @@
                         <li>⭐ Score points for each newt saved</li>
                     </ul>
                 </div>
+
+                <div id="leaderboard-preview" class="leaderboard-section">
+                    <h3>Top Savers</h3>
+                    <ul id="leaderboard-list">
+                        <li>Loading...</li>
+                    </ul>
+                </div>
+
                 <button id="start-btn" class="glow-button">Start Game</button>
             </div>
         </div>
@@ -58,8 +74,8 @@
             <div id="carrying-container">
                 <span class="label">Carrying</span>
                 <div id="carrying-slots">
-                    <span class="slot empty">🦎</span>
-                    <span class="slot empty">🦎</span>
+                    <div class="slot empty"></div>
+                    <div class="slot empty"></div>
                 </div>
             </div>
             <div id="stats-container">
@@ -86,6 +102,19 @@
                     <p>Newts Saved: <span id="final-saved">0</span></p>
                     <p>Newts Lost: <span id="final-lost">0</span></p>
                 </div>
+
+                <div id="submit-score-section">
+                    <input type="text" id="player-name" placeholder="Enter your name" maxlength="15">
+                    <button id="submit-score-btn" class="glow-button small">Submit Score</button>
+                </div>
+
+                <div class="leaderboard-section">
+                    <h3>Top Savers</h3>
+                    <ul id="game-over-leaderboard-list">
+                        <li>Loading...</li>
+                    </ul>
+                </div>
+
                 <button id="restart-btn" class="glow-button">Play Again</button>
             </div>
         </div>
