@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Save the Newts - Alma Bridge Road</title>
+    <meta name="description"
+        content="Help rescue newts crossing Alma Bridge Road! An addictive arcade game where you save amphibians from traffic.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;600;700&family=Outfit:wght@400;600;700&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+</head>
+
+<body>
+    <div id="game-container">
+        <!-- Start Screen -->
+        <div id="start-screen" class="overlay-screen">
+            <div class="screen-content">
+                <h1>🦎 Save the Newts</h1>
+                <p class="subtitle">Alma Bridge Road</p>
+                <div class="instructions">
+                    <h3>How to Play</h3>
+                    <ul>
+                        <li>🎮 <span class="desktop-only">Use <kbd>WASD</kbd> or <kbd>Arrow Keys</kbd></span><span
+                                class="mobile-only">Use the joystick</span> to move</li>
+                        <li>🦎 Walk into newts to pick them up (max 2)</li>
+                        <li>🌲 Carry newts to their destination (forest or lake)</li>
+                        <li>🚗 Avoid cars - they can hit YOU too!</li>
+                        <li>❤️ You have 3 lives - be careful!</li>
+                        <li>⭐ Score points for each newt saved</li>
+                    </ul>
+                </div>
+                <button id="start-btn" class="glow-button">Start Game</button>
+            </div>
+        </div>
+
+        <!-- Game Canvas -->
+        <canvas id="game-canvas"></canvas>
+
+        <!-- HUD -->
+        <div id="hud">
+            <div id="lives-container">
+                <span class="label">Lives</span>
+                <div id="lives-display">
+                    <span class="heart">❤️</span>
+                    <span class="heart">❤️</span>
+                    <span class="heart">❤️</span>
+                </div>
+            </div>
+            <div id="score-container">
+                <span class="label">Score</span>
+                <span id="score">0</span>
+            </div>
+            <div id="carrying-container">
+                <span class="label">Carrying</span>
+                <div id="carrying-slots">
+                    <span class="slot empty">🦎</span>
+                    <span class="slot empty">🦎</span>
+                </div>
+            </div>
+            <div id="stats-container">
+                <span class="stat">💚 Saved: <span id="saved-count">0</span></span>
+                <span class="stat">💀 Lost: <span id="lost-count">0</span></span>
+            </div>
+        </div>
+
+        <!-- Mobile Controls -->
+        <div id="mobile-controls">
+            <div id="joystick-container">
+                <div id="joystick-base">
+                    <div id="joystick-knob"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Game Over Screen -->
+        <div id="game-over-screen" class="overlay-screen hidden">
+            <div class="screen-content">
+                <h1>Game Over</h1>
+                <div class="final-stats">
+                    <p>Final Score: <span id="final-score">0</span></p>
+                    <p>Newts Saved: <span id="final-saved">0</span></p>
+                    <p>Newts Lost: <span id="final-lost">0</span></p>
+                </div>
+                <button id="restart-btn" class="glow-button">Play Again</button>
+            </div>
+        </div>
+
+        <!-- Pause Indicator -->
+        <div id="pause-indicator" class="hidden">
+            <span>PAUSED</span>
+            <small>Press P to resume</small>
+        </div>
+
+        <!-- Player Hit Flash -->
+        <div id="hit-flash" class="hidden"></div>
+    </div>
+
+    <script src="game.js"></script>
+</body>
+
+</html>
