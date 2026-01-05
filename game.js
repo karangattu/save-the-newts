@@ -1911,9 +1911,11 @@ class Game {
             ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
             ctx.font = '12px Outfit';
             ctx.textAlign = 'right';
+            ctx.fillText(`Speed: ${Math.round(100 + diffPercent)}%`, CONFIG.CANVAS_WIDTH - 130, 20);
         }
     }
 
+    // Atmospheric Lighting
     drawLighting(ctx) {
         if (!this.lightCanvas) {
             this.lightCanvas = document.createElement('canvas');
