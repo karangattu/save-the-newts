@@ -24,30 +24,28 @@ const GAME_CONFIG = {
     CAR_MIN_SPEED: 140,
     CAR_MAX_SPEED: 260,
     CAR_SPAWN_RATE: 1800,
-    CAR_WIDTH: 80,
-    CAR_HEIGHT: 40,
+    CAR_WIDTH: 90,
+    CAR_HEIGHT: 45,
 
     // Newts
     NEWT_SPEED: 42,
     NEWT_SPAWN_RATE: 2400,
-    NEWT_SIZE: 25,
+    newt_size: 60,
 
-    // Neon Arcade Colors
+    // Neon colors for premium vibe
     COLORS: {
         neonPink: '#ff00ff',
         neonCyan: '#00ffff',
-        neonPurple: '#bf00ff',
-        neonBlue: '#0080ff',
         neonGreen: '#00ff80',
         neonYellow: '#ffff00',
         neonOrange: '#ff8000',
-        forest: '#0a2a1a',
-        lake: '#0a1a2a',
-        road: '#0a0a0a',
-        roadLine: '#ffaa00',
+        forest: '#041a0f',
+        lake: '#040d1a',
+        road: '#080808',
+        roadLine: '#ffcc33',
     },
 
-    MIN_ZONE_HEIGHT: 80, // Minimum height for forest/lake zones
+    MIN_ZONE_HEIGHT: 80,
 };
 
 // ===== SPLASH SCENE =====
@@ -57,7 +55,6 @@ class SplashScene extends Phaser.Scene {
     }
 
     preload() {
-        // Use full URLs or absolute-relative paths if needed, but 'assets/...' should work
         this.load.image('poster', 'assets/poster.jpg');
         this.load.image('newt', 'assets/newt.png');
     }
@@ -65,13 +62,14 @@ class SplashScene extends Phaser.Scene {
     create() {
         const { width, height } = this.scale;
 
-        // Ensure we have a valid size
         if (width === 0 || height === 0) {
             this.time.delayedCall(100, () => this.create());
             return;
         }
 
-        // Add poster - centered
+        // Dark background first
+        this.add.rectangle(0, 0, width, height, 0x000000).setOrigin(0);
+
         this.poster = this.add.image(width / 2, height / 2, 'poster');
         this.updatePosterScale();
 
@@ -83,28 +81,31 @@ class SplashScene extends Phaser.Scene {
             ease: 'Power2'
         });
 
-        const startText = this.add.text(width / 2, height - 60, 'TAP TO START', {
+        const startText = this.add.text(width / 2, height - 70, 'TAP TO START', {
             fontFamily: 'Fredoka, Arial',
-            fontSize: '24px',
-            color: '#00ffff',
-            stroke: '#000',
-            strokeThickness: 4
+            fontSize: '28px',
+            color: '#fff',
+            stroke: '#ff00ff',
+            strokeThickness: 2,
+            shadow: { offsetX: 0, offsetY: 0, color: '#ff00ff', blur: 15, fill: true }
         }).setOrigin(0.5);
 
         this.tweens.add({
             targets: startText,
-            alpha: 0.3,
+            scale: 1.1,
+            alpha: 0.6,
             duration: 800,
             yoyo: true,
             repeat: -1
         });
 
-        // Resize handler
         this.scale.on('resize', () => {
             const { width, height } = this.scale;
-            this.poster.setPosition(width / 2, height / 2);
-            this.updatePosterScale();
-            startText.setPosition(width / 2, height - 60);
+            if (this.poster) {
+                this.poster.setPosition(width / 2, height / 2);
+                this.updatePosterScale();
+            }
+            startText.setPosition(width / 2, height - 70);
         });
 
         this.input.once('pointerdown', () => this.startTransition());
@@ -112,13 +113,10 @@ class SplashScene extends Phaser.Scene {
     }
 
     updatePosterScale() {
+        if (!this.poster) return;
         const { width, height } = this.scale;
         const scaleX = width / this.poster.width;
         const scaleY = height / this.poster.height;
-
-        // Fix for "zoomed in": Use 'contain' if it looks weird, but 'cover' is usually desired.
-        // Let's use 'contain' for mobile portrait if the image is too wide, 
-        // but for now let's just use a better Math.min or fixed scale to avoid extreme zooms.
         const scale = Math.max(scaleX, scaleY);
         this.poster.setScale(scale);
     }
@@ -138,52 +136,52 @@ class GameScene extends Phaser.Scene {
     }
 
     create() {
-        // Internal State
+        // State
         this.score = 0;
         this.saved = 0;
         this.lost = 0;
         this.difficulty = 1;
         this.gameOver = false;
+        this.isEnding = false;
         this.paused = false;
 
-        // Initialize Layout
         this.calculateLayout();
 
-        // Environment Groups
+        // Layering Groups
+        this.backgroundGroup = this.add.group();
+        this.roadGroup = this.add.group();
+        this.mainGroup = this.add.group(); // For cars, player, newts
+        this.uiGroup = this.add.group();
+
         this.bgGraphics = this.add.graphics();
         this.roadGraphics = this.add.graphics();
-        this.drawEnvironment();
+        this.backgroundGroup.add(this.bgGraphics);
+        this.roadGroup.add(this.roadGraphics);
 
-        // Labels
+        this.drawEnvironment();
         this.createEnvironmentLabels();
 
-        // Game Groups
-        this.cars = this.add.group();
+        this.cars = this.physics ? this.add.group() : this.add.group();
         this.newts = this.add.group();
 
-        // Player
         this.createPlayer();
-
-        // Weather
         this.createWeather();
-
-        // UI
         this.createHUD();
-
-        // Mobile Controls
         this.createMobileControls();
 
-        // Event: Resize
+        // Global Resize
         this.scale.on('resize', () => {
             this.calculateLayout();
             this.drawEnvironment();
             this.updateLabels();
             this.layoutUI();
-            this.player.x = Phaser.Math.Clamp(this.player.x, 20, this.scale.width - 20);
-            this.player.y = Phaser.Math.Clamp(this.player.y, 20, this.scale.height - 20);
+            if (this.player) {
+                this.player.x = Phaser.Math.Clamp(this.player.x, 20, this.scale.width - 20);
+                this.player.y = Phaser.Math.Clamp(this.player.y, 20, this.scale.height - 20);
+            }
         });
 
-        // Setup Timers
+        // Spawning
         this.carTimer = this.time.addEvent({
             delay: GAME_CONFIG.CAR_SPAWN_RATE,
             callback: this.spawnCar,
@@ -200,168 +198,212 @@ class GameScene extends Phaser.Scene {
 
         this.spawnNewt();
 
-        // Keyboard
+        // Inputs
         this.cursors = this.input.keyboard.createCursorKeys();
         this.wasd = this.input.keyboard.addKeys('W,A,S,D');
 
+        this.physicsInit = true;
         this.cameras.main.fadeIn(500);
     }
 
     calculateLayout() {
         const { width, height } = this.scale;
-
-        // Base road height, but ensure it doesn't eat the whole screen on small height phones
         const availableHeight = height - (GAME_CONFIG.MIN_ZONE_HEIGHT * 2);
         this.roadHeight = Math.min(GAME_CONFIG.BASE_ROAD_HEIGHT, availableHeight);
-
         this.roadY = (height - this.roadHeight) / 2;
         this.laneHeight = this.roadHeight / GAME_CONFIG.LANE_COUNT;
-
         this.forestBoundary = this.roadY;
         this.lakeBoundary = this.roadY + this.roadHeight;
-
-        // Speed scaling relative to standard 1000px width
-        this.speedScale = Math.max(0.6, width / 1000);
+        this.speedScale = Math.max(0.7, width / 1000);
+        this.newtSize = GAME_CONFIG.newt_size * (width < 600 ? 1.4 : 1);
     }
 
     drawEnvironment() {
         const { width, height } = this.scale;
-
-        // Background
         this.bgGraphics.clear();
-        this.bgGraphics.setDepth(-10);
+        this.bgGraphics.setDepth(-20);
 
-        // Forest (Top)
-        this.bgGraphics.fillGradientStyle(0x0a2a1a, 0x0a2a1a, 0x152a20, 0x152a20);
+        // Forest
+        this.bgGraphics.fillGradientStyle(0x041a0f, 0x041a0f, 0x0a2a1a, 0x0a2a1a);
         this.bgGraphics.fillRect(0, 0, width, this.roadY);
 
-        // Forest Ridge
-        this.bgGraphics.fillStyle(0x06150f, 0.9);
-        for (let x = 0; x < width + 60; x += 60) {
-            this.bgGraphics.fillTriangle(x, this.roadY, x + 30, this.roadY - 20, x + 60, this.roadY);
+        // Forest Detail (subtle triangles)
+        this.bgGraphics.fillStyle(0x020d08, 0.8);
+        for (let x = 0; x < width + 100; x += 80) {
+            this.bgGraphics.fillTriangle(x, this.roadY, x + 40, this.roadY - 25, x + 80, this.roadY);
         }
 
-        // Lake (Bottom)
-        this.bgGraphics.fillGradientStyle(0x152535, 0x152535, 0x0a1a2a, 0x0a1a2a);
+        // Lake
+        this.bgGraphics.fillGradientStyle(0x0a1a2a, 0x0a1a2a, 0x040d1a, 0x040d1a);
         this.bgGraphics.fillRect(0, this.lakeBoundary, width, height - this.lakeBoundary);
+
+        // Lake Ripples (subtle lines)
+        this.bgGraphics.lineStyle(2, 0x00ffff, 0.05);
+        for (let y = this.lakeBoundary + 20; y < height; y += 15) {
+            this.bgGraphics.beginPath();
+            this.bgGraphics.moveTo(0, y);
+            this.bgGraphics.lineTo(width, y + Math.sin(y) * 10);
+            this.bgGraphics.strokePath();
+        }
 
         // Road
         this.roadGraphics.clear();
-        this.roadGraphics.setDepth(-5);
-        this.roadGraphics.fillStyle(0x0a0a0a);
+        this.roadGraphics.setDepth(-10);
+        this.roadGraphics.fillStyle(0x080808);
         this.roadGraphics.fillRect(0, this.roadY, width, this.roadHeight);
 
-        // Edges
-        this.roadGraphics.lineStyle(2, 0xff00ff, 0.5);
+        // Cyan Neon Edges
+        this.roadGraphics.lineStyle(3, 0x00ffff, 0.3);
         this.roadGraphics.lineBetween(0, this.roadY, width, this.roadY);
         this.roadGraphics.lineBetween(0, this.lakeBoundary, width, this.lakeBoundary);
 
-        // Lanes
-        for (let i = 1; i < GAME_CONFIG.LANE_COUNT; i++) {
+        // Lane Stickers
+        for (let i = 1; i < GAME_COUNT_LANE_COUNT_CHECK(); i++) {
             const laneY = this.roadY + (i * this.laneHeight);
-            for (let lx = 0; lx < width; lx += 60) {
-                this.roadGraphics.fillStyle(0xffaa00, 0.6);
-                this.roadGraphics.fillRect(lx, laneY - 2, 30, 4);
+            for (let lx = 0; lx < width; lx += 80) {
+                this.roadGraphics.fillStyle(0xffcc33, 0.5);
+                this.roadGraphics.fillRoundedRect(lx, laneY - 2, 40, 4, 2);
             }
         }
+
+        function GAME_COUNT_LANE_COUNT_CHECK() { return GAME_CONFIG.LANE_COUNT; }
     }
 
     createEnvironmentLabels() {
-        this.forestLabel = this.add.text(this.scale.width / 2, this.roadY - 30, 'FOREST (SAFE)', {
-            fontFamily: 'Outfit, Arial', fontSize: '16px', color: '#88ff88'
+        this.forestLabel = this.add.text(this.scale.width / 2, this.roadY - 40, 'SAFE FOREST', {
+            fontFamily: 'Outfit, Arial', fontSize: '18px', color: '#00ff80', fontStyle: 'bold'
         }).setOrigin(0.5).setDepth(-1);
 
-        this.lakeLabel = this.add.text(this.scale.width / 2, this.lakeBoundary + 30, 'LAKE (SAFE)', {
-            fontFamily: 'Outfit, Arial', fontSize: '16px', color: '#88ccff'
+        this.lakeLabel = this.add.text(this.scale.width / 2, this.lakeBoundary + 40, 'SAFE LAKE', {
+            fontFamily: 'Outfit, Arial', fontSize: '18px', color: '#00ffff', fontStyle: 'bold'
         }).setOrigin(0.5).setDepth(-1);
     }
 
     updateLabels() {
-        this.forestLabel.setPosition(this.scale.width / 2, this.roadY - 30);
-        this.lakeLabel.setPosition(this.scale.width / 2, this.lakeBoundary + 30);
+        if (this.forestLabel) this.forestLabel.setPosition(this.scale.width / 2, this.roadY - 40);
+        if (this.lakeLabel) this.lakeLabel.setPosition(this.scale.width / 2, this.lakeBoundary + 40);
     }
 
     createPlayer() {
         this.player = this.add.container(this.scale.width / 2, this.scale.height - 100);
-        this.player.setDepth(10);
+        this.player.setDepth(50);
 
         const g = this.add.graphics();
-        // Drawing a simplified volunteer sprite
-        g.fillStyle(0x000000, 0.3); g.fillEllipse(0, 20, 25, 8); // Shadow
-        g.fillStyle(0x34495e); g.fillRect(-8, 5, 6, 15); g.fillRect(2, 5, 6, 15); // Legs
-        g.fillStyle(0xf1c40f); g.fillRoundedRect(-12, -12, 24, 24, 4); // Vest
-        g.fillStyle(0xfce4d6); g.fillCircle(0, -18, 8); // Head
-        g.fillStyle(0xe74c3c); g.fillEllipse(0, -23, 12, 5); // Hat
+
+        // Shadow
+        g.fillStyle(0x000000, 0.4);
+        g.fillEllipse(0, 20, 28, 10);
+
+        // Character Body (Volunteer)
+        // High-vis vest with detail
+        g.fillStyle(0x333333); // Pants
+        g.fillRect(-10, 5, 8, 16); g.fillRect(2, 5, 8, 16);
+
+        g.fillStyle(0xf1c40f); // High-vis yellow
+        g.fillRoundedRect(-15, -15, 30, 30, 5);
+
+        // Reflective Stripes (Cyan glow)
+        g.fillStyle(0x00ffff, 0.8);
+        g.fillRect(-15, -5, 30, 4);
+        g.fillRect(-15, 5, 30, 4);
+
+        // Head
+        g.fillStyle(0xfce4d6);
+        g.fillCircle(0, -22, 11);
+
+        // Eyes (looking forward)
+        g.fillStyle(0x000000);
+        g.fillCircle(-4, -24, 2);
+        g.fillCircle(4, -24, 2);
+
+        // Red Helmet
+        g.fillStyle(0xe74c3c);
+        g.fillEllipse(0, -30, 16, 8);
 
         this.player.add(g);
+        this.player.graphics = g;
         this.player.speed = GAME_CONFIG.PLAYER_SPEED;
         this.player.size = GAME_CONFIG.PLAYER_SIZE;
         this.player.carrying = [];
         this.player.lives = GAME_CONFIG.PLAYER_LIVES;
         this.player.isInvincible = false;
         this.player.invincibleTimer = 0;
+
+        // Walk animation variables
+        this.walkTimer = 0;
     }
 
     createWeather() {
         this.weatherState = 'CLEAR';
-        this.rainGraphics = this.add.graphics().setDepth(5);
+        this.rainGraphics = this.add.graphics().setDepth(100);
         this.rainDrops = [];
-        for (let i = 0; i < 150; i++) {
+        for (let i = 0; i < 200; i++) {
             this.rainDrops.push({
-                x: Math.random() * 2000,
-                y: Math.random() * 2000,
-                s: 10 + Math.random() * 10
+                x: Math.random() * 1500,
+                y: Math.random() * 1000,
+                s: 12 + Math.random() * 10,
+                len: 15 + Math.random() * 10
             });
         }
     }
 
     createHUD() {
-        const padding = 20;
-        this.livesText = this.add.text(padding, padding, '', { fontSize: '24px' }).setDepth(100);
+        const padding = 25;
+        this.livesText = this.add.text(padding, padding, '', {
+            fontFamily: 'Outfit, Arial', fontSize: '28px'
+        }).setDepth(200);
+
         this.scoreText = this.add.text(this.scale.width - padding, padding, '', {
-            fontFamily: 'Fredoka, Arial', fontSize: '24px', color: '#fff'
-        }).setOrigin(1, 0).setDepth(100);
+            fontFamily: 'Fredoka, Arial', fontSize: '26px', color: '#fff',
+            stroke: '#ff00ff', strokeThickness: 2,
+            shadow: { offsetX: 0, offsetY: 0, color: '#ff00ff', blur: 10, fill: true }
+        }).setOrigin(1, 0).setDepth(200);
 
         this.carryingText = this.add.text(this.scale.width / 2, padding, '', {
-            fontSize: '18px', color: '#ff00ff'
-        }).setOrigin(0.5, 0).setDepth(100);
+            fontFamily: 'Fredoka, Arial', fontSize: '22px', color: '#00ffff',
+            stroke: '#000', strokeThickness: 3
+        }).setOrigin(0.5, 0).setDepth(200);
 
         this.statsText = this.add.text(padding, this.scale.height - padding, '', {
-            fontSize: '14px', color: '#888'
-        }).setOrigin(0, 1).setDepth(100);
+            fontFamily: 'Outfit, Arial', fontSize: '15px', color: '#aaa'
+        }).setOrigin(0, 1).setDepth(200);
 
         this.updateHUD();
     }
 
     layoutUI() {
-        const padding = 20;
+        if (!this.scoreText) return;
+        const padding = 25;
         this.scoreText.setPosition(this.scale.width - padding, padding);
         this.carryingText.setPosition(this.scale.width / 2, padding);
         this.statsText.setPosition(padding, this.scale.height - padding);
     }
 
     updateHUD() {
+        if (this.isEnding) return;
         let h = '';
         for (let i = 0; i < this.player.lives; i++) h += '❤️';
         for (let i = this.player.lives; i < GAME_CONFIG.PLAYER_LIVES; i++) h += '🖤';
         this.livesText.setText(h);
-
         this.scoreText.setText(`SCORE: ${Math.floor(this.score)}`);
 
         const count = this.player.carrying.length;
-        this.carryingText.setText(`CARRYING: ${'🦎'.repeat(count) || '[ ]'}`);
-
+        let cText = '[ ]';
+        if (count === 1) cText = '[X]';
+        else if (count === 2) cText = '[X][X]';
+        this.carryingText.setText(`CARRYING: ${cText}`);
         this.statsText.setText(`SAVED: ${this.saved} | LOST: ${this.lost}`);
     }
 
     createMobileControls() {
         this.joystick = { active: false, x: 0, y: 0, baseX: 0, baseY: 0 };
 
-        this.joyBase = this.add.circle(0, 0, 50, 0xffffff, 0.1).setStrokeStyle(2, 0x00ffff, 0.5).setVisible(false).setDepth(1000);
-        this.joyThumb = this.add.circle(0, 0, 25, 0x00ffff, 0.4).setVisible(false).setDepth(1001);
+        this.joyBase = this.add.circle(0, 0, 60, 0xffffff, 0.05).setStrokeStyle(3, 0x00ffff, 0.4).setVisible(false).setDepth(1000);
+        this.joyThumb = this.add.circle(0, 0, 30, 0x00ffff, 0.3).setStrokeStyle(1, 0xffffff, 0.3).setVisible(false).setDepth(1001);
 
         this.input.on('pointerdown', (p) => {
-            if (p.y < 100) return; // Ignore HUD area
+            if (this.isEnding) return;
+            if (p.y < 120) return;
             this.joystick.active = true;
             this.joystick.baseX = p.x;
             this.joystick.baseY = p.y;
@@ -374,7 +416,7 @@ class GameScene extends Phaser.Scene {
                 const dx = p.x - this.joystick.baseX;
                 const dy = p.y - this.joystick.baseY;
                 const dist = Math.sqrt(dx * dx + dy * dy);
-                const max = 40;
+                const max = 50;
                 const scale = dist > max ? max / dist : 1;
 
                 this.joyThumb.setPosition(this.joystick.baseX + dx * scale, this.joystick.baseY + dy * scale);
@@ -393,16 +435,16 @@ class GameScene extends Phaser.Scene {
     }
 
     update(time, delta) {
-        if (this.gameOver || this.paused) return;
+        if (this.isEnding || this.paused) return;
 
-        this.updatePlayer(delta);
+        this.updatePlayer(time, delta);
         this.updateCars(delta);
         this.updateNewts(delta);
         this.updateRain(delta);
         this.checkCollisions();
     }
 
-    updatePlayer(delta) {
+    updatePlayer(time, delta) {
         let mx = 0, my = 0;
         if (this.cursors.left.isDown || this.wasd.A.isDown) mx = -1;
         else if (this.cursors.right.isDown || this.wasd.D.isDown) mx = 1;
@@ -420,12 +462,21 @@ class GameScene extends Phaser.Scene {
             this.player.y += (my / mag) * this.player.speed * (delta / 1000);
 
             if (mx !== 0) this.player.scaleX = mx > 0 ? 1 : -1;
+
+            // Wobble walk animation
+            this.walkTimer += delta * 0.012;
+            this.player.graphics.y = Math.sin(this.walkTimer) * 4;
+            this.player.graphics.rotation = Math.sin(this.walkTimer * 0.5) * 0.08;
+        } else {
+            // Idle breath
+            this.player.graphics.y = Math.sin(time * 0.003) * 2;
+            this.player.graphics.rotation = 0;
         }
 
         this.player.x = Phaser.Math.Clamp(this.player.x, 20, this.scale.width - 20);
         this.player.y = Phaser.Math.Clamp(this.player.y, 20, this.scale.height - 20);
 
-        // Invincibility
+        // Invincibility flicker
         if (this.player.isInvincible) {
             this.player.invincibleTimer -= delta;
             this.player.alpha = (Math.floor(time / 100) % 2 === 0) ? 0.3 : 0.8;
@@ -437,24 +488,62 @@ class GameScene extends Phaser.Scene {
     }
 
     spawnCar() {
+        if (this.isEnding) return;
         const lane = Phaser.Math.Between(0, GAME_CONFIG.LANE_COUNT - 1);
         const dir = Math.random() < 0.5 ? 1 : -1;
         const y = this.roadY + (lane * this.laneHeight) + this.laneHeight / 2;
-        const x = dir === 1 ? -100 : this.scale.width + 100;
+        const x = dir === 1 ? -150 : this.scale.width + 150;
 
-        const speed = (dir * (150 + Math.random() * 120) * this.difficulty) * this.speedScale;
+        const speed = (dir * (160 + Math.random() * 100) * this.difficulty) * this.speedScale;
 
         const car = this.add.container(x, y);
-        const g = this.add.graphics();
-        const colors = [0xe74c3c, 0x3498db, 0x2ecc71, 0xf1c40f, 0x9b59b6];
-        const color = colors[Phaser.Math.Between(0, colors.length - 1)];
+        car.setDepth(40);
 
-        g.fillStyle(color);
-        g.fillRoundedRect(-40, -15, 80, 30, 6);
+        const g = this.add.graphics();
+
+        // Car Body Colors (Neonish)
+        const colors = [0xe74c3c, 0x3498db, 0x2ecc71, 0x9b59b6, 0xff8c00, 0x00ffff];
+        const primaryColor = colors[Phaser.Math.Between(0, colors.length - 1)];
+
+        // Shadow
+        g.fillStyle(0x000000, 0.3);
+        g.fillEllipse(0, 22, 90, 15);
+
+        // Body
+        g.fillStyle(primaryColor);
+        g.fillRoundedRect(-45, -18, 90, 36, 8);
+
+        // Roof
+        g.fillStyle(0x000000, 0.2);
+        g.fillRoundedRect(-20, -18, 45, 36, 6);
+
+        // Windows
         g.fillStyle(0x1a1a1a);
-        g.fillRect(-15, -12, 40, 24); // Windows
+        g.fillRect(-12, -14, 18, 28);
+        g.fillRect(10, -14, 18, 28);
+
+        // Glare on window
+        g.fillStyle(0xffffff, 0.1);
+        g.fillRect(-8, -14, 5, 28);
+
+        // Headlights
         g.fillStyle(0xffffcc);
-        g.fillCircle(dir === 1 ? 35 : -35, 0, 5); // Headlight
+        g.fillCircle(dir === 1 ? 40 : -40, 0, 6);
+
+        // Fake Beam Glow
+        g.fillStyle(0xffffcc, 0.15);
+        const beamX = dir === 1 ? 40 : -40;
+        g.beginPath();
+        g.moveTo(beamX, -10);
+        g.lineTo(beamX + (dir * 120), -40);
+        g.lineTo(beamX + (dir * 120), 40);
+        g.lineTo(beamX, 10);
+        g.fillPath();
+
+        // Wheels
+        g.fillStyle(0x111111);
+        g.fillCircle(-25, 18, 8);
+        g.fillCircle(25, 18, 8);
 
         car.add(g);
         car.speed = speed;
@@ -464,16 +553,18 @@ class GameScene extends Phaser.Scene {
     updateCars(delta) {
         this.cars.getChildren().forEach(car => {
             car.x += car.speed * (delta / 1000);
-            if (car.x < -200 || car.x > this.scale.width + 200) car.destroy();
+            if (car.x < -300 || car.x > this.scale.width + 300) car.destroy();
         });
     }
 
     spawnNewt() {
+        if (this.isEnding) return;
         const fromTop = Math.random() < 0.5;
         const x = Phaser.Math.Between(50, this.scale.width - 50);
         const y = fromTop ? Phaser.Math.Between(20, this.forestBoundary - 20) : Phaser.Math.Between(this.lakeBoundary + 20, this.scale.height - 20);
 
-        const newt = this.add.image(x, y, 'newt').setDisplaySize(30, 30);
+        const newt = this.add.image(x, y, 'newt').setDisplaySize(this.newtSize, this.newtSize);
+        newt.setDepth(30);
         newt.dir = fromTop ? 1 : -1;
         newt.destination = fromTop ? 'lake' : 'forest';
         newt.isCarried = false;
@@ -484,17 +575,17 @@ class GameScene extends Phaser.Scene {
         this.newts.getChildren().forEach(newt => {
             if (!newt.isCarried) {
                 newt.y += newt.dir * GAME_CONFIG.NEWT_SPEED * (delta / 1000);
-                newt.rotation = (newt.dir === 1 ? Math.PI / 2 : -Math.PI / 2) + Math.sin(this.time.now * 0.01) * 0.2;
-
-                // Spontaneous arrival
-                if ((newt.dir === 1 && newt.y > this.lakeBoundary + 20) || (newt.dir === -1 && newt.y < this.forestBoundary - 20)) {
+                newt.rotation = (newt.dir === 1 ? Math.PI / 2 : -Math.PI / 2) + Math.sin(this.time.now * 0.01) * 0.25;
+                if ((newt.dir === 1 && newt.y > this.lakeBoundary + 25) || (newt.dir === -1 && newt.y < this.forestBoundary - 25)) {
                     newt.destroy();
                 }
             } else {
-                // Follow player
                 const idx = this.player.carrying.indexOf(newt);
-                newt.x = this.player.x + (idx === 0 ? -10 : 10);
-                newt.y = this.player.y - 10;
+                newt.x = this.player.x + (idx === 0 ? -20 : 20);
+                newt.y = this.player.y - 12;
+                newt.setDepth(55);
+                newt.rotation = Math.sin(this.time.now * 0.015) * 0.2;
+                newt.setScale((this.newtSize * 0.75) / newt.width);
             }
         });
     }
@@ -502,37 +593,42 @@ class GameScene extends Phaser.Scene {
     updateRain(delta) {
         if (this.weatherState === 'RAINING') {
             this.rainGraphics.clear();
-            this.rainGraphics.lineStyle(2, 0xaec2e0, 0.4);
+            this.rainGraphics.lineStyle(1.5, 0x00ffff, 0.3);
             this.rainDrops.forEach(d => {
                 d.y += d.s;
-                if (d.y > this.scale.height) { d.y = -20; d.x = Math.random() * this.scale.width; }
-                this.rainGraphics.lineBetween(d.x, d.y, d.x, d.y + 10);
+                if (d.y > this.scale.height) { d.y = -40; d.x = Math.random() * this.scale.width; }
+                this.rainGraphics.lineBetween(d.x, d.y, d.x, d.y + d.len);
             });
         }
-        if (Math.random() < 0.001) this.weatherState = this.weatherState === 'CLEAR' ? 'RAINING' : 'CLEAR';
-        if (this.weatherState === 'CLEAR') this.rainGraphics.clear();
+        if (Math.random() < 0.0008) {
+            this.weatherState = this.weatherState === 'CLEAR' ? 'RAINING' : 'CLEAR';
+            if (this.weatherState === 'CLEAR') this.rainGraphics.clear();
+        }
     }
 
     checkCollisions() {
+        if (this.isEnding) return;
+
         // Player vs Car
         this.cars.getChildren().forEach(car => {
-            if (!this.player.isInvincible && Phaser.Math.Distance.Between(this.player.x, this.player.y, car.x, car.y) < 40) {
+            if (!this.player.isInvincible && Phaser.Math.Distance.Between(this.player.x, this.player.y, car.x, car.y) < 45) {
                 this.hitPlayer();
             }
             // Car vs Newt
             this.newts.getChildren().forEach(newt => {
-                if (!newt.isCarried && Phaser.Math.Distance.Between(newt.x, newt.y, car.x, car.y) < 30) {
+                if (!newt.isCarried && Phaser.Math.Distance.Between(newt.x, newt.y, car.x, car.y) < 40) {
                     this.lost++;
+                    this.createSplatter(newt.x, newt.y);
                     newt.destroy();
                     this.updateHUD();
                 }
             });
         });
 
-        // Player vs Newt (Pickup)
+        // Pickup
         this.newts.getChildren().forEach(newt => {
             if (!newt.isCarried && this.player.carrying.length < GAME_CONFIG.MAX_CARRY) {
-                if (Phaser.Math.Distance.Between(this.player.x, this.player.y, newt.x, newt.y) < 40) {
+                if (Phaser.Math.Distance.Between(this.player.x, this.player.y, newt.x, newt.y) < 50) {
                     newt.isCarried = true;
                     this.player.carrying.push(newt);
                     this.updateHUD();
@@ -542,38 +638,83 @@ class GameScene extends Phaser.Scene {
 
         // Delivery
         if (this.player.carrying.length > 0) {
-            const inForest = this.player.y < this.forestBoundary;
-            const inLake = this.player.y > this.lakeBoundary;
-            if (inForest || inLake) {
+            const inF = this.player.y < this.forestBoundary;
+            const inL = this.player.y > this.lakeBoundary;
+            if (inF || inL) {
                 this.player.carrying.forEach(newt => {
-                    const success = (newt.destination === 'forest' && inForest) || (newt.destination === 'lake' && inLake);
+                    const success = (newt.destination === 'forest' && inF) || (newt.destination === 'lake' && inL);
                     if (success) {
                         this.saved++;
-                        this.score += 10 * this.difficulty;
+                        this.score += 15 * this.difficulty;
+                        this.createSuccessEffect(newt.x, newt.y);
+                    } else {
+                        // Just drop them if it's the wrong side (or they die?)
+                        // For now we count as drop but no points
                     }
                     newt.destroy();
                 });
                 this.player.carrying = [];
                 this.updateHUD();
-                this.difficulty = Math.min(2.5, 1 + (this.saved * 0.05));
-                this.carTimer.delay = GAME_CONFIG.CAR_SPAWN_RATE / this.difficulty;
+                this.difficulty = Math.min(2.5, 1 + (this.saved * 0.04));
+                this.carTimer.delay = Math.max(800, GAME_CONFIG.CAR_SPAWN_RATE / this.difficulty);
             }
         }
     }
 
+    createSplatter(x, y) {
+        for (let i = 0; i < 12; i++) {
+            const p = this.add.circle(x, y, Phaser.Math.Between(2, 6), 0xff3333, 0.8);
+            this.tweens.add({
+                targets: p,
+                x: x + Phaser.Math.Between(-50, 50),
+                y: y + Phaser.Math.Between(-50, 50),
+                alpha: 0,
+                scale: 0.2,
+                duration: 600 + Math.random() * 400,
+                onComplete: () => p.destroy()
+            });
+        }
+    }
+
+    createSuccessEffect(x, y) {
+        for (let i = 0; i < 15; i++) {
+            const p = this.add.star(x, y, 5, 4, 8, 0x00ff88);
+            p.setAlpha(0.8);
+            this.tweens.add({
+                targets: p,
+                x: x + Phaser.Math.Between(-60, 60),
+                y: y - Phaser.Math.Between(40, 100),
+                rotation: 2,
+                alpha: 0,
+                scale: 0.5,
+                duration: 800 + Math.random() * 500,
+                onComplete: () => p.destroy()
+            });
+        }
+    }
+
     hitPlayer() {
+        if (this.isEnding) return;
+
         this.player.lives--;
         this.player.isInvincible = true;
-        this.player.invincibleTimer = 2000;
-        this.cameras.main.shake(200, 0.01);
-        this.player.carrying.forEach(n => n.destroy());
+        this.player.invincibleTimer = GAME_CONFIG.PLAYER_INVINCIBLE_TIME;
+
+        this.cameras.main.shake(300, 0.02);
+        this.cameras.main.flash(200, 255, 0, 0, 0.4);
+
+        // Clear carried newts
+        this.player.carrying.forEach(n => { if (n) n.destroy(); });
         this.player.carrying = [];
         this.updateHUD();
 
         if (this.player.lives <= 0) {
-            this.gameOver = true;
-            this.scene.start('GameOverScene', { score: this.score });
+            this.isEnding = true;
+            this.time.delayedCall(500, () => {
+                this.scene.start('GameOverScene', { score: this.score });
+            });
         } else {
+            // Respawn position
             this.player.x = this.scale.width / 2;
             this.player.y = this.scale.height - 50;
         }
@@ -586,24 +727,30 @@ class GameOverScene extends Phaser.Scene {
     init(data) { this.finalScore = data.score || 0; }
     create() {
         const { width, height } = this.scale;
-        this.add.rectangle(0, 0, width, height, 0x000, 0.8).setOrigin(0);
-        this.add.text(width / 2, height * 0.3, 'GAME OVER', { fontSize: '64px', color: '#f06' }).setOrigin(0.5);
-        this.add.text(width / 2, height * 0.45, `SCORE: ${Math.floor(this.finalScore)}`, { fontSize: '32px' }).setOrigin(0.5);
+        this.add.rectangle(0, 0, width, height, 0x000, 0.9).setOrigin(0);
 
-        const btn = this.add.text(width / 2, height * 0.7, 'RESTART', {
-            fontSize: '32px', color: '#0ff', backgroundColor: '#222', padding: { x: 20, y: 10 }
-        }).setOrigin(0.5).setInteractive();
+        this.add.text(width / 2, height * 0.2, 'MISSION ENDED', {
+            fontFamily: 'Fredoka, Arial', fontSize: '60px', color: '#ff0066', fontStyle: 'bold',
+            shadow: { offsetX: 0, offsetY: 0, color: '#ff0066', blur: 20, fill: true }
+        }).setOrigin(0.5);
+
+        this.add.text(width / 2, height * 0.4, `FINAL SCORE: ${Math.floor(this.finalScore)}`, {
+            fontFamily: 'Outfit, Arial', fontSize: '38px', color: '#00ffff'
+        }).setOrigin(0.5);
+
+        const btn = this.add.text(width / 2, height * 0.7, 'RETRY MISSION', {
+            fontFamily: 'Fredoka, Arial', fontSize: '32px', color: '#fff',
+            backgroundColor: '#ff00ff', padding: { x: 30, y: 15 }
+        }).setOrigin(0.5).setInteractive({ useHandCursor: true });
 
         btn.on('pointerdown', () => this.scene.start('GameScene'));
 
-        // Simple name entry
-        const nameBtn = this.add.text(width / 2, height * 0.8, 'SUBMIT SCORE', {
-            fontSize: '18px', color: '#aaa'
-        }).setOrigin(0.5).setInteractive();
-
-        nameBtn.on('pointerdown', () => {
-            const name = prompt('Enter your name (max 12 chars):');
-            if (name) nameBtn.setText(`SAVED: ${name.substring(0, 12)}`);
+        this.tweens.add({
+            targets: btn,
+            scale: 1.05,
+            duration: 600,
+            yoyo: true,
+            repeat: -1
         });
     }
 }
@@ -615,12 +762,17 @@ const config = {
     scale: {
         mode: Phaser.Scale.RESIZE,
         parent: 'game-container',
-        width: 1000, // Base width used for coordinate setup
-        height: 700  // Base height
+        width: 1000,
+        height: 700
+    },
+    physics: {
+        default: 'arcade',
+        arcade: { debug: false }
+    },
+    render: {
+        pixelArt: false,
+        antialias: true
     },
     scene: [SplashScene, GameScene, GameOverScene]
 };
-
-window.addEventListener('load', () => {
-    const game = new Phaser.Game(config);
-});
+window.addEventListener('load', () => { new Phaser.Game(config); });
