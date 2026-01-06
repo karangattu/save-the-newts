@@ -31,48 +31,40 @@ class SplashScene extends Phaser.Scene {
     constructor() { super({ key: 'SplashScene' }); }
 
     preload() {
-        // Load newt image
+        this.load.image('poster', 'assets/poster.jpg');
         this.load.image('newt', 'assets/newt.png');
     }
 
     create() {
         const { width, height } = this.scale;
 
-        this.add.rectangle(0, 0, width, height, 0x000000).setOrigin(0);
+        // Poster background - scaled to cover
+        const poster = this.add.image(width / 2, height / 2, 'poster');
+        const scaleX = width / poster.width;
+        const scaleY = height / poster.height;
+        poster.setScale(Math.max(scaleX, scaleY));
+        poster.setAlpha(0);
 
-        // Title with glow effect
-        const title = this.add.text(width / 2, height * 0.35, 'SAVE THE\nNEWTS', {
-            fontFamily: 'Arial Black, sans-serif',
-            fontSize: Math.min(60, width * 0.12) + 'px',
-            fontStyle: 'bold',
-            color: '#00ff88',
-            align: 'center',
-            stroke: '#004422',
-            strokeThickness: 6
-        }).setOrigin(0.5);
-
-        // Animated newt preview
-        const newtPreview = this.add.image(width / 2, height * 0.55, 'newt');
-        newtPreview.setDisplaySize(80, 80);
+        // Fade in poster
         this.tweens.add({
-            targets: newtPreview,
-            y: height * 0.55 - 10,
+            targets: poster,
+            alpha: 1,
             duration: 800,
-            yoyo: true,
-            repeat: -1,
-            ease: 'Sine.easeInOut'
+            ease: 'Power2'
         });
 
-        // Start prompt
-        const startText = this.add.text(width / 2, height * 0.8, 'TAP TO START', {
+        // Start prompt (positioned at bottom)
+        const startText = this.add.text(width / 2, height - 80, 'TAP TO START', {
             fontFamily: 'Arial, sans-serif',
             fontSize: '28px',
-            color: '#ffffff'
+            color: '#ffffff',
+            stroke: '#000000',
+            strokeThickness: 4
         }).setOrigin(0.5);
 
         this.tweens.add({
             targets: startText,
-            alpha: 0.3,
+            alpha: 0.4,
             duration: 600,
             yoyo: true,
             repeat: -1
