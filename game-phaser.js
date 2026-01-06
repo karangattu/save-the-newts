@@ -22,14 +22,14 @@ const GAME_CONFIG = {
     PLAYER_INVINCIBLE_TIME: 2000,
 
     // Cars
-    CAR_MIN_SPEED: 120,
-    CAR_MAX_SPEED: 240,
+    CAR_MIN_SPEED: 150,
+    CAR_MAX_SPEED: 285,
     CAR_SPAWN_RATE: 1800,
     CAR_WIDTH: 80,
     CAR_HEIGHT: 40,
 
     // Newts
-    NEWT_SPEED: 48,
+    NEWT_SPEED: 38,
     NEWT_SPAWN_RATE: 2500,
     NEWT_SIZE: 25,
 
@@ -685,21 +685,20 @@ class GameScene extends Phaser.Scene {
             if (!newt.isCarried) {
                 newt.y += newt.moveDirection * GAME_CONFIG.NEWT_SPEED * (delta / 1000);
 
-                // Animate legs while moving
-                if (newt.legGraphics) {
-                    newt.legAnimTime = (newt.legAnimTime || 0) + delta * 0.01;
-                    const legOffset = Math.sin(newt.legAnimTime * 3) * 4;
+                // Natural walk: subtle bob + body/tail sway (sprite-based)
+                if (newt.sprite) {
+                    newt.walkTime = (newt.walkTime ?? Math.random() * 1000) + delta * 0.006;
+                    const bob = Math.sin(newt.walkTime * 6) * 1.6;
+                    const sway = Math.sin(newt.walkTime * 5) * 0.07;
+                    const wiggle = Math.sin(newt.walkTime * 2) * 1.2;
 
-                    newt.legGraphics.clear();
-                    newt.legGraphics.lineStyle(2, 0xff6d00);
+                    newt.sprite.y = bob;
+                    newt.sprite.rotation = sway;
 
-                    // Front legs (animated)
-                    newt.legGraphics.lineBetween(5, -5, 10 + legOffset, -10);
-                    newt.legGraphics.lineBetween(5, 5, 10 - legOffset, 10);
-
-                    // Back legs (animated opposite)
-                    newt.legGraphics.lineBetween(-5, -5, -10 - legOffset, -10);
-                    newt.legGraphics.lineBetween(-5, 5, -10 + legOffset, 10);
+                    // Tiny lateral drift to avoid perfectly straight motion
+                    if (typeof newt.baseX === 'number') {
+                        newt.x = newt.baseX + wiggle;
+                    }
                 }
 
                 // Check if reached destination
@@ -948,6 +947,7 @@ class GameScene extends Phaser.Scene {
             newt.isCarried = false;
             newt.x = this.player.x + Phaser.Math.Between(-30, 30);
             newt.y = this.player.y + Phaser.Math.Between(-30, 30);
+            newt.baseX = newt.x;
         });
         this.player.carrying = [];
 
@@ -1104,46 +1104,24 @@ class GameScene extends Phaser.Scene {
         // Create newt container
         const newt = this.add.container(x, y);
 
-        const graphics = this.add.graphics();
-
         // Shadow
-        graphics.fillStyle(0x000000, 0.4);
-        graphics.fillEllipse(2, 2, 16, 6);
+        const shadow = this.add.ellipse(2, 6, 26, 10, 0x000000, 0.28);
+        newt.add(shadow);
 
-        // Body (California Newt - Dark Brown Top)
-        graphics.fillStyle(0x4e342e);
-        graphics.fillEllipse(0, 0, 16, 10);
+        // Newt sprite (includes tail, matches asset style)
+        const sprite = this.add.image(0, 0, 'newt');
+        sprite.setOrigin(0.5);
 
-        // Orange underside (California Newt distinctive feature)
-        graphics.fillStyle(0xff6d00);
-        graphics.fillEllipse(0, 0, 14, 8);
+        // Fit sprite to desired size while keeping aspect ratio
+        const tex = this.textures.get('newt');
+        const source = tex?.getSourceImage?.();
+        const aspect = source?.width && source?.height ? (source.width / source.height) : 1;
+        const targetH = GAME_CONFIG.NEWT_SIZE * 2.0;
+        sprite.setDisplaySize(targetH * aspect, targetH);
 
-        // Back texture
-        graphics.fillStyle(0x3e2723);
-        graphics.fillEllipse(0, -1, 12, 6);
-
-        // Head
-        graphics.fillStyle(0x5d4037);
-        graphics.fillEllipse(10, 0, 6, 5);
-
-        // Eyes
-        graphics.fillStyle(0x000000);
-        graphics.fillCircle(11, -3, 2);
-        graphics.fillCircle(11, 3, 2);
-
-        newt.add(graphics);
-
-        // Separate leg graphics for animation
-        const legGraphics = this.add.graphics();
-        legGraphics.lineStyle(2, 0xff6d00);
-        legGraphics.lineBetween(5, -5, 10, -10);
-        legGraphics.lineBetween(5, 5, 10, 10);
-        legGraphics.lineBetween(-5, -5, -10, -10);
-        legGraphics.lineBetween(-5, 5, -10, 10);
-
-        newt.add(legGraphics);
-        newt.legGraphics = legGraphics;
-        newt.legAnimTime = 0;
+        newt.add(sprite);
+        newt.sprite = sprite;
+        newt.walkTime = Math.random() * 1000;
 
         // Rotate to face direction
         newt.rotation = moveDirection === 1 ? Math.PI / 2 : -Math.PI / 2;
@@ -1154,6 +1132,7 @@ class GameScene extends Phaser.Scene {
         newt.isCarried = false;
         newt.isSquished = false;
         newt.squishedTime = 0;
+        newt.baseX = x;
 
         this.newts.add(newt);
     }
