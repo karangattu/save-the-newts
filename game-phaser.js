@@ -1,778 +1,521 @@
 /* ===================================
-   SAVE THE NEWTS - PHASER.JS GAME
-   Arcade-Style Neon Graphics Edition
+   SAVE THE NEWTS - ATARI EDITION
+   Retro 8-Bit Mobile Game
    =================================== */
 
 // ===== GAME CONFIGURATION =====
 const GAME_CONFIG = {
-    // Reference/Base dimensions
-    BASE_WIDTH: 1000,
-    BASE_HEIGHT: 700,
+    // Reference dimensions (used for logic, rendered in pixel perfect scaling)
+    BASE_WIDTH: 800,
+    BASE_HEIGHT: 600,
 
-    // Road (Base values)
-    BASE_ROAD_HEIGHT: 480,
-    LANE_COUNT: 4,
-
-    // Player
-    PLAYER_SPEED: 320,
-    PLAYER_SIZE: 40,
-    MAX_CARRY: 2,
+    PLAYER_SPEED: 280,
     PLAYER_LIVES: 3,
-    PLAYER_INVINCIBLE_TIME: 2000,
 
-    // Cars reference speeds (scaled by width)
-    CAR_MIN_SPEED: 140,
-    CAR_MAX_SPEED: 260,
-    CAR_SPAWN_RATE: 1800,
-    CAR_WIDTH: 90,
-    CAR_HEIGHT: 45,
+    // Cars
+    CAR_SPAWN_RATE: 1600,
+    CAR_MIN_SPEED: 180,
+    CAR_MAX_SPEED: 320,
 
     // Newts
-    NEWT_SPEED: 42,
-    NEWT_SPAWN_RATE: 2400,
-    newt_size: 60,
+    NEWT_SPAWN_RATE: 2000,
+    NEWT_SPEED: 50,
 
-    // Neon colors for premium vibe
+    // Retro Palette
     COLORS: {
-        neonPink: '#ff00ff',
-        neonCyan: '#00ffff',
-        neonGreen: '#00ff80',
-        neonYellow: '#ffff00',
-        neonOrange: '#ff8000',
-        forest: '#041a0f',
-        lake: '#040d1a',
-        road: '#080808',
-        roadLine: '#ffcc33',
+        bg: '#000000',
+        text: '#00ff00',
+        road: '#000000',
+        safe: '#002200', // Deep green for safe zones
+        safeText: '#00cc00',
+        player: '#ffff00', // Yellow
+        newt: '#ff00ff',   // Magenta
+        car1: '#00ffff',   // Cyan
+        car2: '#ff0000',   // Red
+        car3: '#0000ff',   // Blue
+        white: '#ffffff'
     },
+};
 
-    MIN_ZONE_HEIGHT: 80,
+// ===== PIXEL ART DATA =====
+// 1 = primary, 0 = transparent
+const SPRITES = {
+    player: [
+        '..1111..',
+        '.111111.',
+        '.111111.',
+        '..1111..',
+        '.111111.',
+        '11111111',
+        '1.1111.1',
+        '..1..1..'
+    ],
+    newt: [
+        '..1..',
+        '11111',
+        '.111.',
+        '.111.',
+        '1.1.1'
+    ],
+    car: [
+        '..11111111..',
+        '.1111111111.',
+        '111111111111',
+        '111111111111',
+        '010000010000' // 0 represents wheels in a different way in logic
+    ]
 };
 
 // ===== SPLASH SCENE =====
 class SplashScene extends Phaser.Scene {
-    constructor() {
-        super({ key: 'SplashScene' });
-    }
-
-    preload() {
-        this.load.image('poster', 'assets/poster.jpg');
-        this.load.image('newt', 'assets/newt.png');
-    }
+    constructor() { super({ key: 'SplashScene' }); }
 
     create() {
         const { width, height } = this.scale;
 
-        if (width === 0 || height === 0) {
-            this.time.delayedCall(100, () => this.create());
-            return;
-        }
-
-        // Dark background first
+        // Retro Background
         this.add.rectangle(0, 0, width, height, 0x000000).setOrigin(0);
 
-        this.poster = this.add.image(width / 2, height / 2, 'poster');
-        this.updatePosterScale();
+        // Scanlines
+        this.createScanlines();
 
-        this.poster.setAlpha(0);
-        this.tweens.add({
-            targets: this.poster,
-            alpha: 1,
-            duration: 1000,
-            ease: 'Power2'
-        });
+        // Title
+        const title = this.add.text(width / 2, height * 0.4, 'SAVE THE\nNEWTS', {
+            fontFamily: '"Courier New", Courier, monospace',
+            fontSize: '48px',
+            fontStyle: 'bold',
+            color: '#00ff00',
+            align: 'center'
+        }).setOrigin(0.5);
 
-        const startText = this.add.text(width / 2, height - 70, 'TAP TO START', {
-            fontFamily: 'Fredoka, Arial',
-            fontSize: '28px',
-            color: '#fff',
-            stroke: '#ff00ff',
-            strokeThickness: 2,
-            shadow: { offsetX: 0, offsetY: 0, color: '#ff00ff', blur: 15, fill: true }
+        // Blinking Text
+        const startText = this.add.text(width / 2, height * 0.7, 'INSERT COIN\n(TAP TO START)', {
+            fontFamily: '"Courier New", Courier, monospace',
+            fontSize: '24px',
+            color: '#ffffff',
+            align: 'center'
         }).setOrigin(0.5);
 
         this.tweens.add({
             targets: startText,
-            scale: 1.1,
-            alpha: 0.6,
-            duration: 800,
+            alpha: 0,
+            duration: 500,
             yoyo: true,
-            repeat: -1
+            repeat: -1,
+            hold: 200
         });
 
-        this.scale.on('resize', () => {
-            const { width, height } = this.scale;
-            if (this.poster) {
-                this.poster.setPosition(width / 2, height / 2);
-                this.updatePosterScale();
-            }
-            startText.setPosition(width / 2, height - 70);
-        });
-
-        this.input.once('pointerdown', () => this.startTransition());
-        this.input.keyboard.once('keydown', () => this.startTransition());
+        this.input.once('pointerdown', () => this.scene.start('GameScene'));
     }
 
-    updatePosterScale() {
-        if (!this.poster) return;
+    createScanlines() {
         const { width, height } = this.scale;
-        const scaleX = width / this.poster.width;
-        const scaleY = height / this.poster.height;
-        const scale = Math.max(scaleX, scaleY);
-        this.poster.setScale(scale);
-    }
-
-    startTransition() {
-        this.cameras.main.fadeOut(500, 0, 0, 0);
-        this.cameras.main.once('camerafadeoutcomplete', () => {
-            this.scene.start('GameScene');
-        });
+        const g = this.add.graphics();
+        g.lineStyle(2, 0x00ff00, 0.1);
+        for (let y = 0; y < height; y += 4) {
+            g.lineBetween(0, y, width, y);
+        }
     }
 }
 
 // ===== GAME SCENE =====
 class GameScene extends Phaser.Scene {
-    constructor() {
-        super({ key: 'GameScene' });
-    }
+    constructor() { super({ key: 'GameScene' }); }
 
     create() {
-        // State
         this.score = 0;
         this.saved = 0;
         this.lost = 0;
-        this.difficulty = 1;
+        this.lives = GAME_CONFIG.PLAYER_LIVES;
         this.gameOver = false;
-        this.isEnding = false;
-        this.paused = false;
+        this.isCarrying = 0;
+
+        // Texture Generation (Run once)
+        if (!this.textures.exists('pixel_player')) this.generateTextures();
 
         this.calculateLayout();
 
-        // Layering Groups
-        this.backgroundGroup = this.add.group();
-        this.roadGroup = this.add.group();
-        this.mainGroup = this.add.group(); // For cars, player, newts
-        this.uiGroup = this.add.group();
-
-        this.bgGraphics = this.add.graphics();
-        this.roadGraphics = this.add.graphics();
-        this.backgroundGroup.add(this.bgGraphics);
-        this.roadGroup.add(this.roadGraphics);
-
-        this.drawEnvironment();
-        this.createEnvironmentLabels();
-
-        this.cars = this.physics ? this.add.group() : this.add.group();
+        // Groups
+        this.cars = this.add.group();
         this.newts = this.add.group();
 
+        // Visuals
+        this.createEnvironment();
         this.createPlayer();
-        this.createWeather();
         this.createHUD();
-        this.createMobileControls();
+        this.createControls();
+        this.createScanlines();
 
-        // Global Resize
+        // Resize Handler
         this.scale.on('resize', () => {
-            this.calculateLayout();
-            this.drawEnvironment();
-            this.updateLabels();
-            this.layoutUI();
-            if (this.player) {
-                this.player.x = Phaser.Math.Clamp(this.player.x, 20, this.scale.width - 20);
-                this.player.y = Phaser.Math.Clamp(this.player.y, 20, this.scale.height - 20);
-            }
+            this.scene.restart(); // Simplest way to handle layout changes for arcade style
         });
 
-        // Spawning
-        this.carTimer = this.time.addEvent({
-            delay: GAME_CONFIG.CAR_SPAWN_RATE,
-            callback: this.spawnCar,
-            callbackScope: this,
-            loop: true
-        });
+        // Loopers
+        this.time.addEvent({ delay: GAME_CONFIG.CAR_SPAWN_RATE, callback: this.spawnCar, callbackScope: this, loop: true });
+        this.time.addEvent({ delay: GAME_CONFIG.NEWT_SPAWN_RATE, callback: this.spawnNewt, callbackScope: this, loop: true });
 
-        this.newtTimer = this.time.addEvent({
-            delay: GAME_CONFIG.NEWT_SPAWN_RATE,
-            callback: this.spawnNewt,
-            callbackScope: this,
-            loop: true
-        });
-
+        // Initial entities
         this.spawnNewt();
+    }
 
-        // Inputs
-        this.cursors = this.input.keyboard.createCursorKeys();
-        this.wasd = this.input.keyboard.addKeys('W,A,S,D');
+    generateTextures() {
+        // Simple scaling helper
+        const pixelScale = 4; // Makes pixels big and chunky
 
-        this.physicsInit = true;
-        this.cameras.main.fadeIn(500);
+        const createTex = (key, rows, color) => {
+            const canvas = document.createElement('canvas');
+            const w = rows[0].length;
+            const h = rows.length;
+            canvas.width = w * pixelScale;
+            canvas.height = h * pixelScale;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = color;
+
+            rows.forEach((row, y) => {
+                for (let x = 0; x < row.length; x++) {
+                    if (row[x] === '1') {
+                        ctx.fillRect(x * pixelScale, y * pixelScale, pixelScale, pixelScale);
+                    }
+                }
+            });
+            this.textures.addCanvas(key, canvas);
+        };
+
+        createTex('pixel_player', SPRITES.player, GAME_CONFIG.COLORS.player);
+        createTex('pixel_newt', SPRITES.newt, GAME_CONFIG.COLORS.newt);
+
+        // Cars (Create a generic white one we can tint)
+        createTex('pixel_car', SPRITES.car, '#ffffff');
     }
 
     calculateLayout() {
         const { width, height } = this.scale;
-        const availableHeight = height - (GAME_CONFIG.MIN_ZONE_HEIGHT * 2);
-        this.roadHeight = Math.min(GAME_CONFIG.BASE_ROAD_HEIGHT, availableHeight);
+
+        // Retro sizing logic
+        this.roadHeight = Math.min(height * 0.6, 500);
         this.roadY = (height - this.roadHeight) / 2;
-        this.laneHeight = this.roadHeight / GAME_CONFIG.LANE_COUNT;
-        this.forestBoundary = this.roadY;
-        this.lakeBoundary = this.roadY + this.roadHeight;
-        this.speedScale = Math.max(0.7, width / 1000);
-        this.newtSize = GAME_CONFIG.newt_size * (width < 600 ? 1.4 : 1);
+        this.laneHeight = this.roadHeight / 4;
+
+        this.topSafe = this.roadY;
+        this.botSafe = this.roadY + this.roadHeight;
     }
 
-    drawEnvironment() {
+    createEnvironment() {
         const { width, height } = this.scale;
-        this.bgGraphics.clear();
-        this.bgGraphics.setDepth(-20);
+        const g = this.add.graphics();
 
-        // Forest
-        this.bgGraphics.fillGradientStyle(0x041a0f, 0x041a0f, 0x0a2a1a, 0x0a2a1a);
-        this.bgGraphics.fillRect(0, 0, width, this.roadY);
-
-        // Forest Detail (subtle triangles)
-        this.bgGraphics.fillStyle(0x020d08, 0.8);
-        for (let x = 0; x < width + 100; x += 80) {
-            this.bgGraphics.fillTriangle(x, this.roadY, x + 40, this.roadY - 25, x + 80, this.roadY);
-        }
-
-        // Lake
-        this.bgGraphics.fillGradientStyle(0x0a1a2a, 0x0a1a2a, 0x040d1a, 0x040d1a);
-        this.bgGraphics.fillRect(0, this.lakeBoundary, width, height - this.lakeBoundary);
-
-        // Lake Ripples (subtle lines)
-        this.bgGraphics.lineStyle(2, 0x00ffff, 0.05);
-        for (let y = this.lakeBoundary + 20; y < height; y += 15) {
-            this.bgGraphics.beginPath();
-            this.bgGraphics.moveTo(0, y);
-            this.bgGraphics.lineTo(width, y + Math.sin(y) * 10);
-            this.bgGraphics.strokePath();
-        }
+        // Safe Zones (Solid Colors)
+        g.fillStyle(0x002200);
+        g.fillRect(0, 0, width, this.topSafe);
+        g.fillRect(0, this.botSafe, width, height - this.botSafe);
 
         // Road
-        this.roadGraphics.clear();
-        this.roadGraphics.setDepth(-10);
-        this.roadGraphics.fillStyle(0x080808);
-        this.roadGraphics.fillRect(0, this.roadY, width, this.roadHeight);
+        g.fillStyle(0x000000);
+        g.fillRect(0, this.roadY, width, this.roadHeight);
 
-        // Cyan Neon Edges
-        this.roadGraphics.lineStyle(3, 0x00ffff, 0.3);
-        this.roadGraphics.lineBetween(0, this.roadY, width, this.roadY);
-        this.roadGraphics.lineBetween(0, this.lakeBoundary, width, this.lakeBoundary);
-
-        // Lane Stickers
-        for (let i = 1; i < GAME_COUNT_LANE_COUNT_CHECK(); i++) {
-            const laneY = this.roadY + (i * this.laneHeight);
-            for (let lx = 0; lx < width; lx += 80) {
-                this.roadGraphics.fillStyle(0xffcc33, 0.5);
-                this.roadGraphics.fillRoundedRect(lx, laneY - 2, 40, 4, 2);
+        // Lane Markers (Dashed Lines)
+        g.fillStyle(0xffffff, 0.5);
+        for (let i = 1; i < 4; i++) {
+            const y = this.roadY + i * this.laneHeight;
+            for (let x = 20; x < width; x += 60) {
+                g.fillRect(x, y - 2, 30, 4);
             }
         }
 
-        function GAME_COUNT_LANE_COUNT_CHECK() { return GAME_CONFIG.LANE_COUNT; }
+        // Labels
+        const style = { fontFamily: '"Courier New", Courier, monospace', fontSize: '20px', color: '#00ff00' };
+        this.add.text(width / 2, this.topSafe - 30, 'FOREST', style).setOrigin(0.5);
+        this.add.text(width / 2, this.botSafe + 30, 'LAKE', style).setOrigin(0.5);
     }
 
-    createEnvironmentLabels() {
-        this.forestLabel = this.add.text(this.scale.width / 2, this.roadY - 40, 'SAFE FOREST', {
-            fontFamily: 'Outfit, Arial', fontSize: '18px', color: '#00ff80', fontStyle: 'bold'
-        }).setOrigin(0.5).setDepth(-1);
-
-        this.lakeLabel = this.add.text(this.scale.width / 2, this.lakeBoundary + 40, 'SAFE LAKE', {
-            fontFamily: 'Outfit, Arial', fontSize: '18px', color: '#00ffff', fontStyle: 'bold'
-        }).setOrigin(0.5).setDepth(-1);
-    }
-
-    updateLabels() {
-        if (this.forestLabel) this.forestLabel.setPosition(this.scale.width / 2, this.roadY - 40);
-        if (this.lakeLabel) this.lakeLabel.setPosition(this.scale.width / 2, this.lakeBoundary + 40);
+    createScanlines() {
+        const { width, height } = this.scale;
+        // Overlay texture
+        const texture = this.add.graphics().setDepth(1000);
+        texture.fillStyle(0x000000, 0.1); // Darken every other line
+        for (let y = 0; y < height; y += 4) {
+            texture.fillRect(0, y, width, 2);
+        }
     }
 
     createPlayer() {
-        this.player = this.add.container(this.scale.width / 2, this.scale.height - 100);
-        this.player.setDepth(50);
+        const { width, height } = this.scale;
+        // Player is just a sprite now
+        this.player = this.physics.add.sprite(width / 2, this.botSafe + 50, 'pixel_player');
+        this.player.setCollideWorldBounds(true);
+        this.player.setDepth(10);
+        this.player.setScale(1.5); // Chunky
 
-        const g = this.add.graphics();
-
-        // Shadow
-        g.fillStyle(0x000000, 0.4);
-        g.fillEllipse(0, 20, 28, 10);
-
-        // Character Body (Volunteer)
-        // High-vis vest with detail
-        g.fillStyle(0x333333); // Pants
-        g.fillRect(-10, 5, 8, 16); g.fillRect(2, 5, 8, 16);
-
-        g.fillStyle(0xf1c40f); // High-vis yellow
-        g.fillRoundedRect(-15, -15, 30, 30, 5);
-
-        // Reflective Stripes (Cyan glow)
-        g.fillStyle(0x00ffff, 0.8);
-        g.fillRect(-15, -5, 30, 4);
-        g.fillRect(-15, 5, 30, 4);
-
-        // Head
-        g.fillStyle(0xfce4d6);
-        g.fillCircle(0, -22, 11);
-
-        // Eyes (looking forward)
-        g.fillStyle(0x000000);
-        g.fillCircle(-4, -24, 2);
-        g.fillCircle(4, -24, 2);
-
-        // Red Helmet
-        g.fillStyle(0xe74c3c);
-        g.fillEllipse(0, -30, 16, 8);
-
-        this.player.add(g);
-        this.player.graphics = g;
+        // Custom props
         this.player.speed = GAME_CONFIG.PLAYER_SPEED;
-        this.player.size = GAME_CONFIG.PLAYER_SIZE;
-        this.player.carrying = [];
-        this.player.lives = GAME_CONFIG.PLAYER_LIVES;
-        this.player.isInvincible = false;
-        this.player.invincibleTimer = 0;
-
-        // Walk animation variables
-        this.walkTimer = 0;
-    }
-
-    createWeather() {
-        this.weatherState = 'CLEAR';
-        this.rainGraphics = this.add.graphics().setDepth(100);
-        this.rainDrops = [];
-        for (let i = 0; i < 200; i++) {
-            this.rainDrops.push({
-                x: Math.random() * 1500,
-                y: Math.random() * 1000,
-                s: 12 + Math.random() * 10,
-                len: 15 + Math.random() * 10
-            });
-        }
+        this.player.carried = []; // Array of newt sprites
+        this.player.invincible = false;
     }
 
     createHUD() {
-        const padding = 25;
-        this.livesText = this.add.text(padding, padding, '', {
-            fontFamily: 'Outfit, Arial', fontSize: '28px'
-        }).setDepth(200);
-
-        this.scoreText = this.add.text(this.scale.width - padding, padding, '', {
-            fontFamily: 'Fredoka, Arial', fontSize: '26px', color: '#fff',
-            stroke: '#ff00ff', strokeThickness: 2,
-            shadow: { offsetX: 0, offsetY: 0, color: '#ff00ff', blur: 10, fill: true }
-        }).setOrigin(1, 0).setDepth(200);
-
-        this.carryingText = this.add.text(this.scale.width / 2, padding, '', {
-            fontFamily: 'Fredoka, Arial', fontSize: '22px', color: '#00ffff',
-            stroke: '#000', strokeThickness: 3
-        }).setOrigin(0.5, 0).setDepth(200);
-
-        this.statsText = this.add.text(padding, this.scale.height - padding, '', {
-            fontFamily: 'Outfit, Arial', fontSize: '15px', color: '#aaa'
-        }).setOrigin(0, 1).setDepth(200);
-
-        this.updateHUD();
-    }
-
-    layoutUI() {
-        if (!this.scoreText) return;
-        const padding = 25;
-        this.scoreText.setPosition(this.scale.width - padding, padding);
-        this.carryingText.setPosition(this.scale.width / 2, padding);
-        this.statsText.setPosition(padding, this.scale.height - padding);
+        const style = { fontFamily: '"Courier New", Courier, monospace', fontSize: '24px', color: '#ffffff' };
+        this.scoreText = this.add.text(20, 20, 'SCORE: 0', style).setDepth(200);
+        this.livesText = this.add.text(20, 60, 'LIVES: 3', style).setDepth(200);
+        this.statusText = this.add.text(this.scale.width - 20, 20, 'CARRY: [ ]', style).setOrigin(1, 0).setDepth(200);
     }
 
     updateHUD() {
-        if (this.isEnding) return;
-        let h = '';
-        for (let i = 0; i < this.player.lives; i++) h += '❤️';
-        for (let i = this.player.lives; i < GAME_CONFIG.PLAYER_LIVES; i++) h += '🖤';
-        this.livesText.setText(h);
-        this.scoreText.setText(`SCORE: ${Math.floor(this.score)}`);
+        this.scoreText.setText(`SCORE: ${this.score}`);
+        this.livesText.setText(`LIVES: ${this.lives}`);
 
-        const count = this.player.carrying.length;
-        let cText = '[ ]';
-        if (count === 1) cText = '[X]';
-        else if (count === 2) cText = '[X][X]';
-        this.carryingText.setText(`CARRYING: ${cText}`);
-        this.statsText.setText(`SAVED: ${this.saved} | LOST: ${this.lost}`);
+        let carryStr = '[ ]';
+        if (this.player.carried.length === 1) carryStr = '[X]';
+        if (this.player.carried.length === 2) carryStr = '[X][X]';
+        this.statusText.setText(`CARRY: ${carryStr}`);
     }
 
-    createMobileControls() {
-        this.joystick = { active: false, x: 0, y: 0, baseX: 0, baseY: 0 };
+    createControls() {
+        // Touch Anywhere Joystick
+        this.inputData = { active: false, x: 0, y: 0, sx: 0, sy: 0 };
+        this.cursors = this.input.keyboard.createCursorKeys();
 
-        this.joyBase = this.add.circle(0, 0, 60, 0xffffff, 0.05).setStrokeStyle(3, 0x00ffff, 0.4).setVisible(false).setDepth(1000);
-        this.joyThumb = this.add.circle(0, 0, 30, 0x00ffff, 0.3).setStrokeStyle(1, 0xffffff, 0.3).setVisible(false).setDepth(1001);
-
-        this.input.on('pointerdown', (p) => {
-            if (this.isEnding) return;
-            if (p.y < 120) return;
-            this.joystick.active = true;
-            this.joystick.baseX = p.x;
-            this.joystick.baseY = p.y;
-            this.joyBase.setPosition(p.x, p.y).setVisible(true);
-            this.joyThumb.setPosition(p.x, p.y).setVisible(true);
+        this.input.on('pointerdown', p => {
+            this.inputData.active = true;
+            this.inputData.sx = p.x;
+            this.inputData.sy = p.y;
         });
 
-        this.input.on('pointermove', (p) => {
-            if (this.joystick.active) {
-                const dx = p.x - this.joystick.baseX;
-                const dy = p.y - this.joystick.baseY;
-                const dist = Math.sqrt(dx * dx + dy * dy);
-                const max = 50;
-                const scale = dist > max ? max / dist : 1;
-
-                this.joyThumb.setPosition(this.joystick.baseX + dx * scale, this.joystick.baseY + dy * scale);
-                this.joystick.x = (dx * scale) / max;
-                this.joystick.y = (dy * scale) / max;
-            }
+        this.input.on('pointermove', p => {
+            if (!this.inputData.active) return;
+            const dx = p.x - this.inputData.sx;
+            const dy = p.y - this.inputData.sy;
+            // Normalize
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            const max = 40;
+            const clamped = Math.min(dist, max);
+            this.inputData.x = (dx / dist) * (clamped / max) || 0;
+            this.inputData.y = (dy / dist) * (clamped / max) || 0;
         });
 
         this.input.on('pointerup', () => {
-            this.joystick.active = false;
-            this.joystick.x = 0;
-            this.joystick.y = 0;
-            this.joyBase.setVisible(false);
-            this.joyThumb.setVisible(false);
+            this.inputData.active = false;
+            this.inputData.x = 0;
+            this.inputData.y = 0;
         });
     }
 
     update(time, delta) {
-        if (this.isEnding || this.paused) return;
+        if (this.gameOver) return;
 
-        this.updatePlayer(time, delta);
-        this.updateCars(delta);
-        this.updateNewts(delta);
-        this.updateRain(delta);
-        this.checkCollisions();
-    }
+        // Player Move
+        let dx = 0, dy = 0;
 
-    updatePlayer(time, delta) {
-        let mx = 0, my = 0;
-        if (this.cursors.left.isDown || this.wasd.A.isDown) mx = -1;
-        else if (this.cursors.right.isDown || this.wasd.D.isDown) mx = 1;
-        if (this.cursors.up.isDown || this.wasd.W.isDown) my = -1;
-        else if (this.cursors.down.isDown || this.wasd.S.isDown) my = 1;
+        // Keyboard
+        if (this.cursors.left.isDown) dx = -1;
+        else if (this.cursors.right.isDown) dx = 1;
+        if (this.cursors.up.isDown) dy = -1;
+        else if (this.cursors.down.isDown) dy = 1;
 
-        if (this.joystick.active) {
-            mx = this.joystick.x;
-            my = this.joystick.y;
+        // Touch Override
+        if (this.inputData.active) {
+            dx = this.inputData.x;
+            dy = this.inputData.y;
         }
 
-        if (mx !== 0 || my !== 0) {
-            const mag = Math.sqrt(mx * mx + my * my);
-            this.player.x += (mx / mag) * this.player.speed * (delta / 1000);
-            this.player.y += (my / mag) * this.player.speed * (delta / 1000);
-
-            if (mx !== 0) this.player.scaleX = mx > 0 ? 1 : -1;
-
-            // Wobble walk animation
-            this.walkTimer += delta * 0.012;
-            this.player.graphics.y = Math.sin(this.walkTimer) * 4;
-            this.player.graphics.rotation = Math.sin(this.walkTimer * 0.5) * 0.08;
+        if (dx !== 0 || dy !== 0) {
+            this.player.setVelocity(dx * this.player.speed, dy * this.player.speed);
         } else {
-            // Idle breath
-            this.player.graphics.y = Math.sin(time * 0.003) * 2;
-            this.player.graphics.rotation = 0;
+            this.player.setVelocity(0, 0);
         }
 
-        this.player.x = Phaser.Math.Clamp(this.player.x, 20, this.scale.width - 20);
-        this.player.y = Phaser.Math.Clamp(this.player.y, 20, this.scale.height - 20);
+        // Clamp manually if needed (physics world bounds handles mostly)
+        // Update carried newt positions
+        this.player.carried.forEach((n, i) => {
+            n.x = this.player.x + (i === 0 ? -15 : 15);
+            n.y = this.player.y - 15;
+        });
 
-        // Invincibility flicker
-        if (this.player.isInvincible) {
-            this.player.invincibleTimer -= delta;
-            this.player.alpha = (Math.floor(time / 100) % 2 === 0) ? 0.3 : 0.8;
-            if (this.player.invincibleTimer <= 0) {
-                this.player.isInvincible = false;
-                this.player.alpha = 1;
+        // Loop Entities
+        this.cars.getChildren().forEach(c => {
+            if (c.active) {
+                if (c.x < -100 || c.x > this.scale.width + 100) c.destroy();
             }
-        }
+        });
+
+        this.newts.getChildren().forEach(n => {
+            if (n.active && !n.isCarried) {
+                // Move towards destination
+                n.y += n.dir * (GAME_CONFIG.NEWT_SPEED * delta / 1000);
+                if (n.y < this.topSafe || n.y > this.botSafe + 50) {
+                    if (!this.physics.overlap(this.player, n)) n.destroy(); // Only destroy if not being touched
+                }
+            }
+        });
     }
 
     spawnCar() {
-        if (this.isEnding) return;
-        const lane = Phaser.Math.Between(0, GAME_CONFIG.LANE_COUNT - 1);
+        if (this.gameOver) return;
+        const lane = Phaser.Math.Between(0, 3);
         const dir = Math.random() < 0.5 ? 1 : -1;
-        const y = this.roadY + (lane * this.laneHeight) + this.laneHeight / 2;
-        const x = dir === 1 ? -150 : this.scale.width + 150;
+        const y = this.roadY + (lane * this.laneHeight) + (this.laneHeight / 2);
+        const x = dir === 1 ? -50 : this.scale.width + 50;
 
-        const speed = (dir * (160 + Math.random() * 100) * this.difficulty) * this.speedScale;
+        const car = this.physics.add.sprite(x, y, 'pixel_car');
+        car.setScale(2.5); // Big blocky cars
+        car.setVelocityX(dir * Phaser.Math.Between(GAME_CONFIG.CAR_MIN_SPEED, GAME_CONFIG.CAR_MAX_SPEED));
 
-        const car = this.add.container(x, y);
-        car.setDepth(40);
+        // Color tint
+        const tints = [0x00ffff, 0xff0000, 0x0000ff, 0xffff00];
+        car.setTint(tints[Phaser.Math.Between(0, 3)]);
 
-        const g = this.add.graphics();
-
-        // Car Body Colors (Neonish)
-        const colors = [0xe74c3c, 0x3498db, 0x2ecc71, 0x9b59b6, 0xff8c00, 0x00ffff];
-        const primaryColor = colors[Phaser.Math.Between(0, colors.length - 1)];
-
-        // Shadow
-        g.fillStyle(0x000000, 0.3);
-        g.fillEllipse(0, 22, 90, 15);
-
-        // Body
-        g.fillStyle(primaryColor);
-        g.fillRoundedRect(-45, -18, 90, 36, 8);
-
-        // Roof
-        g.fillStyle(0x000000, 0.2);
-        g.fillRoundedRect(-20, -18, 45, 36, 6);
-
-        // Windows
-        g.fillStyle(0x1a1a1a);
-        g.fillRect(-12, -14, 18, 28);
-        g.fillRect(10, -14, 18, 28);
-
-        // Glare on window
-        g.fillStyle(0xffffff, 0.1);
-        g.fillRect(-8, -14, 5, 28);
-
-        // Headlights
-        g.fillStyle(0xffffcc);
-        g.fillCircle(dir === 1 ? 40 : -40, 0, 6);
-
-        // Fake Beam Glow
-        g.fillStyle(0xffffcc, 0.15);
-        const beamX = dir === 1 ? 40 : -40;
-        g.beginPath();
-        g.moveTo(beamX, -10);
-        g.lineTo(beamX + (dir * 120), -40);
-        g.lineTo(beamX + (dir * 120), 40);
-        g.lineTo(beamX, 10);
-        g.fillPath();
-
-        // Wheels
-        g.fillStyle(0x111111);
-        g.fillCircle(-25, 18, 8);
-        g.fillCircle(25, 18, 8);
-
-        car.add(g);
-        car.speed = speed;
+        if (dir === -1) car.flipX = true;
         this.cars.add(car);
-    }
 
-    updateCars(delta) {
-        this.cars.getChildren().forEach(car => {
-            car.x += car.speed * (delta / 1000);
-            if (car.x < -300 || car.x > this.scale.width + 300) car.destroy();
-        });
+        // Add overlap here to avoid calculating in update loop (performance)
+        this.physics.add.overlap(this.player, car, this.hitPlayer, null, this);
+        this.physics.add.overlap(this.newts, car, this.splatterNewt, null, this);
     }
 
     spawnNewt() {
-        if (this.isEnding) return;
+        if (this.gameOver) return;
         const fromTop = Math.random() < 0.5;
         const x = Phaser.Math.Between(50, this.scale.width - 50);
-        const y = fromTop ? Phaser.Math.Between(20, this.forestBoundary - 20) : Phaser.Math.Between(this.lakeBoundary + 20, this.scale.height - 20);
+        const y = fromTop ? this.topSafe - 20 : this.botSafe + 20;
 
-        const newt = this.add.image(x, y, 'newt').setDisplaySize(this.newtSize, this.newtSize);
-        newt.setDepth(30);
+        const newt = this.physics.add.sprite(x, y, 'pixel_newt');
+        newt.setScale(2);
         newt.dir = fromTop ? 1 : -1;
-        newt.destination = fromTop ? 'lake' : 'forest';
+        newt.dest = fromTop ? 'LAKE' : 'FOREST';
         newt.isCarried = false;
+
         this.newts.add(newt);
+
+        this.physics.add.overlap(this.player, newt, this.pickupNewt, null, this);
     }
 
-    updateNewts(delta) {
-        this.newts.getChildren().forEach(newt => {
-            if (!newt.isCarried) {
-                newt.y += newt.dir * GAME_CONFIG.NEWT_SPEED * (delta / 1000);
-                newt.rotation = (newt.dir === 1 ? Math.PI / 2 : -Math.PI / 2) + Math.sin(this.time.now * 0.01) * 0.25;
-                if ((newt.dir === 1 && newt.y > this.lakeBoundary + 25) || (newt.dir === -1 && newt.y < this.forestBoundary - 25)) {
-                    newt.destroy();
-                }
-            } else {
-                const idx = this.player.carrying.indexOf(newt);
-                newt.x = this.player.x + (idx === 0 ? -20 : 20);
-                newt.y = this.player.y - 12;
-                newt.setDepth(55);
-                newt.rotation = Math.sin(this.time.now * 0.015) * 0.2;
-                newt.setScale((this.newtSize * 0.75) / newt.width);
-            }
-        });
-    }
+    hitPlayer(player, car) {
+        if (this.player.invincible) return;
 
-    updateRain(delta) {
-        if (this.weatherState === 'RAINING') {
-            this.rainGraphics.clear();
-            this.rainGraphics.lineStyle(1.5, 0x00ffff, 0.3);
-            this.rainDrops.forEach(d => {
-                d.y += d.s;
-                if (d.y > this.scale.height) { d.y = -40; d.x = Math.random() * this.scale.width; }
-                this.rainGraphics.lineBetween(d.x, d.y, d.x, d.y + d.len);
-            });
-        }
-        if (Math.random() < 0.0008) {
-            this.weatherState = this.weatherState === 'CLEAR' ? 'RAINING' : 'CLEAR';
-            if (this.weatherState === 'CLEAR') this.rainGraphics.clear();
-        }
-    }
-
-    checkCollisions() {
-        if (this.isEnding) return;
-
-        // Player vs Car
-        this.cars.getChildren().forEach(car => {
-            if (!this.player.isInvincible && Phaser.Math.Distance.Between(this.player.x, this.player.y, car.x, car.y) < 45) {
-                this.hitPlayer();
-            }
-            // Car vs Newt
-            this.newts.getChildren().forEach(newt => {
-                if (!newt.isCarried && Phaser.Math.Distance.Between(newt.x, newt.y, car.x, car.y) < 40) {
-                    this.lost++;
-                    this.createSplatter(newt.x, newt.y);
-                    newt.destroy();
-                    this.updateHUD();
-                }
-            });
-        });
-
-        // Pickup
-        this.newts.getChildren().forEach(newt => {
-            if (!newt.isCarried && this.player.carrying.length < GAME_CONFIG.MAX_CARRY) {
-                if (Phaser.Math.Distance.Between(this.player.x, this.player.y, newt.x, newt.y) < 50) {
-                    newt.isCarried = true;
-                    this.player.carrying.push(newt);
-                    this.updateHUD();
-                }
-            }
-        });
-
-        // Delivery
-        if (this.player.carrying.length > 0) {
-            const inF = this.player.y < this.forestBoundary;
-            const inL = this.player.y > this.lakeBoundary;
-            if (inF || inL) {
-                this.player.carrying.forEach(newt => {
-                    const success = (newt.destination === 'forest' && inF) || (newt.destination === 'lake' && inL);
-                    if (success) {
-                        this.saved++;
-                        this.score += 15 * this.difficulty;
-                        this.createSuccessEffect(newt.x, newt.y);
-                    } else {
-                        // Just drop them if it's the wrong side (or they die?)
-                        // For now we count as drop but no points
-                    }
-                    newt.destroy();
-                });
-                this.player.carrying = [];
-                this.updateHUD();
-                this.difficulty = Math.min(2.5, 1 + (this.saved * 0.04));
-                this.carTimer.delay = Math.max(800, GAME_CONFIG.CAR_SPAWN_RATE / this.difficulty);
-            }
-        }
-    }
-
-    createSplatter(x, y) {
-        for (let i = 0; i < 12; i++) {
-            const p = this.add.circle(x, y, Phaser.Math.Between(2, 6), 0xff3333, 0.8);
-            this.tweens.add({
-                targets: p,
-                x: x + Phaser.Math.Between(-50, 50),
-                y: y + Phaser.Math.Between(-50, 50),
-                alpha: 0,
-                scale: 0.2,
-                duration: 600 + Math.random() * 400,
-                onComplete: () => p.destroy()
-            });
-        }
-    }
-
-    createSuccessEffect(x, y) {
-        for (let i = 0; i < 15; i++) {
-            const p = this.add.star(x, y, 5, 4, 8, 0x00ff88);
-            p.setAlpha(0.8);
-            this.tweens.add({
-                targets: p,
-                x: x + Phaser.Math.Between(-60, 60),
-                y: y - Phaser.Math.Between(40, 100),
-                rotation: 2,
-                alpha: 0,
-                scale: 0.5,
-                duration: 800 + Math.random() * 500,
-                onComplete: () => p.destroy()
-            });
-        }
-    }
-
-    hitPlayer() {
-        if (this.isEnding) return;
-
-        this.player.lives--;
-        this.player.isInvincible = true;
-        this.player.invincibleTimer = GAME_CONFIG.PLAYER_INVINCIBLE_TIME;
-
-        this.cameras.main.shake(300, 0.02);
-        this.cameras.main.flash(200, 255, 0, 0, 0.4);
-
-        // Clear carried newts
-        this.player.carrying.forEach(n => { if (n) n.destroy(); });
-        this.player.carrying = [];
+        // CRASH FIX: Simple logic, no complex camera shakes or loops
+        this.lives--;
         this.updateHUD();
 
-        if (this.player.lives <= 0) {
-            this.isEnding = true;
-            this.time.delayedCall(500, () => {
-                this.scene.start('GameOverScene', { score: this.score });
+        // Lose newts
+        this.player.carried.forEach(n => n.destroy());
+        this.player.carried = [];
+        this.updateHUD();
+
+        // Invincibility
+        this.player.invincible = true;
+        this.player.setAlpha(0.5);
+        this.time.delayedCall(2000, () => {
+            this.player.invincible = false;
+            this.player.setAlpha(1);
+        });
+
+        // Push back slightly
+        player.y += (player.y < car.y ? -50 : 50);
+
+        if (this.lives <= 0) {
+            this.gameOver = true;
+            this.physics.pause();
+            this.add.text(this.scale.width / 2, this.scale.height / 2, 'GAME OVER', {
+                fontFamily: '"Courier New", monospace', fontSize: '60px', color: '#ff0000', backgroundColor: '#000000'
+            }).setOrigin(0.5).setDepth(300);
+
+            this.time.delayedCall(2000, () => this.scene.start('SplashScene'));
+        }
+    }
+
+    pickupNewt(player, newt) {
+        if (newt.isCarried) return;
+        if (this.player.carried.length >= 2) return;
+
+        newt.isCarried = true;
+        newt.body.enable = false; // Stop physics
+        this.player.carried.push(newt);
+        this.updateHUD();
+    }
+
+    splatterNewt(newt, car) {
+        if (newt.isCarried) return;
+        // Simple pixel splatter
+        const p = this.add.rectangle(newt.x, newt.y, 40, 10, 0xff00ff);
+        this.tweens.add({ targets: p, scaleX: 2, scaleY: 0.2, alpha: 0, duration: 500, onComplete: () => p.destroy() });
+        newt.destroy();
+        this.lost++;
+        this.updateHUD();
+    }
+
+    // Checking delivery manually in update is messy, let's use a zone check 
+    // Actually, just check Y position of player
+}
+
+// Attach delivery check to update loop since it depends on player pos
+// Note: We extended the class above but missed this, adding it prototype style or just inside update
+GameScene.prototype.update = function (time, delta) {
+    if (this.gameOver) return;
+
+    // ... Copied movement logic from above ...
+    // Note: To avoid duplication error in this WriteToFile, I will put the FULL update logic here inside the class correctly
+};
+
+// Re-defining the FULL update method correctly just to be safe and clean:
+GameScene.prototype.update = function (time, delta) {
+    if (this.gameOver) return;
+
+    // Player Move
+    let dx = 0, dy = 0;
+    if (this.cursors.left.isDown) dx = -1; else if (this.cursors.right.isDown) dx = 1;
+    if (this.cursors.up.isDown) dy = -1; else if (this.cursors.down.isDown) dy = 1;
+
+    if (this.inputData.active) { dx = this.inputData.x; dy = this.inputData.y; }
+
+    if (dx !== 0 || dy !== 0) this.player.setVelocity(dx * this.player.speed, dy * this.player.speed);
+    else this.player.setVelocity(0, 0);
+
+    // Update Carried Positions
+    this.player.carried.forEach((n, i) => {
+        n.x = this.player.x + (i === 0 ? -20 : 20); // Wider spacing for chonky pixels
+        n.y = this.player.y - 20;
+    });
+
+    // Delivery Logic
+    if (this.player.carried.length > 0) {
+        const inTop = this.player.y < this.topSafe;
+        const inBot = this.player.y > this.botSafe;
+
+        if (inTop || inBot) {
+            const delivered = [];
+            this.player.carried = this.player.carried.filter(n => {
+                const correct = (n.dest === 'FOREST' && inTop) || (n.dest === 'LAKE' && inBot);
+                if (correct) {
+                    this.score += 100;
+                    this.saved++;
+                    n.destroy();
+                    delivered.push(true);
+                    return false; // Remove from array
+                }
+                return true; // Keep
             });
-        } else {
-            // Respawn position
-            this.player.x = this.scale.width / 2;
-            this.player.y = this.scale.height - 50;
+            if (delivered.length > 0) this.updateHUD();
         }
     }
 }
 
-// ===== GAME OVER SCENE =====
-class GameOverScene extends Phaser.Scene {
-    constructor() { super({ key: 'GameOverScene' }); }
-    init(data) { this.finalScore = data.score || 0; }
-    create() {
-        const { width, height } = this.scale;
-        this.add.rectangle(0, 0, width, height, 0x000, 0.9).setOrigin(0);
 
-        this.add.text(width / 2, height * 0.2, 'MISSION ENDED', {
-            fontFamily: 'Fredoka, Arial', fontSize: '60px', color: '#ff0066', fontStyle: 'bold',
-            shadow: { offsetX: 0, offsetY: 0, color: '#ff0066', blur: 20, fill: true }
-        }).setOrigin(0.5);
-
-        this.add.text(width / 2, height * 0.4, `FINAL SCORE: ${Math.floor(this.finalScore)}`, {
-            fontFamily: 'Outfit, Arial', fontSize: '38px', color: '#00ffff'
-        }).setOrigin(0.5);
-
-        const btn = this.add.text(width / 2, height * 0.7, 'RETRY MISSION', {
-            fontFamily: 'Fredoka, Arial', fontSize: '32px', color: '#fff',
-            backgroundColor: '#ff00ff', padding: { x: 30, y: 15 }
-        }).setOrigin(0.5).setInteractive({ useHandCursor: true });
-
-        btn.on('pointerdown', () => this.scene.start('GameScene'));
-
-        this.tweens.add({
-            targets: btn,
-            scale: 1.05,
-            duration: 600,
-            yoyo: true,
-            repeat: -1
-        });
-    }
-}
-
-// ===== PHASER INITIALIZATION =====
+// ===== PHASER INIT =====
 const config = {
     type: Phaser.AUTO,
     backgroundColor: '#000000',
     scale: {
         mode: Phaser.Scale.RESIZE,
         parent: 'game-container',
-        width: 1000,
-        height: 700
+        width: 800,
+        height: 600
     },
     physics: {
         default: 'arcade',
         arcade: { debug: false }
     },
-    render: {
-        pixelArt: false,
-        antialias: true
-    },
-    scene: [SplashScene, GameScene, GameOverScene]
+    render: { pixelArt: true }, // IMPORTANT for retro look
+    scene: [SplashScene, GameScene]
 };
-window.addEventListener('load', () => { new Phaser.Game(config); });
+
+window.addEventListener('load', () => new Phaser.Game(config));
