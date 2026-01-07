@@ -993,6 +993,10 @@ class GameScene extends Phaser.Scene {
         }).setOrigin(0.5).setDepth(301);
 
         if (supabaseClient) {
+            // Disable Phaser key capture so typing works in the DOM input
+            this.input.keyboard.removeCapture('W,A,S,D');
+            this.input.keyboard.removeCapture([37, 38, 39, 40]); // Arrow keys
+
             this.add.text(width / 2, height * 0.24, 'Enter your name:', {
                 fontFamily: 'Outfit, sans-serif', fontSize: '16px', color: '#aaaaaa'
             }).setOrigin(0.5).setDepth(301);
