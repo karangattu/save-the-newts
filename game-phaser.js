@@ -50,13 +50,12 @@ async function getLeaderboard() {
 // ===== ICON UTILITY (Lucide Style) =====
 const Icons = {
     drawHeart(g, x, y, size = 20, color = 0xff3366, stroke = 2) {
-        g.lineStyle(stroke, color);
         const s = size / 2;
-        g.beginPath();
-        g.moveTo(x, y + s * 0.7);
-        g.cubicBezierTo(x - s, y - s, x - s * 2, y + s * 0.5, x, y + s * 1.8);
-        g.cubicBezierTo(x + s * 2, y + s * 0.5, x + s, y - s, x, y + s * 0.7);
-        g.strokePath();
+        // Draw heart using two circles and a triangle
+        g.fillStyle(color);
+        g.fillCircle(x - s * 0.3, y - s * 0.1, s * 0.45);
+        g.fillCircle(x + s * 0.3, y - s * 0.1, s * 0.45);
+        g.fillTriangle(x - s * 0.7, y, x + s * 0.7, y, x, y + s * 0.8);
     },
     drawMapPin(g, x, y, size = 20, color = 0xffffff, stroke = 2) {
         g.lineStyle(stroke, color);
@@ -196,8 +195,38 @@ class SplashScene extends Phaser.Scene {
             repeat: -1
         });
 
-        this.input.once('pointerdown', () => this.scene.start('GameScene'));
-        this.input.keyboard.once('keydown', () => this.scene.start('GameScene'));
+        // Robust transition handling
+        let started = false;
+        const startGame = () => {
+            if (started) return;
+            started = true;
+            console.log("Starting GameScene...");
+
+            // Fallback: Start scene directly if fade takes too long or fails
+            const fallback = this.time.delayedCall(500, () => {
+                if (this.scene.isActive('SplashScene')) {
+                    console.warn("Fade transition timed out, starting GameScene directly.");
+                    this.scene.start('GameScene');
+                }
+            });
+
+            this.cameras.main.fadeOut(300, 0, 0, 0);
+            this.cameras.main.once('camerafadeoutcomplete', () => {
+                fallback.destroy();
+                this.scene.start('GameScene');
+            });
+        };
+
+        // Clickable area (full screen)
+        const hitArea = this.add.rectangle(0, 0, width, height, 0x000000, 0)
+            .setOrigin(0)
+            .setInteractive({ useHandCursor: true });
+
+        // Ensure we can start even before the delay if the user is fast
+        hitArea.on('pointerdown', startGame);
+        this.input.keyboard.on('keydown', startGame);
+
+        console.log("SplashScene ready. Waiting for input...");
     }
 }
 
@@ -210,6 +239,7 @@ class GameScene extends Phaser.Scene {
     }
 
     create() {
+        console.log("GameScene.create started");
         this.score = 0;
         this.saved = 0;
         this.lost = 0;
