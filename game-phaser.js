@@ -137,7 +137,7 @@ const GAME_CONFIG = {
 
     NEWT_SPAWN_RATE: 1800,
     NEWT_SPEED: 55,
-    NEWT_SIZE: 50,
+    NEWT_SIZE: 65,
 
     // Progressive difficulty thresholds
     DIFFICULTY_THRESHOLD: 1000,
@@ -473,7 +473,16 @@ class GameScene extends Phaser.Scene {
         this.livesIconGroup = this.add.group();
         this.scoreText = this.add.text(this.scale.width - padding, padding, '', style).setOrigin(1, 0).setDepth(200);
         this.carryText = this.add.text(this.scale.width / 2, padding, '', { ...style, color: '#00ffff' }).setOrigin(0.5, 0).setDepth(200);
-        this.statsText = this.add.text(padding, this.scale.height - padding, '', { ...style, fontSize: '15px', color: '#aaa' }).setOrigin(0, 1).setDepth(200);
+
+        // Fancy styling for Stats (Saved/Lost)
+        this.statsText = this.add.text(padding, this.scale.height - padding, '', {
+            fontFamily: 'Fredoka, sans-serif',
+            fontSize: '22px',
+            color: '#ffffff',
+            stroke: '#000000',
+            strokeThickness: 4,
+            shadow: { offsetX: 2, offsetY: 2, color: '#000000', blur: 4, fill: true }
+        }).setOrigin(0, 1).setDepth(200);
 
         this.updateHUD();
     }
