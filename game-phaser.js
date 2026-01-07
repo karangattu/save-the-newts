@@ -453,9 +453,25 @@ class GameScene extends Phaser.Scene {
         g.fillStyle(0xfce4d6);
         g.fillCircle(-20, -5, 6); // Left hand
         g.fillCircle(20, -5, 6);  // Right hand
-        g.fillStyle(0xf1c40f); g.fillRoundedRect(-18, -18, 36, 32, 5);
-        g.fillStyle(0xffffff, 0.9); g.fillRect(-18, -8, 36, 5); g.fillRect(-18, 4, 36, 5);
-        g.fillStyle(0xff6b00); g.fillRect(-18, -2, 36, 3);
+        // Safety Vest
+        const vestGreen = 0xccff00;
+        const reflectiveSilver = 0xdddddd;
+        const safetyOrange = 0xff6b00;
+
+        g.fillStyle(vestGreen);
+        g.fillRoundedRect(-18, -18, 36, 32, 5); // Main vest body
+
+        // Reflective Strips - Orange Borders
+        g.fillStyle(safetyOrange);
+        g.fillRect(-14, -18, 12, 32); // Left vertical border
+        g.fillRect(2, -18, 12, 32);   // Right vertical border
+        g.fillRect(-18, -4, 36, 12);  // Horizontal waist band border
+
+        // Reflective Strips - Silver 
+        g.fillStyle(reflectiveSilver);
+        g.fillRect(-12, -18, 8, 32); // Left vertical
+        g.fillRect(4, -18, 8, 32);   // Right vertical
+        g.fillRect(-18, -2, 36, 8);  // Horizontal waist band
         g.fillStyle(0xfce4d6); g.fillCircle(0, -26, 14);
         g.fillStyle(0x000000); g.fillCircle(-5, -28, 2.5); g.fillCircle(5, -28, 2.5);
         g.fillStyle(0xcc9988); g.fillEllipse(0, -22, 4, 2);
