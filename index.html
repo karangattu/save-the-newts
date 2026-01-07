@@ -55,6 +55,14 @@
     <!-- Phaser.js Game Engine -->
     <script src="https://cdn.jsdelivr.net/npm/phaser@3.70.0/dist/phaser.min.js"></script>
 
+    <!-- Supabase (for leaderboard). Set these before loading game-phaser.js -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script>
+        // Optional: enable leaderboard by setting these values.
+        window.SUPABASE_URL = 'https://ovwktjjeoowlktdfbuuu.supabase.co';
+        window.SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im92d2t0amplb293bGt0ZGZidXV1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njc3NjcwODcsImV4cCI6MjA4MzM0MzA4N30.pl8T9J0cfgVd7bYt7N32Z9bEOxzIdAEJlS_NZ3h8ugk';
+    </script>
+
     <!-- Game Script -->
     <script src="game-phaser.js"></script>
 
