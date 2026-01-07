@@ -1,5 +1,5 @@
 /* ===================================
-   SAVE THE NEWTS - ENHANCED EDITION
+   SAVE THE NEWTS
    Alma Bridge Road - Help Newts Cross!
    =================================== */
 
@@ -236,6 +236,7 @@ class GameScene extends Phaser.Scene {
 
     preload() {
         this.load.image('newt', 'assets/newt.png');
+        this.load.image('newtXing', 'assets/newt_Xing.png');
     }
 
     create() {
@@ -269,6 +270,18 @@ class GameScene extends Phaser.Scene {
 
         this.spawnNewt();
         this.cameras.main.fadeIn(300);
+
+        // Rain effect
+        this.raindrops = [];
+        for (let i = 0; i < 80; i++) {
+            this.raindrops.push({
+                x: Phaser.Math.Between(0, this.scale.width),
+                y: Phaser.Math.Between(0, this.scale.height),
+                speed: Phaser.Math.Between(300, 600),
+                length: Phaser.Math.Between(8, 18)
+            });
+        }
+        this.rainGraphics = this.add.graphics().setDepth(100);
     }
 
     calculateLayout() {
@@ -326,21 +339,27 @@ class GameScene extends Phaser.Scene {
         }).setOrigin(0.5).setAlpha(0.5);
 
         // Location labels with MapPing icons
-        const labelStyle = { fontFamily: 'Outfit, sans-serif', fontSize: '14px', color: '#44dd66' };
+        // Fancy styling as requested
+        const fancyStyle = {
+            fontFamily: 'Fredoka, sans-serif',
+            fontSize: '18px',
+            fontStyle: 'bold',
+            stroke: '#000000',
+            strokeThickness: 4,
+            shadow: { offsetX: 2, offsetY: 2, color: '#000000', blur: 4, fill: true }
+        };
 
-        const topText = this.add.text(width / 2 + 10, this.topSafe - 20, 'OPEN SPACE PRESERVE', labelStyle).setOrigin(0.5);
+        const topText = this.add.text(width / 2 + 12, this.topSafe - 25, 'OPEN SPACE PRESERVE', { ...fancyStyle, color: '#44dd66' }).setOrigin(0.5);
         const topIcon = this.add.graphics();
-        Icons.drawMapPin(topIcon, topText.x - topText.width / 2 - 15, this.topSafe - 20, 16, 0x44dd66);
+        Icons.drawMapPin(topIcon, topText.x - topText.width / 2 - 18, this.topSafe - 26, 18, 0x44dd66);
 
-        const botText = this.add.text(width / 2 + 10, this.botSafe + 20, 'LEXINGTON RESERVOIR', { ...labelStyle, color: '#44aadd' }).setOrigin(0.5);
+        const botText = this.add.text(width / 2 + 12, this.botSafe + 25, 'LEXINGTON RESERVOIR', { ...fancyStyle, color: '#44aadd' }).setOrigin(0.5);
         const botIcon = this.add.graphics();
-        Icons.drawMapPin(botIcon, botText.x - botText.width / 2 - 15, this.botSafe + 20, 16, 0x44aadd);
+        Icons.drawMapPin(botIcon, botText.x - botText.width / 2 - 18, this.botSafe + 24, 18, 0x44aadd);
 
-        // Newt crossing signs on edges of road
-        this.createCrossingSign(40, this.topSafe - 15);
-        this.createCrossingSign(width - 40, this.topSafe - 15);
-        this.createCrossingSign(40, this.botSafe + 15);
-        this.createCrossingSign(width - 40, this.botSafe + 15);
+        // Newt crossing signs - diagonally opposite (top-left and bottom-right at road edges)
+        this.add.image(45, this.topSafe - 25, 'newtXing').setDisplaySize(50, 50);
+        this.add.image(width - 45, this.botSafe - 25, 'newtXing').setDisplaySize(50, 50);
     }
 
     createCrossingSign(x, y) {
@@ -390,8 +409,9 @@ class GameScene extends Phaser.Scene {
         g.fillStyle(0xfce4d6); g.fillCircle(0, -26, 14);
         g.fillStyle(0x000000); g.fillCircle(-5, -28, 2.5); g.fillCircle(5, -28, 2.5);
         g.fillStyle(0xcc9988); g.fillEllipse(0, -22, 4, 2);
-        g.fillStyle(0xe74c3c); g.fillEllipse(0, -38, 20, 10);
-        g.fillStyle(0xc0392b); g.fillRect(-10, -38, 20, 5);
+        // More prominent cap/hat
+        g.fillStyle(0xff0000); g.fillEllipse(0, -40, 26, 14); // Main cap
+        g.fillStyle(0xcc0000); g.fillRect(-13, -42, 26, 6); // Cap brim
         this.player.add(g);
         this.player.graphics = g;
         this.player.speed = GAME_CONFIG.PLAYER_SPEED;
@@ -426,11 +446,18 @@ class GameScene extends Phaser.Scene {
 
         this.scoreText.setText(`${this.score}`);
 
+        // Update carrying display (Text based - Reverted per user request)
+        if (this.carryIconGroup) {
+            this.carryIconGroup.clear(true, true);
+            this.carryIconGroup.destroy();
+            this.carryIconGroup = null;
+        }
         const c = this.player.carried.length;
         let carryStr = '[ ]';
         if (c === 1) carryStr = '[X]';
         if (c === 2) carryStr = '[X][X]';
         this.carryText.setText(`CARRYING: ${carryStr}`);
+
         this.statsText.setText(`SAVED: ${this.saved} | LOST: ${this.lost}`);
     }
 
@@ -486,9 +513,27 @@ class GameScene extends Phaser.Scene {
         this.updateCars(delta);
         this.updateNewts(delta);
         this.checkCollisions();
+        this.updateRain(delta);
+    }
+
+    updateRain(delta) {
+        this.rainGraphics.clear();
+        this.rainGraphics.lineStyle(1, 0x6688aa, 0.4);
+
+        this.raindrops.forEach(drop => {
+            drop.y += drop.speed * (delta / 1000);
+            if (drop.y > this.scale.height) {
+                drop.y = -drop.length;
+                drop.x = Phaser.Math.Between(0, this.scale.width);
+            }
+            this.rainGraphics.lineBetween(drop.x, drop.y, drop.x - 2, drop.y + drop.length);
+        });
     }
 
     updatePlayer(time, delta) {
+        // Skip WASD input if game is over (allows typing in name input)
+        if (this.gameOver) return;
+
         let dx = 0, dy = 0;
         if (this.cursors.left.isDown || this.wasd.A.isDown) dx = -1; else if (this.cursors.right.isDown || this.wasd.D.isDown) dx = 1;
         if (this.cursors.up.isDown || this.wasd.W.isDown) dy = -1; else if (this.cursors.down.isDown || this.wasd.S.isDown) dy = 1;
@@ -522,10 +567,25 @@ class GameScene extends Phaser.Scene {
         if (typeRoll > 0.85) type = 'motorbike';
         else if (typeRoll > 0.65) type = 'truck';
 
+        // Lane Logic: 0,1 go RIGHT. 2,3 go LEFT.
         const lane = Phaser.Math.Between(0, 3);
-        const dir = Math.random() < 0.5 ? 1 : -1;
+        const dir = lane < 2 ? 1 : -1;
+
         const y = this.roadY + lane * this.laneHeight + this.laneHeight / 2;
         const x = dir === 1 ? -150 : this.scale.width + 150;
+
+        // Check for overlap with existing cars in this lane near the spawn point
+        const safeDistance = 250;
+        let safeToSpawn = true;
+        this.cars.getChildren().forEach(c => {
+            if (Math.abs(c.y - y) < 10) { // Same lane
+                // If car is too close to spawn point (considering direction)
+                if (dir === 1 && c.x < -150 + safeDistance) safeToSpawn = false;
+                if (dir === -1 && c.x > this.scale.width + 150 - safeDistance) safeToSpawn = false;
+            }
+        });
+
+        if (!safeToSpawn) return; // Skip this spawn cycle
 
         const baseSpeed = Phaser.Math.Between(GAME_CONFIG.CAR_MIN_SPEED, GAME_CONFIG.CAR_MAX_SPEED);
         let speedMultiplier = 1;
