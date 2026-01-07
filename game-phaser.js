@@ -605,6 +605,102 @@ class GameScene extends Phaser.Scene {
         }
     }
 
+    updateCars(delta) {
+        const cars = this.cars.getChildren();
+        const dt = delta / 1000;
+
+        cars.forEach(car => {
+            // Move car based on current speed
+            car.x += car.speed * dt;
+
+            // Target speed depends on type
+            const targetSpeed = car.type === 'motorbike' ?
+                (GAME_CONFIG.CAR_MAX_SPEED * 1.4 * this.difficulty * Math.sign(car.speed)) :
+                (car.type === 'truck' ?
+                    (GAME_CONFIG.CAR_MIN_SPEED * 0.8 * this.difficulty * Math.sign(car.speed)) :
+                    (GAME_CONFIG.CAR_MIN_SPEED * 1.2 * this.difficulty * Math.sign(car.speed)));
+
+            // Smoothly accelerate to target speed (unless blocked)
+            car.speed = Phaser.Math.Linear(car.speed, targetSpeed, 0.02);
+
+            const dir = Math.sign(car.speed);
+            const lookAheadDist = 200;
+
+            // Check for cars ahead
+            let carAhead = null;
+            let minDist = Infinity;
+
+            cars.forEach(other => {
+                if (car === other) return;
+
+                // Same lane check
+                if (Math.abs(car.y - other.y) < 10) {
+                    const dx = other.x - car.x;
+                    if (dir === 1 && dx > 0 && dx < lookAheadDist) {
+                        if (dx < minDist) { minDist = dx; carAhead = other; }
+                    } else if (dir === -1 && dx < 0 && dx > -lookAheadDist) {
+                        const dist = Math.abs(dx);
+                        if (dist < minDist) { minDist = dist; carAhead = other; }
+                    }
+                }
+            });
+
+            if (carAhead) {
+                // Brake if too close
+                if (minDist < 120) {
+                    car.speed = Phaser.Math.Linear(car.speed, carAhead.speed, 0.1);
+                }
+
+                // Try to overtake if stuck and moving slow
+                if (!car.isChangingLane && minDist < 100 && Math.abs(car.speed) < Math.abs(targetSpeed) * 0.8) {
+                    this.tryOvertake(car, cars, dir);
+                }
+            }
+
+            if (dir === 1 && car.x > this.scale.width + 200) car.destroy();
+            else if (dir === -1 && car.x < -200) car.destroy();
+        });
+    }
+
+    tryOvertake(car, allCars, dir) {
+        const laneIndex = Math.round((car.y - this.roadY - this.laneHeight / 2) / this.laneHeight);
+        const candidates = [];
+
+        // Only switch to lanes with same direction
+        if (dir === 1) {
+            if (laneIndex === 0) candidates.push(1);
+            if (laneIndex === 1) candidates.push(0);
+        } else {
+            if (laneIndex === 2) candidates.push(3);
+            if (laneIndex === 3) candidates.push(2);
+        }
+
+        for (const targetLane of candidates) {
+            const targetY = this.roadY + targetLane * this.laneHeight + this.laneHeight / 2;
+            let safe = true;
+
+            // Check target lane safety
+            for (const other of allCars) {
+                if (Math.abs(other.y - targetY) < 10) {
+                    const dx = Math.abs(other.x - car.x);
+                    if (dx < 250) { safe = false; break; }
+                }
+            }
+
+            if (safe) {
+                car.isChangingLane = true;
+                this.tweens.add({
+                    targets: car,
+                    y: targetY,
+                    duration: 600,
+                    ease: 'Power2',
+                    onComplete: () => { car.isChangingLane = false; }
+                });
+                break;
+            }
+        }
+    }
+
     spawnCar() {
         if (this.gameOver) return;
 
@@ -613,25 +709,22 @@ class GameScene extends Phaser.Scene {
         if (typeRoll > 0.85) type = 'motorbike';
         else if (typeRoll > 0.65) type = 'truck';
 
-        // Lane Logic: 0,1 go RIGHT. 2,3 go LEFT.
         const lane = Phaser.Math.Between(0, 3);
         const dir = lane < 2 ? 1 : -1;
 
         const y = this.roadY + lane * this.laneHeight + this.laneHeight / 2;
         const x = dir === 1 ? -150 : this.scale.width + 150;
 
-        // Check for overlap with existing cars in this lane near the spawn point
         const safeDistance = 250;
         let safeToSpawn = true;
         this.cars.getChildren().forEach(c => {
-            if (Math.abs(c.y - y) < 10) { // Same lane
-                // If car is too close to spawn point (considering direction)
+            if (Math.abs(c.y - y) < 10) {
                 if (dir === 1 && c.x < -150 + safeDistance) safeToSpawn = false;
                 if (dir === -1 && c.x > this.scale.width + 150 - safeDistance) safeToSpawn = false;
             }
         });
 
-        if (!safeToSpawn) return; // Skip this spawn cycle
+        if (!safeToSpawn) return;
 
         const baseSpeed = Phaser.Math.Between(GAME_CONFIG.CAR_MIN_SPEED, GAME_CONFIG.CAR_MAX_SPEED);
         let speedMultiplier = 1;
@@ -655,7 +748,6 @@ class GameScene extends Phaser.Scene {
         container.speed = speed;
         container.type = type;
 
-        // Dynamic hitboxes
         if (type === 'truck') { container.w = 140; container.h = 45; }
         else if (type === 'motorbike') { container.w = 50; container.h = 20; }
         else { container.w = 90; container.h = 35; }
