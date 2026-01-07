@@ -104,25 +104,55 @@ const Icons = {
     drawRefresh(g, x, y, size = 20, color = 0x00ffff, stroke = 2) {
         g.lineStyle(stroke, color);
         const s = size / 2;
+        // Draw 300 degree arc starting from top-right
         g.beginPath();
-        g.arc(x, y, s * 0.8, Math.PI * 0.2, Math.PI * 1.7, false);
+        g.arc(x, y, s, Math.PI * 1.5, Math.PI * 1.0, false); // Clockwise from 12 o'clock to 9 o'clock (gap at top-left) Nope, arc(x, y, radius, start, end)
+        // Let's do standard CW refresh: Start at 60deg, go to 330deg
+        // 0 is 3 o'clock.
+        // Start: -0.8 rad (~45 deg up-right?)
+        // End: 4.0 rad? 
+        // Let's stick to easy math.
+        // Start: 0.5 rad (bottom right). End: 5.5 rad (top right).
+        g.arc(x, y, s * 0.9, 0.8, 5.8, false);
         g.strokePath();
-        // Arrow head
-        const ax = x + Math.cos(Math.PI * 0.2) * s * 0.8;
-        const ay = y + Math.sin(Math.PI * 0.2) * s * 0.8;
-        g.lineBetween(ax, ay, ax - 5, ay);
-        g.lineBetween(ax, ay, ax, ay - 5);
+
+        // Arrow head at the end (5.8 rads)
+        const endX = x + Math.cos(5.8) * s * 0.9;
+        const endY = y + Math.sin(5.8) * s * 0.9;
+        // Direction vector is tangent. Tangent of circle at angle theta is theta + 90deg?
+        // Arrow pointing CW.
+        // Simple manual offset
+        g.beginPath();
+        g.moveTo(endX + 4, endY + 1);
+        g.lineTo(endX, endY);
+        g.lineTo(endX + 1, endY + 6);
+        g.strokePath();
     },
     drawExternalLink(g, x, y, size = 18, color = 0x00ff88, stroke = 2) {
         g.lineStyle(stroke, color);
         const s = size / 2;
-        g.strokeRect(x - s, y - s * 0.4, s * 1.4, s * 1.4);
-        g.lineBetween(x, y - s, x + s, y - s * 1);
-        g.lineBetween(x + s, y - s, x + s, y - s * 0.4);
-        g.lineBetween(x + s, y - s, x + s * 0.4, y - s * 1);
-        // Clear box corner
-        g.fillStyle(0x000000); // Usually matched to background
-        g.fillRect(x, y - s * 0.5, s + 2, s + 2);
+
+        // Box with gap at top-right
+        g.beginPath();
+        g.moveTo(x + s * 0.4, y - s); // Top edge start (leaving gap)
+        g.lineTo(x - s, y - s);       // Top-Left corner
+        g.lineTo(x - s, y + s);       // Bottom-Left corner
+        g.lineTo(x + s, y + s);       // Bottom-Right corner
+        g.lineTo(x + s, y - s * 0.4); // Right edge end (leaving gap)
+        g.strokePath();
+
+        // Arrow pointing top-right
+        g.beginPath();
+        g.moveTo(x - s * 0.2, y + s * 0.2); // Start inside
+        g.lineTo(x + s + 1, y - s - 1);       // End outside
+        g.strokePath();
+
+        // Arrow head
+        g.beginPath();
+        g.moveTo(x + s + 1, y - s + 4);
+        g.lineTo(x + s + 1, y - s - 1);
+        g.lineTo(x + s - 4, y - s - 1);
+        g.strokePath();
     }
 };
 
@@ -166,50 +196,52 @@ class SplashScene extends Phaser.Scene {
 
         this.add.rectangle(0, 0, width, height, 0x000000).setOrigin(0);
 
+        // --- POSTER ---
         const poster = this.add.image(width / 2, height / 2, 'poster');
         const scale = Math.min(width / poster.width, height / poster.height);
         poster.setScale(scale);
         poster.setAlpha(0);
 
         this.tweens.add({
-            targets: poster,
-            alpha: 1,
-            duration: 800,
-            ease: 'Power2'
+            targets: poster, alpha: 1, duration: 800, ease: 'Power2'
         });
 
-        // Start prompt
-        const startText = this.add.text(width / 2, height - 70, 'TAP TO START', {
-            fontFamily: 'Fredoka, sans-serif',
-            fontSize: '28px',
-            color: '#ffffff',
-            stroke: '#000000',
-            strokeThickness: 4
-        }).setOrigin(0.5);
+        // --- TUTORIAL OVERLAY (Hidden initially) ---
+        const tutorialGroup = this.add.container(0, 0);
+        tutorialGroup.setAlpha(0);
+        tutorialGroup.setDepth(10);
+
+        const boxW = Math.min(width * 0.85, 400);
+        const boxH = 220;
+        const tutBg = this.add.rectangle(width / 2, height / 2, boxW, boxH, 0x000000, 0.85).setStrokeStyle(2, 0x00ff00);
+        tutorialGroup.add(tutBg);
+
+        const infoStyle = { fontFamily: 'Outfit, sans-serif', fontSize: '18px', color: '#ffffff', align: 'center' };
+        const titleStyle = { fontFamily: 'Fredoka, sans-serif', fontSize: '24px', color: '#00ff00', fontStyle: 'bold' };
+
+        const t1 = this.add.text(width / 2, height / 2 - 80, 'HELP SAVE NEWTS!', titleStyle).setOrigin(0.5);
+        const t2 = this.add.text(width / 2, height / 2 - 30, 'Tap / WASD to move\nAvoid Cars & Cross Safely', infoStyle).setOrigin(0.5);
+        const t3 = this.add.text(width / 2, height / 2 + 40, 'SAVED: +100 Pts\nKILLED: -10 Pts', { ...titleStyle, fontSize: '20px', color: '#ffff00' }).setOrigin(0.5);
+
+        tutorialGroup.add([t1, t2, t3]);
+
+        // --- PROMPT TEXT ---
+        const promptText = this.add.text(width / 2, height - 70, 'TAP TO START', {
+            fontFamily: 'Fredoka, sans-serif', fontSize: '28px', color: '#ffffff', stroke: '#000000', strokeThickness: 4
+        }).setOrigin(0.5).setDepth(20);
 
         this.tweens.add({
-            targets: startText,
-            alpha: 0.4,
-            duration: 600,
-            yoyo: true,
-            repeat: -1
+            targets: promptText, alpha: 0.4, duration: 600, yoyo: true, repeat: -1
         });
 
-        // Robust transition handling
-        let started = false;
+        // --- STATE MANAGEMENT ---
+        let step = 0; // 0 = Poster, 1 = Tutorial, 2 = Starting
+
         const startGame = () => {
-            if (started) return;
-            started = true;
             console.log("Starting GameScene...");
-
-            // Fallback: Start scene directly if fade takes too long or fails
             const fallback = this.time.delayedCall(500, () => {
-                if (this.scene.isActive('SplashScene')) {
-                    console.warn("Fade transition timed out, starting GameScene directly.");
-                    this.scene.start('GameScene');
-                }
+                if (this.scene.isActive('SplashScene')) this.scene.start('GameScene');
             });
-
             this.cameras.main.fadeOut(300, 0, 0, 0);
             this.cameras.main.once('camerafadeoutcomplete', () => {
                 fallback.destroy();
@@ -217,16 +249,26 @@ class SplashScene extends Phaser.Scene {
             });
         };
 
-        // Clickable area (full screen)
-        const hitArea = this.add.rectangle(0, 0, width, height, 0x000000, 0)
-            .setOrigin(0)
-            .setInteractive({ useHandCursor: true });
+        const handleInput = () => {
+            if (step === 0) {
+                // Show Tutorial
+                step = 1;
+                promptText.setText('TAP TO PLAY');
+                this.tweens.add({ targets: tutorialGroup, alpha: 1, duration: 300 });
+                this.tweens.add({ targets: poster, alpha: 0.3, duration: 300 }); // Dim poster
+            } else if (step === 1) {
+                // Start Game
+                step = 2;
+                startGame();
+            }
+        };
 
-        // Ensure we can start even before the delay if the user is fast
-        hitArea.on('pointerdown', startGame);
-        this.input.keyboard.on('keydown', startGame);
+        // --- INPUTS ---
+        const hitArea = this.add.rectangle(0, 0, width, height, 0x000000, 0).setOrigin(0).setInteractive({ useHandCursor: true });
+        hitArea.on('pointerdown', handleInput);
+        this.input.keyboard.on('keydown', handleInput);
 
-        console.log("SplashScene ready. Waiting for input...");
+        console.log("SplashScene ready. Two-step start active.");
     }
 }
 
@@ -976,8 +1018,29 @@ class GameScene extends Phaser.Scene {
         }
     }
 
+
+
+    hitPlayer() {
+        if (this.gameOver) return;
+        this.lives--; this.updateHUD();
+        // Haptic feedback for mobile
+        if (navigator.vibrate) navigator.vibrate(200);
+
+        this.player.carried.forEach(n => n.destroy()); this.player.carried = [];
+        this.cameras.main.flash(150, 255, 50, 50, false);
+        this.player.invincible = true;
+        this.time.delayedCall(2000, () => { this.player.invincible = false; this.player.alpha = 1; });
+        this.player.x = this.scale.width / 2;
+        this.player.y = this.botSafe + 60;
+        if (this.lives <= 0) { this.gameOver = true; this.showGameOver(); }
+    }
+
     splatterNewt(newt) {
         this.lost++;
+        this.score = Math.max(0, this.score - 10); // Deduct 10 points
+        this.showFloatingText(newt.x, newt.y, '-10', '#ff0000');
+        this.updateHUD();
+
         for (let i = 0; i < 10; i++) {
             const p = this.add.circle(newt.x, newt.y, Phaser.Math.Between(3, 6), 0xff3366, 0.8);
             this.tweens.add({
@@ -985,10 +1048,11 @@ class GameScene extends Phaser.Scene {
                 alpha: 0, scale: 0.3, duration: 500 + Math.random() * 300, onComplete: () => p.destroy()
             });
         }
-        newt.destroy(); this.updateHUD();
+        newt.destroy();
     }
 
     createSuccessEffect(x, y) {
+        this.showFloatingText(x, y, '+100', '#00ff00');
         for (let i = 0; i < 12; i++) {
             const star = this.add.star(x, y, 5, 4, 8, 0x00ff88);
             star.setAlpha(0.9);
@@ -999,16 +1063,17 @@ class GameScene extends Phaser.Scene {
         }
     }
 
-    hitPlayer() {
-        if (this.gameOver) return;
-        this.lives--; this.updateHUD();
-        this.player.carried.forEach(n => n.destroy()); this.player.carried = [];
-        this.cameras.main.flash(150, 255, 50, 50, false);
-        this.player.invincible = true;
-        this.time.delayedCall(2000, () => { this.player.invincible = false; this.player.alpha = 1; });
-        this.player.x = this.scale.width / 2;
-        this.player.y = this.botSafe + 60;
-        if (this.lives <= 0) { this.gameOver = true; this.showGameOver(); }
+    showFloatingText(x, y, message, color) {
+        const text = this.add.text(x, y, message, {
+            fontFamily: 'Fredoka, sans-serif', fontSize: '24px', color: color, stroke: '#000', strokeThickness: 3
+        }).setOrigin(0.5);
+        this.tweens.add({
+            targets: text,
+            y: y - 50,
+            alpha: 0,
+            duration: 1000,
+            onComplete: () => text.destroy()
+        });
     }
 
     async showGameOver() {
