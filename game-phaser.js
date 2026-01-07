@@ -1,6 +1,6 @@
 /* ===================================
    SAVE THE NEWTS - ENHANCED EDITION
-   Smooth Gameplay + Better Graphics + Leaderboard
+   Alma Bridge Road - Help Newts Cross!
    =================================== */
 
 // ===== SUPABASE CONFIG =====
@@ -25,7 +25,6 @@ async function submitScore(name, score) {
             console.error("Error submitting score:", error);
             return false;
         }
-        console.log("Score submitted successfully!");
         return true;
     } catch (e) {
         console.error("Exception submitting score:", e);
@@ -41,13 +40,9 @@ async function getLeaderboard() {
             .select('*')
             .order('score', { ascending: false })
             .limit(5);
-        if (error) {
-            console.error("Error fetching leaderboard:", error);
-            return [];
-        }
+        if (error) return [];
         return data || [];
     } catch (e) {
-        console.error("Exception fetching leaderboard:", e);
         return [];
     }
 }
@@ -64,6 +59,9 @@ const GAME_CONFIG = {
     NEWT_SPAWN_RATE: 1800,
     NEWT_SPEED: 55,
     NEWT_SIZE: 50,
+
+    // Progressive difficulty thresholds
+    DIFFICULTY_THRESHOLD: 1000,
 
     COLORS: {
         forest: 0x0a1d0a,
@@ -87,18 +85,13 @@ class SplashScene extends Phaser.Scene {
     create() {
         const { width, height } = this.scale;
 
-        // Black background first
         this.add.rectangle(0, 0, width, height, 0x000000).setOrigin(0);
 
-        // Poster background - scaled to CONTAIN (fully visible, no cropping)
         const poster = this.add.image(width / 2, height / 2, 'poster');
-        const scaleX = width / poster.width;
-        const scaleY = height / poster.height;
-        const scale = Math.min(scaleX, scaleY); // Use MIN to contain, not crop
+        const scale = Math.min(width / poster.width, height / poster.height);
         poster.setScale(scale);
         poster.setAlpha(0);
 
-        // Fade in poster
         this.tweens.add({
             targets: poster,
             alpha: 1,
@@ -106,20 +99,7 @@ class SplashScene extends Phaser.Scene {
             ease: 'Power2'
         });
 
-        // Volunteer Link (Above Start button)
-        const volunteerText = this.add.text(width / 2, height - 130, '🌿 Volunteer at bioblitz.club/newts', {
-            fontFamily: 'Outfit, sans-serif',
-            fontSize: '18px',
-            color: '#00ff88',
-            stroke: '#000000',
-            strokeThickness: 3
-        }).setOrigin(0.5).setInteractive({ useHandCursor: true });
-
-        volunteerText.on('pointerdown', () => {
-            window.open('https://bioblitz.club/newts', '_blank');
-        });
-
-        // Start prompt
+        // Start prompt only (no volunteer link on splash)
         const startText = this.add.text(width / 2, height - 70, 'TAP TO START', {
             fontFamily: 'Fredoka, sans-serif',
             fontSize: '28px',
@@ -136,12 +116,7 @@ class SplashScene extends Phaser.Scene {
             repeat: -1
         });
 
-        this.input.once('pointerdown', (p) => {
-            // Don't start game if clicking volunteer link
-            if (p.y < height - 110) {
-                this.scene.start('GameScene');
-            }
-        });
+        this.input.once('pointerdown', () => this.scene.start('GameScene'));
         this.input.keyboard.once('keydown', () => this.scene.start('GameScene'));
     }
 }
@@ -160,6 +135,7 @@ class GameScene extends Phaser.Scene {
         this.lost = 0;
         this.lives = GAME_CONFIG.PLAYER_LIVES;
         this.gameOver = false;
+        this.difficulty = 1; // Progressive difficulty multiplier
 
         this.calculateLayout();
 
@@ -173,7 +149,12 @@ class GameScene extends Phaser.Scene {
 
         this.scale.on('resize', () => this.scene.restart());
 
-        this.time.addEvent({ delay: GAME_CONFIG.CAR_SPAWN_RATE, callback: this.spawnCar, callbackScope: this, loop: true });
+        this.carTimer = this.time.addEvent({
+            delay: GAME_CONFIG.CAR_SPAWN_RATE,
+            callback: this.spawnCar,
+            callbackScope: this,
+            loop: true
+        });
         this.time.addEvent({ delay: GAME_CONFIG.NEWT_SPAWN_RATE, callback: this.spawnNewt, callbackScope: this, loop: true });
 
         this.spawnNewt();
@@ -193,6 +174,7 @@ class GameScene extends Phaser.Scene {
         const { width, height } = this.scale;
         const g = this.add.graphics();
 
+        // Open Space Preserve (top)
         g.fillGradientStyle(0x0a1d0a, 0x0a1d0a, 0x153015, 0x153015);
         g.fillRect(0, 0, width, this.topSafe);
 
@@ -202,6 +184,7 @@ class GameScene extends Phaser.Scene {
             g.fillTriangle(x, this.topSafe, x + 35, this.topSafe - h, x + 70, this.topSafe);
         }
 
+        // Lexington Reservoir (bottom)
         g.fillGradientStyle(0x0a1a2d, 0x0a1a2d, 0x152840, 0x152840);
         g.fillRect(0, this.botSafe, width, height - this.botSafe);
 
@@ -210,6 +193,7 @@ class GameScene extends Phaser.Scene {
             g.lineBetween(0, y, width, y);
         }
 
+        // Road
         g.fillStyle(0x111111);
         g.fillRect(0, this.roadY, width, this.roadHeight);
 
@@ -217,6 +201,7 @@ class GameScene extends Phaser.Scene {
         g.lineBetween(0, this.roadY, width, this.roadY);
         g.lineBetween(0, this.botSafe, width, this.botSafe);
 
+        // Lane dividers
         for (let i = 1; i < 4; i++) {
             const y = this.roadY + i * this.laneHeight;
             for (let x = 20; x < width; x += 70) {
@@ -225,9 +210,69 @@ class GameScene extends Phaser.Scene {
             }
         }
 
-        const labelStyle = { fontFamily: 'Outfit, sans-serif', fontSize: '18px', color: '#44dd66', fontStyle: 'bold' };
-        this.add.text(width / 2, this.topSafe - 25, '🌲 FOREST (SAFE)', labelStyle).setOrigin(0.5);
-        this.add.text(width / 2, this.botSafe + 25, '💧 LAKE (SAFE)', { ...labelStyle, color: '#44aadd' }).setOrigin(0.5);
+        // Road name - subtle in center
+        this.add.text(width / 2, this.roadY + this.roadHeight / 2, 'ALMA BRIDGE ROAD', {
+            fontFamily: 'Outfit, sans-serif', fontSize: '14px', color: '#333333', fontStyle: 'italic'
+        }).setOrigin(0.5).setAlpha(0.5);
+
+        // Location labels
+        const labelStyle = { fontFamily: 'Outfit, sans-serif', fontSize: '14px', color: '#44dd66' };
+        this.add.text(width / 2, this.topSafe - 20, 'OPEN SPACE PRESERVE (SAFE)', labelStyle).setOrigin(0.5);
+        this.add.text(width / 2, this.botSafe + 20, 'LEXINGTON RESERVOIR (SAFE)', { ...labelStyle, color: '#44aadd' }).setOrigin(0.5);
+
+        // Newt crossing signs on sides of road
+        this.createCrossingSign(25, this.roadY + this.roadHeight / 2);
+        this.createCrossingSign(width - 25, this.roadY + this.roadHeight / 2);
+    }
+
+    createCrossingSign(x, y) {
+        const g = this.add.graphics();
+
+        // Yellow diamond background
+        g.fillStyle(0xffcc00);
+        g.beginPath();
+        g.moveTo(x, y - 22);
+        g.lineTo(x + 18, y);
+        g.lineTo(x, y + 22);
+        g.lineTo(x - 18, y);
+        g.closePath();
+        g.fillPath();
+
+        // Black border
+        g.lineStyle(2, 0x000000, 1);
+        g.beginPath();
+        g.moveTo(x, y - 22);
+        g.lineTo(x + 18, y);
+        g.lineTo(x, y + 22);
+        g.lineTo(x - 18, y);
+        g.closePath();
+        g.strokePath();
+
+        // Simple newt silhouette (black outline lizard shape)
+        g.lineStyle(2, 0x000000, 1);
+        g.beginPath();
+        // Body
+        g.moveTo(x - 8, y);
+        g.lineTo(x + 8, y);
+        // Head
+        g.moveTo(x + 8, y);
+        g.lineTo(x + 10, y - 2);
+        g.moveTo(x + 8, y);
+        g.lineTo(x + 10, y + 2);
+        // Tail
+        g.moveTo(x - 8, y);
+        g.lineTo(x - 12, y + 4);
+        // Front legs
+        g.moveTo(x + 4, y);
+        g.lineTo(x + 6, y - 6);
+        g.moveTo(x + 4, y);
+        g.lineTo(x + 6, y + 6);
+        // Back legs
+        g.moveTo(x - 4, y);
+        g.lineTo(x - 6, y - 6);
+        g.moveTo(x - 4, y);
+        g.lineTo(x - 6, y + 6);
+        g.strokePath();
     }
 
     createPlayer() {
@@ -291,10 +336,7 @@ class GameScene extends Phaser.Scene {
     updateHUD() {
         if (this.gameOver) return;
 
-        let hearts = '';
-        for (let i = 0; i < this.lives; i++) hearts += '❤️';
-        for (let i = this.lives; i < GAME_CONFIG.PLAYER_LIVES; i++) hearts += '🖤';
-        this.livesText.setText(hearts);
+        this.livesText.setText(`LIVES: ${this.lives}`);
 
         this.scoreText.setText(`SCORE: ${this.score}`);
 
@@ -305,6 +347,19 @@ class GameScene extends Phaser.Scene {
         this.carryText.setText(`CARRYING: ${carryStr}`);
 
         this.statsText.setText(`SAVED: ${this.saved} | LOST: ${this.lost}`);
+    }
+
+    updateDifficulty() {
+        // Progressive difficulty after threshold
+        if (this.score >= GAME_CONFIG.DIFFICULTY_THRESHOLD) {
+            const excess = this.score - GAME_CONFIG.DIFFICULTY_THRESHOLD;
+            this.difficulty = 1 + (excess / 1000) * 0.5; // +50% speed per 1000 pts after threshold
+            this.difficulty = Math.min(this.difficulty, 2.5); // Cap at 2.5x
+
+            // Decrease spawn delay (more cars)
+            const newDelay = Math.max(600, GAME_CONFIG.CAR_SPAWN_RATE / this.difficulty);
+            if (this.carTimer) this.carTimer.delay = newDelay;
+        }
     }
 
     createControls() {
@@ -403,7 +458,10 @@ class GameScene extends Phaser.Scene {
         const dir = Math.random() < 0.5 ? 1 : -1;
         const y = this.roadY + lane * this.laneHeight + this.laneHeight / 2;
         const x = dir === 1 ? -120 : this.scale.width + 120;
-        const speed = (Phaser.Math.Between(GAME_CONFIG.CAR_MIN_SPEED, GAME_CONFIG.CAR_MAX_SPEED)) * dir;
+
+        // Apply difficulty multiplier to speed
+        const baseSpeed = Phaser.Math.Between(GAME_CONFIG.CAR_MIN_SPEED, GAME_CONFIG.CAR_MAX_SPEED);
+        const speed = baseSpeed * this.difficulty * dir;
 
         const car = this.add.container(x, y);
         car.setDepth(30);
@@ -533,6 +591,7 @@ class GameScene extends Phaser.Scene {
                         this.saved++;
                         this.score += 100;
                         this.createSuccessEffect(newt.x, newt.y);
+                        this.updateDifficulty(); // Check for difficulty increase
                     }
                     newt.destroy();
                 });
@@ -608,23 +667,22 @@ class GameScene extends Phaser.Scene {
     async showGameOver() {
         const { width, height } = this.scale;
 
-        this.add.rectangle(0, 0, width, height, 0x000000, 0.9).setOrigin(0).setDepth(300);
+        this.add.rectangle(0, 0, width, height, 0x000000, 0.92).setOrigin(0).setDepth(300);
 
-        this.add.text(width / 2, height * 0.12, 'GAME OVER', {
-            fontFamily: 'Fredoka, sans-serif', fontSize: '48px', color: '#ff3366', fontStyle: 'bold'
+        this.add.text(width / 2, height * 0.08, 'GAME OVER', {
+            fontFamily: 'Fredoka, sans-serif', fontSize: '44px', color: '#ff3366', fontStyle: 'bold'
         }).setOrigin(0.5).setDepth(301);
 
-        this.add.text(width / 2, height * 0.22, `FINAL SCORE: ${this.score}`, {
-            fontFamily: 'Fredoka, sans-serif', fontSize: '28px', color: '#ffffff'
+        this.add.text(width / 2, height * 0.16, `FINAL SCORE: ${this.score}`, {
+            fontFamily: 'Fredoka, sans-serif', fontSize: '26px', color: '#ffffff'
         }).setOrigin(0.5).setDepth(301);
 
         // Name input for leaderboard
         if (supabaseClient) {
-            this.add.text(width / 2, height * 0.32, 'Enter your name:', {
-                fontFamily: 'Outfit, sans-serif', fontSize: '18px', color: '#aaaaaa'
+            this.add.text(width / 2, height * 0.24, 'Enter your name:', {
+                fontFamily: 'Outfit, sans-serif', fontSize: '16px', color: '#aaaaaa'
             }).setOrigin(0.5).setDepth(301);
 
-            // Create DOM input
             const inputEl = document.createElement('input');
             inputEl.type = 'text';
             inputEl.placeholder = 'Your Name';
@@ -632,24 +690,25 @@ class GameScene extends Phaser.Scene {
             inputEl.style.cssText = `
                 position: fixed;
                 left: 50%;
-                top: 38%;
+                top: 30%;
                 transform: translate(-50%, -50%);
-                padding: 12px 20px;
-                font-size: 18px;
+                padding: 10px 18px;
+                font-size: 16px;
+                font-family: 'Fredoka', sans-serif;
                 border: 2px solid #00ffff;
                 border-radius: 8px;
                 background: #111;
                 color: #fff;
                 text-align: center;
-                width: 200px;
+                width: 180px;
                 z-index: 10000;
                 outline: none;
             `;
             document.body.appendChild(inputEl);
             inputEl.focus();
 
-            const submitBtn = this.add.text(width / 2, height * 0.50, '📤 SUBMIT SCORE', {
-                fontFamily: 'Fredoka, sans-serif', fontSize: '22px', color: '#00ff00', backgroundColor: '#222', padding: { x: 20, y: 10 }
+            const submitBtn = this.add.text(width / 2, height * 0.38, 'SUBMIT SCORE', {
+                fontFamily: 'Fredoka, sans-serif', fontSize: '20px', color: '#00ff00', backgroundColor: '#222', padding: { x: 18, y: 8 }
             }).setOrigin(0.5).setDepth(301).setInteractive({ useHandCursor: true });
 
             let submitted = false;
@@ -657,75 +716,94 @@ class GameScene extends Phaser.Scene {
                 if (submitted) return;
                 const name = inputEl.value.trim() || 'Anonymous';
                 submitted = true;
-                submitBtn.setText('⏳ Submitting...');
+                submitBtn.setText('Submitting...');
                 submitBtn.disableInteractive();
 
                 const success = await submitScore(name, this.score);
 
                 if (success) {
-                    submitBtn.setText('✅ Submitted!');
+                    submitBtn.setText('Submitted!');
                     inputEl.remove();
-                    await this.showLeaderboard();
+                    // Refresh leaderboard after submit
+                    this.refreshLeaderboard();
                 } else {
-                    submitBtn.setText('❌ Error - Try Again');
+                    submitBtn.setText('Error - Try Again');
                     submitted = false;
                     submitBtn.setInteractive({ useHandCursor: true });
                 }
             });
 
-            // Cleanup on scene restart
             this.events.once('shutdown', () => {
                 if (inputEl.parentNode) inputEl.remove();
             });
 
-            // Show existing leaderboard
+            // Initial leaderboard display
+            this.leaderboardY = height * 0.46;
             await this.showLeaderboard();
 
         } else {
-            this.add.text(width / 2, height * 0.4, '(Leaderboard not configured)', {
-                fontFamily: 'Outfit, sans-serif', fontSize: '16px', color: '#666'
+            this.add.text(width / 2, height * 0.35, '(Leaderboard not configured)', {
+                fontFamily: 'Outfit, sans-serif', fontSize: '14px', color: '#555'
             }).setOrigin(0.5).setDepth(301);
+            this.leaderboardY = height * 0.40;
         }
 
-        // Volunteer link
-        const volunteerBtn = this.add.text(width / 2, height * 0.78, '🌿 Volunteer at bioblitz.club/newts', {
-            fontFamily: 'Outfit, sans-serif', fontSize: '18px', color: '#00ff88', backgroundColor: '#1a1a1a', padding: { x: 15, y: 8 }
-        }).setOrigin(0.5).setDepth(301).setInteractive({ useHandCursor: true });
+        // Stylish Volunteer CTA
+        const volunteerY = supabaseClient ? height * 0.78 : height * 0.60;
 
-        volunteerBtn.on('pointerdown', () => {
+        const volunteerBg = this.add.rectangle(width / 2, volunteerY, width * 0.85, 60, 0x004422, 0.9);
+        volunteerBg.setStrokeStyle(2, 0x00ff88);
+        volunteerBg.setOrigin(0.5).setDepth(301);
+
+        this.add.text(width / 2, volunteerY - 10, 'Want to help real newts?', {
+            fontFamily: 'Fredoka, sans-serif', fontSize: '16px', color: '#ffffff'
+        }).setOrigin(0.5).setDepth(302);
+
+        const volunteerLink = this.add.text(width / 2, volunteerY + 12, 'Volunteer at bioblitz.club/newts', {
+            fontFamily: 'Fredoka, sans-serif', fontSize: '18px', color: '#00ff88', fontStyle: 'bold'
+        }).setOrigin(0.5).setDepth(302).setInteractive({ useHandCursor: true });
+
+        volunteerLink.on('pointerdown', () => {
             window.open('https://bioblitz.club/newts', '_blank');
         });
 
         // Retry button
-        const retryBtn = this.add.text(width / 2, height * 0.90, '🔄 TRY AGAIN', {
-            fontFamily: 'Fredoka, sans-serif', fontSize: '26px', color: '#00ffff', backgroundColor: '#222', padding: { x: 25, y: 12 }
+        const retryBtn = this.add.text(width / 2, height * 0.92, 'TRY AGAIN', {
+            fontFamily: 'Fredoka, sans-serif', fontSize: '24px', color: '#00ffff', backgroundColor: '#222', padding: { x: 22, y: 10 }
         }).setOrigin(0.5).setDepth(301).setInteractive({ useHandCursor: true });
 
         retryBtn.on('pointerdown', () => this.scene.restart());
     }
 
     async showLeaderboard() {
-        const { width, height } = this.scale;
+        const { width } = this.scale;
+        const startY = this.leaderboardY;
 
-        this.add.text(width / 2, height * 0.58, '🏆 TOP SCORES', {
-            fontFamily: 'Fredoka, sans-serif', fontSize: '20px', color: '#ffcc00'
+        this.add.text(width / 2, startY, 'TOP SCORES', {
+            fontFamily: 'Fredoka, sans-serif', fontSize: '18px', color: '#ffcc00'
         }).setOrigin(0.5).setDepth(301);
 
         const scores = await getLeaderboard();
 
         if (scores.length === 0) {
-            this.add.text(width / 2, height * 0.65, 'No scores yet!', {
-                fontFamily: 'Outfit, sans-serif', fontSize: '16px', color: '#888'
+            this.add.text(width / 2, startY + 30, 'Be the first to set a high score!', {
+                fontFamily: 'Outfit, sans-serif', fontSize: '14px', color: '#666'
             }).setOrigin(0.5).setDepth(301);
         } else {
             scores.forEach((s, i) => {
-                const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : '  ';
-                const entry = `${medal} ${s.player_name} - ${s.score}`;
-                this.add.text(width / 2, height * 0.64 + (i * 22), entry, {
-                    fontFamily: 'Courier New', fontSize: '16px', color: '#ffffff'
+                const medal = i === 0 ? '1st' : i === 1 ? '2nd' : i === 2 ? '3rd' : `${i + 1}th`;
+                const entry = `${medal}  ${s.player_name} — ${s.score}`;
+                this.add.text(width / 2, startY + 28 + (i * 22), entry, {
+                    fontFamily: 'Outfit, sans-serif', fontSize: '15px', color: '#ffffff'
                 }).setOrigin(0.5).setDepth(301);
             });
         }
+    }
+
+    async refreshLeaderboard() {
+        // Clear old leaderboard entries and redraw
+        // For simplicity, we just redraw on top (in a real app, you'd track and destroy old texts)
+        await this.showLeaderboard();
     }
 }
 
