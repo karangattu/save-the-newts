@@ -108,7 +108,7 @@ class SplashScene extends Phaser.Scene {
 
         // Volunteer Link (Above Start button)
         const volunteerText = this.add.text(width / 2, height - 130, '🌿 Volunteer at bioblitz.club/newts', {
-            fontFamily: 'Arial, sans-serif',
+            fontFamily: 'Outfit, sans-serif',
             fontSize: '18px',
             color: '#00ff88',
             stroke: '#000000',
@@ -121,7 +121,7 @@ class SplashScene extends Phaser.Scene {
 
         // Start prompt
         const startText = this.add.text(width / 2, height - 70, 'TAP TO START', {
-            fontFamily: 'Arial, sans-serif',
+            fontFamily: 'Fredoka, sans-serif',
             fontSize: '28px',
             color: '#ffffff',
             stroke: '#000000',
@@ -225,7 +225,7 @@ class GameScene extends Phaser.Scene {
             }
         }
 
-        const labelStyle = { fontFamily: 'Arial', fontSize: '18px', color: '#44dd66', fontStyle: 'bold' };
+        const labelStyle = { fontFamily: 'Outfit, sans-serif', fontSize: '18px', color: '#44dd66', fontStyle: 'bold' };
         this.add.text(width / 2, this.topSafe - 25, '🌲 FOREST (SAFE)', labelStyle).setOrigin(0.5);
         this.add.text(width / 2, this.botSafe + 25, '💧 LAKE (SAFE)', { ...labelStyle, color: '#44aadd' }).setOrigin(0.5);
     }
@@ -278,7 +278,7 @@ class GameScene extends Phaser.Scene {
 
     createHUD() {
         const padding = 20;
-        const style = { fontFamily: 'Arial', fontSize: '22px', color: '#ffffff', stroke: '#000', strokeThickness: 3 };
+        const style = { fontFamily: 'Fredoka, sans-serif', fontSize: '22px', color: '#ffffff', stroke: '#000', strokeThickness: 3 };
 
         this.livesText = this.add.text(padding, padding, '', style).setDepth(200);
         this.scoreText = this.add.text(this.scale.width - padding, padding, '', style).setOrigin(1, 0).setDepth(200);
@@ -611,17 +611,17 @@ class GameScene extends Phaser.Scene {
         this.add.rectangle(0, 0, width, height, 0x000000, 0.9).setOrigin(0).setDepth(300);
 
         this.add.text(width / 2, height * 0.12, 'GAME OVER', {
-            fontFamily: 'Arial Black', fontSize: '48px', color: '#ff3366'
+            fontFamily: 'Fredoka, sans-serif', fontSize: '48px', color: '#ff3366', fontStyle: 'bold'
         }).setOrigin(0.5).setDepth(301);
 
         this.add.text(width / 2, height * 0.22, `FINAL SCORE: ${this.score}`, {
-            fontFamily: 'Arial', fontSize: '28px', color: '#ffffff'
+            fontFamily: 'Fredoka, sans-serif', fontSize: '28px', color: '#ffffff'
         }).setOrigin(0.5).setDepth(301);
 
         // Name input for leaderboard
         if (supabaseClient) {
             this.add.text(width / 2, height * 0.32, 'Enter your name:', {
-                fontFamily: 'Arial', fontSize: '18px', color: '#aaaaaa'
+                fontFamily: 'Outfit, sans-serif', fontSize: '18px', color: '#aaaaaa'
             }).setOrigin(0.5).setDepth(301);
 
             // Create DOM input
@@ -649,7 +649,7 @@ class GameScene extends Phaser.Scene {
             inputEl.focus();
 
             const submitBtn = this.add.text(width / 2, height * 0.50, '📤 SUBMIT SCORE', {
-                fontFamily: 'Arial', fontSize: '22px', color: '#00ff00', backgroundColor: '#222', padding: { x: 20, y: 10 }
+                fontFamily: 'Fredoka, sans-serif', fontSize: '22px', color: '#00ff00', backgroundColor: '#222', padding: { x: 20, y: 10 }
             }).setOrigin(0.5).setDepth(301).setInteractive({ useHandCursor: true });
 
             let submitted = false;
@@ -683,13 +683,13 @@ class GameScene extends Phaser.Scene {
 
         } else {
             this.add.text(width / 2, height * 0.4, '(Leaderboard not configured)', {
-                fontFamily: 'Arial', fontSize: '16px', color: '#666'
+                fontFamily: 'Outfit, sans-serif', fontSize: '16px', color: '#666'
             }).setOrigin(0.5).setDepth(301);
         }
 
         // Volunteer link
         const volunteerBtn = this.add.text(width / 2, height * 0.78, '🌿 Volunteer at bioblitz.club/newts', {
-            fontFamily: 'Arial', fontSize: '18px', color: '#00ff88', backgroundColor: '#1a1a1a', padding: { x: 15, y: 8 }
+            fontFamily: 'Outfit, sans-serif', fontSize: '18px', color: '#00ff88', backgroundColor: '#1a1a1a', padding: { x: 15, y: 8 }
         }).setOrigin(0.5).setDepth(301).setInteractive({ useHandCursor: true });
 
         volunteerBtn.on('pointerdown', () => {
@@ -698,7 +698,7 @@ class GameScene extends Phaser.Scene {
 
         // Retry button
         const retryBtn = this.add.text(width / 2, height * 0.90, '🔄 TRY AGAIN', {
-            fontFamily: 'Arial', fontSize: '26px', color: '#00ffff', backgroundColor: '#222', padding: { x: 25, y: 12 }
+            fontFamily: 'Fredoka, sans-serif', fontSize: '26px', color: '#00ffff', backgroundColor: '#222', padding: { x: 25, y: 12 }
         }).setOrigin(0.5).setDepth(301).setInteractive({ useHandCursor: true });
 
         retryBtn.on('pointerdown', () => this.scene.restart());
@@ -708,14 +708,14 @@ class GameScene extends Phaser.Scene {
         const { width, height } = this.scale;
 
         this.add.text(width / 2, height * 0.58, '🏆 TOP SCORES', {
-            fontFamily: 'Arial', fontSize: '20px', color: '#ffcc00'
+            fontFamily: 'Fredoka, sans-serif', fontSize: '20px', color: '#ffcc00'
         }).setOrigin(0.5).setDepth(301);
 
         const scores = await getLeaderboard();
 
         if (scores.length === 0) {
             this.add.text(width / 2, height * 0.65, 'No scores yet!', {
-                fontFamily: 'Arial', fontSize: '16px', color: '#888'
+                fontFamily: 'Outfit, sans-serif', fontSize: '16px', color: '#888'
             }).setOrigin(0.5).setDepth(301);
         } else {
             scores.forEach((s, i) => {
