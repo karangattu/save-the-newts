@@ -449,6 +449,10 @@ class GameScene extends Phaser.Scene {
         const g = this.add.graphics();
         g.fillStyle(0x000000, 0.4); g.fillEllipse(0, 28, 35, 12);
         g.fillStyle(0x2c3e50); g.fillRoundedRect(-12, 8, 10, 22, 3); g.fillRoundedRect(2, 8, 10, 22, 3);
+        // Hands
+        g.fillStyle(0xfce4d6);
+        g.fillCircle(-20, -5, 6); // Left hand
+        g.fillCircle(20, -5, 6);  // Right hand
         g.fillStyle(0xf1c40f); g.fillRoundedRect(-18, -18, 36, 32, 5);
         g.fillStyle(0xffffff, 0.9); g.fillRect(-18, -8, 36, 5); g.fillRect(-18, 4, 36, 5);
         g.fillStyle(0xff6b00); g.fillRect(-18, -2, 36, 3);
