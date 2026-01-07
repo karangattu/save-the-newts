@@ -297,23 +297,69 @@ class GameScene extends Phaser.Scene {
         const { width, height } = this.scale;
         const g = this.add.graphics();
 
-        // Open Space Preserve (top)
-        g.fillGradientStyle(0x0a1d0a, 0x0a1d0a, 0x153015, 0x153015);
+        // Open Space Preserve (top) - High Res Forest
+        g.fillGradientStyle(0x051805, 0x051805, 0x0a2a0a, 0x0a2a0a);
         g.fillRect(0, 0, width, this.topSafe);
 
-        g.fillStyle(0x051005, 0.8);
-        for (let x = 0; x < width + 80; x += 70) {
-            const h = 20 + Math.random() * 15;
-            g.fillTriangle(x, this.topSafe, x + 35, this.topSafe - h, x + 70, this.topSafe);
+        // Draw dense forest with depth (3 layers)
+        const layers = 3;
+        for (let l = 0; l < layers; l++) {
+            const density = 40; // Horizontal spacing
+            // Darker in back, lighter in front
+            const brightness = 0.4 + (l * 0.2);
+            const baseColor = Phaser.Display.Color.GetColor(30 * brightness, 80 * brightness, 40 * brightness);
+            const yOffset = this.topSafe - (15 * (layers - l)); // Layers receding back
+
+            for (let x = -20; x < width + 20; x += density * (0.8 + Math.random() * 0.4)) {
+                const height = 40 + (l * 10) + Math.random() * 15;
+                const w = 25 + (l * 5);
+
+                g.fillStyle(baseColor);
+
+                // Draw Pine Tree (3 triangles stacked)
+                // Bottom tier
+                g.fillTriangle(x, this.topSafe, x + w / 2, this.topSafe - height * 0.4, x + w, this.topSafe);
+                // Middle tier
+                g.fillTriangle(x + w * 0.1, this.topSafe - height * 0.3, x + w / 2, this.topSafe - height * 0.7, x + w * 0.9, this.topSafe - height * 0.3);
+                // Top tier
+                g.fillTriangle(x + w * 0.2, this.topSafe - height * 0.6, x + w / 2, this.topSafe - height, x + w * 0.8, this.topSafe - height * 0.6);
+            }
         }
 
-        // Lexington Reservoir (bottom)
-        g.fillGradientStyle(0x0a1a2d, 0x0a1a2d, 0x152840, 0x152840);
+        // Lexington Reservoir (bottom) - High Res Water
+        // Deep water base
+        g.fillGradientStyle(0x001133, 0x001133, 0x002244, 0x002244);
         g.fillRect(0, this.botSafe, width, height - this.botSafe);
 
-        g.lineStyle(1, 0x3388aa, 0.2);
-        for (let y = this.botSafe + 15; y < height; y += 12) {
-            g.lineBetween(0, y, width, y);
+        // Procedural Waves - Multiple layers for "high res" feel
+        const waveLayers = 5;
+        for (let l = 0; l < waveLayers; l++) {
+            const yBase = this.botSafe + 10 + (l * ((height - this.botSafe) / waveLayers));
+            g.lineStyle(2, 0x44aadd, 0.3 - (l * 0.05)); // Fades out slightly at bottom
+            g.fillStyle(0x003366, 0.3); // Semi-transparent fill for depth
+
+            g.beginPath();
+            g.moveTo(0, height);
+            g.lineTo(0, yBase);
+
+            // Draw sine wave across width
+            const freq = 0.02 + (l * 0.005);
+            const amp = 5 + (l * 2);
+            for (let x = 0; x <= width; x += 10) {
+                const y = yBase + Math.sin(x * freq + l) * amp;
+                g.lineTo(x, y);
+            }
+            g.lineTo(width, height);
+            g.closePath();
+            g.fillPath();
+            g.strokePath();
+
+            // Add shimmering highlights
+            g.fillStyle(0xffffff, 0.1);
+            for (let x = 0; x < width; x += 50 + Math.random() * 50) {
+                const y = yBase + Math.sin(x * freq + l) * amp;
+                g.fillCircle(x, y, 1.5);
+            }
         }
 
         // Road
