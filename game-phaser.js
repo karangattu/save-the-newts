@@ -533,17 +533,45 @@ class GameScene extends Phaser.Scene {
         const style = { fontFamily: 'Fredoka, sans-serif', fontSize: '20px', color: '#ffffff', stroke: '#000', strokeThickness: 3 };
 
         this.livesIconGroup = this.add.group();
-        this.scoreText = this.add.text(this.scale.width - padding, padding, '', style).setOrigin(1, 0).setDepth(200);
+
+        // Score display - made more prominent with background panel
+        this.scoreBg = this.add.graphics().setDepth(199);
+        this.scoreBg.fillStyle(0x000000, 0.7);
+        this.scoreBg.fillRoundedRect(this.scale.width - 130, 10, 120, 50, 10);
+        this.scoreBg.lineStyle(2, 0xffcc00, 0.8);
+        this.scoreBg.strokeRoundedRect(this.scale.width - 130, 10, 120, 50, 10);
+
+        this.scoreText = this.add.text(this.scale.width - padding - 5, padding + 18, '', {
+            fontFamily: 'Fredoka, sans-serif',
+            fontSize: '35px',  // Increased by 75%
+            color: '#ffcc00',
+            stroke: '#000000',
+            strokeThickness: 4,
+            shadow: { offsetX: 2, offsetY: 2, color: '#000000', blur: 4, fill: true }
+        }).setOrigin(1, 0).setDepth(200);
+
+        // "SCORE" label above the number
+        this.add.text(this.scale.width - padding - 5, padding - 2, 'SCORE', {
+            fontFamily: 'Outfit, sans-serif',
+            fontSize: '12px',
+            color: '#aaaaaa'
+        }).setOrigin(1, 0).setDepth(200);
+
         this.carryText = this.add.text(this.scale.width / 2, padding, '', { ...style, color: '#00ffff' }).setOrigin(0.5, 0).setDepth(200);
 
-        // Fancy styling for Stats (Saved/Lost)
-        this.statsText = this.add.text(padding, this.scale.height - padding, '', {
+        // Stats panel with semi-transparent dark background
+        this.statsBg = this.add.graphics().setDepth(199);
+        this.statsBg.fillStyle(0x000000, 0.75);
+        this.statsBg.fillRoundedRect(10, this.scale.height - 55, 200, 45, 10);
+        this.statsBg.lineStyle(2, 0x00ffff, 0.5);
+        this.statsBg.strokeRoundedRect(10, this.scale.height - 55, 200, 45, 10);
+
+        this.statsText = this.add.text(padding + 5, this.scale.height - padding - 8, '', {
             fontFamily: 'Fredoka, sans-serif',
             fontSize: '22px',
             color: '#ffffff',
             stroke: '#000000',
-            strokeThickness: 4,
-            shadow: { offsetX: 2, offsetY: 2, color: '#000000', blur: 4, fill: true }
+            strokeThickness: 3
         }).setOrigin(0, 1).setDepth(200);
 
         this.updateHUD();
@@ -1000,7 +1028,12 @@ class GameScene extends Phaser.Scene {
         this.newts.getChildren().forEach(newt => {
             if (!newt.isCarried && this.player.carried.length < 2) {
                 const dist = Phaser.Math.Distance.Between(this.player.x, this.player.y, newt.x, newt.y);
-                if (dist < 50) { newt.isCarried = true; this.player.carried.push(newt); this.updateHUD(); }
+                if (dist < 50) {
+                    newt.isCarried = true;
+                    this.player.carried.push(newt);
+                    this.createPickupEffect(newt.x, newt.y);
+                    this.updateHUD();
+                }
             }
         });
         if (this.player.carried.length > 0) {
@@ -1052,7 +1085,21 @@ class GameScene extends Phaser.Scene {
     }
 
     createSuccessEffect(x, y) {
-        this.showFloatingText(x, y, '+100', '#00ff00');
+        // More prominent floating text for saving newts
+        this.showFloatingText(x, y, '+100 PTS', '#00ff00', true);
+
+        // Visual pulse ring effect
+        const ring = this.add.circle(x, y, 20, 0x00ff88, 0.6).setDepth(100);
+        this.tweens.add({
+            targets: ring,
+            scale: 3,
+            alpha: 0,
+            duration: 500,
+            ease: 'Power2',
+            onComplete: () => ring.destroy()
+        });
+
+        // Particle burst
         for (let i = 0; i < 12; i++) {
             const star = this.add.star(x, y, 5, 4, 8, 0x00ff88);
             star.setAlpha(0.9);
@@ -1063,15 +1110,79 @@ class GameScene extends Phaser.Scene {
         }
     }
 
-    showFloatingText(x, y, message, color) {
-        const text = this.add.text(x, y, message, {
-            fontFamily: 'Fredoka, sans-serif', fontSize: '24px', color: color, stroke: '#000', strokeThickness: 3
-        }).setOrigin(0.5);
+    createPickupEffect(x, y) {
+        // Pickup sparkle effect when collecting a newt
+        for (let i = 0; i < 8; i++) {
+            const angle = (i / 8) * Math.PI * 2;
+            const spark = this.add.circle(x, y, 4, 0x00ffff, 0.9).setDepth(60);
+            this.tweens.add({
+                targets: spark,
+                x: x + Math.cos(angle) * 40,
+                y: y + Math.sin(angle) * 40,
+                alpha: 0,
+                scale: 0.3,
+                duration: 400,
+                ease: 'Power2',
+                onComplete: () => spark.destroy()
+            });
+        }
+
+        // Quick flash on player
+        const flash = this.add.circle(this.player.x, this.player.y, 50, 0x00ffff, 0.3).setDepth(49);
         this.tweens.add({
-            targets: text,
+            targets: flash,
+            scale: 1.5,
+            alpha: 0,
+            duration: 300,
+            onComplete: () => flash.destroy()
+        });
+
+        // "PICKED UP!" mini text
+        const pickupText = this.add.text(x, y - 20, 'PICKED UP!', {
+            fontFamily: 'Fredoka, sans-serif',
+            fontSize: '16px',
+            color: '#00ffff',
+            stroke: '#000000',
+            strokeThickness: 2
+        }).setOrigin(0.5).setDepth(100);
+
+        this.tweens.add({
+            targets: pickupText,
             y: y - 50,
             alpha: 0,
-            duration: 1000,
+            duration: 600,
+            onComplete: () => pickupText.destroy()
+        });
+    }
+
+    showFloatingText(x, y, message, color, isLarge = false) {
+        const fontSize = isLarge ? '32px' : '24px';
+        const text = this.add.text(x, y, message, {
+            fontFamily: 'Fredoka, sans-serif',
+            fontSize: fontSize,
+            color: color,
+            stroke: '#000',
+            strokeThickness: isLarge ? 5 : 3,
+            shadow: isLarge ? { offsetX: 2, offsetY: 2, color: '#000000', blur: 4, fill: true } : null
+        }).setOrigin(0.5).setDepth(150);
+
+        // Scale up animation for large text
+        if (isLarge) {
+            text.setScale(0.5);
+            this.tweens.add({
+                targets: text,
+                scale: 1.2,
+                duration: 150,
+                yoyo: true,
+                ease: 'Back.easeOut'
+            });
+        }
+
+        this.tweens.add({
+            targets: text,
+            y: y - 60,
+            alpha: 0,
+            duration: 1200,
             onComplete: () => text.destroy()
         });
     }
