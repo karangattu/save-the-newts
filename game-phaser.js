@@ -189,6 +189,7 @@ class SplashScene extends Phaser.Scene {
     preload() {
         this.load.image('poster', 'assets/poster.jpg');
         this.load.image('newt', 'assets/newt.png');
+        this.load.audio('bgm_start', 'assets/bgm_start.mp3');
     }
 
     create() {
@@ -234,16 +235,39 @@ class SplashScene extends Phaser.Scene {
             targets: promptText, alpha: 0.4, duration: 600, yoyo: true, repeat: -1
         });
 
+        // --- AUDIO ---
+        // Play start music if loaded
+        if (this.cache.audio.exists('bgm_start')) {
+            this.bgm = this.sound.add('bgm_start', { loop: true, volume: 0 });
+            this.bgm.play();
+            // Fade in over 1 second
+            this.tweens.add({
+                targets: this.bgm,
+                volume: 0.5,
+                duration: 1000
+            });
+        }
+
         // --- STATE MANAGEMENT ---
         let step = 0; // 0 = Poster, 1 = Tutorial, 2 = Starting
 
         const startGame = () => {
             console.log("Starting GameScene...");
             const fallback = this.time.delayedCall(500, () => {
+                if (this.bgm) { this.bgm.stop(); this.bgm.destroy(); }
                 if (this.scene.isActive('SplashScene')) this.scene.start('GameScene');
             });
+            // Fade out music
+            if (this.bgm) {
+                this.tweens.add({
+                    targets: this.bgm,
+                    volume: 0,
+                    duration: 300
+                });
+            }
             this.cameras.main.fadeOut(300, 0, 0, 0);
             this.cameras.main.once('camerafadeoutcomplete', () => {
+                if (this.bgm) this.bgm.stop();
                 fallback.destroy();
                 this.scene.start('GameScene');
             });
@@ -279,6 +303,10 @@ class GameScene extends Phaser.Scene {
     preload() {
         this.load.image('newt', 'assets/newt.png');
         this.load.image('newtXing', 'assets/newt_Xing.png');
+        this.load.audio('sfx_saved', 'assets/sfx_saved.mp3');
+        this.load.audio('sfx_hit', 'assets/sfx_hit.mp3');
+        this.load.audio('sfx_crash', 'assets/sfx_crash.mp3');
+        this.load.audio('bgm_end', 'assets/bgm_end.mp3');
     }
 
     create() {
@@ -1042,7 +1070,13 @@ class GameScene extends Phaser.Scene {
             if (inForest || inLake) {
                 this.player.carried.forEach(newt => {
                     const correct = (newt.dest === 'FOREST' && inForest) || (newt.dest === 'LAKE' && inLake);
-                    if (correct) { this.saved++; this.score += 100; this.createSuccessEffect(newt.x, newt.y); this.updateDifficulty(); }
+                    if (correct) {
+                        this.saved++;
+                        this.score += 100;
+                        if (this.cache.audio.exists('sfx_saved')) this.sound.play('sfx_saved', { volume: 0.6 });
+                        this.createSuccessEffect(newt.x, newt.y);
+                        this.updateDifficulty();
+                    }
                     newt.destroy();
                 });
                 this.player.carried = [];
@@ -1056,6 +1090,14 @@ class GameScene extends Phaser.Scene {
     hitPlayer() {
         if (this.gameOver) return;
         this.lives--; this.updateHUD();
+
+        if (this.cache.audio.exists('sfx_crash')) {
+            this.sound.play('sfx_crash', { volume: 0.7 });
+        } else if (this.cache.audio.exists('sfx_hit')) {
+            // Fallback if sfx_crash missing
+            this.sound.play('sfx_hit', { volume: 0.7 });
+        }
+
         // Haptic feedback for mobile
         if (navigator.vibrate) navigator.vibrate(200);
 
@@ -1071,7 +1113,8 @@ class GameScene extends Phaser.Scene {
     splatterNewt(newt) {
         this.lost++;
         this.score = Math.max(0, this.score - 10); // Deduct 10 points
-        this.showFloatingText(newt.x, newt.y, '-10', '#ff0000');
+        this.showFloatingText(newt.x, newt.y, '-10', '#ff0000', true);
+        if (this.cache.audio.exists('sfx_hit')) this.sound.play('sfx_hit', { volume: 0.7 });
         this.updateHUD();
 
         for (let i = 0; i < 10; i++) {
@@ -1188,6 +1231,11 @@ class GameScene extends Phaser.Scene {
     }
 
     async showGameOver() {
+        if (this.cache.audio.exists('bgm_end')) {
+            this.bgmEnd = this.sound.add('bgm_end', { volume: 0.6, loop: true });
+            this.bgmEnd.play();
+        }
+
         const { width, height } = this.scale;
         this.add.rectangle(0, 0, width, height, 0x000000, 0.92).setOrigin(0).setDepth(300);
         this.add.text(width / 2, height * 0.08, 'GAME OVER', {
@@ -1253,7 +1301,10 @@ class GameScene extends Phaser.Scene {
         }).setOrigin(0.5).setDepth(301).setInteractive({ useHandCursor: true });
         const retryIcon = this.add.graphics().setDepth(302);
         Icons.drawRefresh(retryIcon, retryBtnText.x - retryBtnText.width / 2 + 22, height * 0.92, 22, 0x00ffff);
-        retryBtnText.on('pointerdown', () => this.scene.restart());
+        retryBtnText.on('pointerdown', () => {
+            if (this.bgmEnd) { this.bgmEnd.stop(); this.bgmEnd.destroy(); }
+            this.scene.restart();
+        });
     }
 
     async showLeaderboard() {
