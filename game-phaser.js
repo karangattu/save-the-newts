@@ -231,6 +231,18 @@ class SplashScene extends Phaser.Scene {
             targets: promptText, alpha: 0.4, duration: 600, yoyo: true, repeat: -1
         });
 
+        // --- HIGH SCORE DISPLAY ---
+        this.highScoreText = this.add.text(width / 2, height - 30, 'HIGH SCORE: ...', {
+            fontFamily: 'Fredoka, sans-serif', fontSize: '20px', color: '#ffcc00', stroke: '#000000', strokeThickness: 3
+        }).setOrigin(0.5).setDepth(20);
+
+        getLeaderboard().then(scores => {
+            if (this.scene.isActive('SplashScene')) {
+                const topScore = scores.length > 0 ? scores[0].score : 0;
+                this.highScoreText.setText(`HIGH SCORE: ${topScore}`);
+            }
+        });
+
         // --- AUDIO ---
         // Play start music if loaded
         if (this.cache.audio.exists('bgm_start')) {
