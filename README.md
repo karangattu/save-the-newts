@@ -1,5 +1,5 @@
 # Save the Newts
-A game supposed to show how volunteers can help with assisted migration for Newts on Alma Bridge road
+An educational game demonstrating the impact of volunteer-assisted newt migration on Alma Bridge Road.
 
 
 Get involved with [Newt Patrol](https://www.bioblitz.club/newts.com/)
