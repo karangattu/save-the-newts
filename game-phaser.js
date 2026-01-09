@@ -189,6 +189,7 @@ class SplashScene extends Phaser.Scene {
     preload() {
         this.load.image('poster', 'assets/poster.jpg');
         this.load.image('newt', 'assets/newt.png');
+        this.load.image('tutorial', 'assets/tutorial.png');
         this.load.audio('bgm_start', 'assets/bgm_start.mp3');
     }
 
@@ -212,19 +213,14 @@ class SplashScene extends Phaser.Scene {
         tutorialGroup.setAlpha(0);
         tutorialGroup.setDepth(10);
 
-        const boxW = Math.min(width * 0.85, 400);
-        const boxH = 220;
-        const tutBg = this.add.rectangle(width / 2, height / 2, boxW, boxH, 0x000000, 0.85).setStrokeStyle(2, 0x00ff00);
-        tutorialGroup.add(tutBg);
-
-        const infoStyle = { fontFamily: 'Outfit, sans-serif', fontSize: '18px', color: '#ffffff', align: 'center' };
-        const titleStyle = { fontFamily: 'Fredoka, sans-serif', fontSize: '24px', color: '#00ff00', fontStyle: 'bold' };
-
-        const t1 = this.add.text(width / 2, height / 2 - 80, 'HELP SAVE NEWTS!', titleStyle).setOrigin(0.5);
-        const t2 = this.add.text(width / 2, height / 2 - 30, 'Tap / WASD to move\nAvoid Cars & Cross Safely', infoStyle).setOrigin(0.5);
-        const t3 = this.add.text(width / 2, height / 2 + 40, 'SAVED: +100 Pts\nKILLED: -10 Pts', { ...titleStyle, fontSize: '20px', color: '#ffff00' }).setOrigin(0.5);
-
-        tutorialGroup.add([t1, t2, t3]);
+        // Use the tutorial image instead of programmatic elements
+        const tutorialImg = this.add.image(width / 2, height / 2, 'tutorial');
+        // Scale to fit nicely on screen (max 90% of width or 85% of height)
+        const maxW = width * 0.9;
+        const maxH = height * 0.85;
+        const imgScale = Math.min(maxW / tutorialImg.width, maxH / tutorialImg.height);
+        tutorialImg.setScale(imgScale);
+        tutorialGroup.add(tutorialImg);
 
         // --- PROMPT TEXT ---
         const promptText = this.add.text(width / 2, height - 70, 'TAP TO START', {
