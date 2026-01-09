@@ -232,14 +232,14 @@ class SplashScene extends Phaser.Scene {
         });
 
         // --- HIGH SCORE DISPLAY ---
-        this.highScoreText = this.add.text(width / 2, height - 30, 'HIGH SCORE: ...', {
+        this.highScoreText = this.add.text(width / 2, height - 30, 'BEAT THE CURRENT HIGH SCORE: ...', {
             fontFamily: 'Fredoka, sans-serif', fontSize: '20px', color: '#ffcc00', stroke: '#000000', strokeThickness: 3
         }).setOrigin(0.5).setDepth(20);
 
         getLeaderboard().then(scores => {
             if (this.scene.isActive('SplashScene')) {
                 const topScore = scores.length > 0 ? scores[0].score : 0;
-                this.highScoreText.setText(`HIGH SCORE: ${topScore}`);
+                this.highScoreText.setText(`BEAT THE CURRENT HIGH SCORE: ${topScore}`);
             }
         });
 
