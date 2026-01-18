@@ -182,6 +182,8 @@ const GAME_CONFIG = {
     }
 };
 
+const isCompactViewport = (width, height) => Math.min(width, height) < 600;
+
 // ===== SPLASH SCENE =====
 class SplashScene extends Phaser.Scene {
     constructor() { super({ key: 'SplashScene' }); }
@@ -195,13 +197,14 @@ class SplashScene extends Phaser.Scene {
 
     create() {
         const { width, height } = this.scale;
+        const isCompact = isCompactViewport(width, height);
 
         this.add.rectangle(0, 0, width, height, 0x000000).setOrigin(0);
 
         // --- POSTER ---
         const poster = this.add.image(width / 2, height / 2, 'poster');
         const scale = Math.min(width / poster.width, height / poster.height);
-        poster.setScale(scale);
+        poster.setScale(isCompact ? scale * 0.92 : scale);
         poster.setAlpha(0);
 
         this.tweens.add({
@@ -216,15 +219,15 @@ class SplashScene extends Phaser.Scene {
         // Use the tutorial image instead of programmatic elements
         const tutorialImg = this.add.image(width / 2, height / 2, 'tutorial');
         // Scale to fit nicely on screen (max 90% of width or 85% of height)
-        const maxW = width * 0.9;
-        const maxH = height * 0.85;
+        const maxW = width * (isCompact ? 0.94 : 0.9);
+        const maxH = height * (isCompact ? 0.8 : 0.85);
         const imgScale = Math.min(maxW / tutorialImg.width, maxH / tutorialImg.height);
         tutorialImg.setScale(imgScale);
         tutorialGroup.add(tutorialImg);
 
         // --- PROMPT TEXT ---
-        const promptText = this.add.text(width / 2, height - 70, 'TAP TO START', {
-            fontFamily: 'Fredoka, sans-serif', fontSize: '28px', color: '#ffffff', stroke: '#000000', strokeThickness: 4
+        const promptText = this.add.text(width / 2, height - (isCompact ? 52 : 70), 'TAP TO START', {
+            fontFamily: 'Fredoka, sans-serif', fontSize: isCompact ? '22px' : '28px', color: '#ffffff', stroke: '#000000', strokeThickness: isCompact ? 3 : 4
         }).setOrigin(0.5).setDepth(20);
 
         this.tweens.add({
@@ -232,8 +235,8 @@ class SplashScene extends Phaser.Scene {
         });
 
         // --- HIGH SCORE DISPLAY ---
-        this.highScoreText = this.add.text(width / 2, height - 30, 'BEAT THE CURRENT HIGH SCORE: ...', {
-            fontFamily: 'Fredoka, sans-serif', fontSize: '20px', color: '#ffcc00', stroke: '#000000', strokeThickness: 3
+        this.highScoreText = this.add.text(width / 2, height - (isCompact ? 24 : 30), 'BEAT THE CURRENT HIGH SCORE: ...', {
+            fontFamily: 'Fredoka, sans-serif', fontSize: isCompact ? '16px' : '20px', color: '#ffcc00', stroke: '#000000', strokeThickness: isCompact ? 2 : 3
         }).setOrigin(0.5).setDepth(20);
 
         getLeaderboard().then(scores => {
@@ -351,7 +354,7 @@ class GameScene extends Phaser.Scene {
 
         // Rain effect
         this.raindrops = [];
-        for (let i = 0; i < 80; i++) {
+        for (let i = 0; i < this.rainDropCount; i++) {
             this.raindrops.push({
                 x: Phaser.Math.Between(0, this.scale.width),
                 y: Phaser.Math.Between(0, this.scale.height),
@@ -360,15 +363,23 @@ class GameScene extends Phaser.Scene {
             });
         }
         this.rainGraphics = this.add.graphics().setDepth(100);
+        if (this.isCompact) {
+            this.rainGraphics.setAlpha(0.8);
+        }
     }
 
     calculateLayout() {
         const { width, height } = this.scale;
-        this.roadHeight = Math.min(height * 0.55, 450);
+        this.isCompact = isCompactViewport(width, height);
+        this.layoutScale = this.isCompact ? 0.78 : 1;
+        this.roadHeight = Math.min(height * 0.55, this.isCompact ? 360 : 450);
         this.roadY = (height - this.roadHeight) / 2;
         this.laneHeight = this.roadHeight / 4;
         this.topSafe = this.roadY;
         this.botSafe = this.roadY + this.roadHeight;
+        this.rainDropCount = this.isCompact ? 40 : 80;
+        this.rainLayerCount = this.isCompact ? 3 : 5;
+        this.forestLayerCount = this.isCompact ? 2 : 3;
     }
 
     createEnvironment() {
@@ -379,18 +390,17 @@ class GameScene extends Phaser.Scene {
         g.fillGradientStyle(0x051805, 0x051805, 0x0a2a0a, 0x0a2a0a);
         g.fillRect(0, 0, width, this.topSafe);
 
-        // Draw dense forest with depth (3 layers)
-        const layers = 3;
+        // Draw dense forest with depth
+        const layers = this.forestLayerCount;
         for (let l = 0; l < layers; l++) {
-            const density = 40; // Horizontal spacing
+            const density = this.isCompact ? 55 : 40; // Horizontal spacing
             // Darker in back, lighter in front
             const brightness = 0.4 + (l * 0.2);
             const baseColor = Phaser.Display.Color.GetColor(30 * brightness, 80 * brightness, 40 * brightness);
-            const yOffset = this.topSafe - (15 * (layers - l)); // Layers receding back
 
             for (let x = -20; x < width + 20; x += density * (0.8 + Math.random() * 0.4)) {
-                const height = 40 + (l * 10) + Math.random() * 15;
-                const w = 25 + (l * 5);
+                const height = (this.isCompact ? 32 : 40) + (l * 10) + Math.random() * 15;
+                const w = (this.isCompact ? 20 : 25) + (l * 5);
 
                 g.fillStyle(baseColor);
 
@@ -410,7 +420,7 @@ class GameScene extends Phaser.Scene {
         g.fillRect(0, this.botSafe, width, height - this.botSafe);
 
         // Procedural Waves - Multiple layers for "high res" feel
-        const waveLayers = 5;
+        const waveLayers = this.rainLayerCount;
         for (let l = 0; l < waveLayers; l++) {
             const yBase = this.botSafe + 10 + (l * ((height - this.botSafe) / waveLayers));
             g.lineStyle(2, 0x44aadd, 0.3 - (l * 0.05)); // Fades out slightly at bottom
@@ -423,7 +433,7 @@ class GameScene extends Phaser.Scene {
             // Draw sine wave across width
             const freq = 0.02 + (l * 0.005);
             const amp = 5 + (l * 2);
-            for (let x = 0; x <= width; x += 10) {
+            for (let x = 0; x <= width; x += this.isCompact ? 16 : 10) {
                 const y = yBase + Math.sin(x * freq + l) * amp;
                 g.lineTo(x, y);
             }
@@ -434,7 +444,8 @@ class GameScene extends Phaser.Scene {
 
             // Add shimmering highlights
             g.fillStyle(0xffffff, 0.1);
-            for (let x = 0; x < width; x += 50 + Math.random() * 50) {
+            const shimmerStep = this.isCompact ? 80 : 50;
+            for (let x = 0; x < width; x += shimmerStep + Math.random() * shimmerStep) {
                 const y = yBase + Math.sin(x * freq + l) * amp;
                 g.fillCircle(x, y, 1.5);
             }
@@ -459,31 +470,35 @@ class GameScene extends Phaser.Scene {
 
         // Road name - subtle in center
         this.add.text(width / 2, this.roadY + this.roadHeight / 2, 'ALMA BRIDGE ROAD', {
-            fontFamily: 'Outfit, sans-serif', fontSize: '14px', color: '#333333', fontStyle: 'italic'
+            fontFamily: 'Outfit, sans-serif', fontSize: this.isCompact ? '12px' : '14px', color: '#333333', fontStyle: 'italic'
         }).setOrigin(0.5).setAlpha(0.5);
 
         // Location labels with MapPing icons
         // Fancy styling as requested
         const fancyStyle = {
             fontFamily: 'Fredoka, sans-serif',
-            fontSize: '18px',
+            fontSize: this.isCompact ? '14px' : '18px',
             fontStyle: 'bold',
             stroke: '#000000',
-            strokeThickness: 4,
+            strokeThickness: this.isCompact ? 3 : 4,
             shadow: { offsetX: 2, offsetY: 2, color: '#000000', blur: 4, fill: true }
         };
 
-        const topText = this.add.text(width / 2 + 12, this.topSafe - 25, 'OPEN SPACE PRESERVE', { ...fancyStyle, color: '#44dd66' }).setOrigin(0.5);
+        const topTextOffset = this.isCompact ? 18 : 25;
+        const topText = this.add.text(width / 2 + 12, this.topSafe - topTextOffset, 'OPEN SPACE PRESERVE', { ...fancyStyle, color: '#44dd66' }).setOrigin(0.5);
         const topIcon = this.add.graphics();
-        Icons.drawMapPin(topIcon, topText.x - topText.width / 2 - 18, this.topSafe - 26, 18, 0x44dd66);
+        Icons.drawMapPin(topIcon, topText.x - topText.width / 2 - (this.isCompact ? 12 : 18), this.topSafe - topTextOffset - 1, this.isCompact ? 14 : 18, 0x44dd66);
 
-        const botText = this.add.text(width / 2 + 12, this.botSafe + 25, 'LEXINGTON RESERVOIR', { ...fancyStyle, color: '#44aadd' }).setOrigin(0.5);
+        const botTextOffset = this.isCompact ? 18 : 25;
+        const botText = this.add.text(width / 2 + 12, this.botSafe + botTextOffset, 'LEXINGTON RESERVOIR', { ...fancyStyle, color: '#44aadd' }).setOrigin(0.5);
         const botIcon = this.add.graphics();
-        Icons.drawMapPin(botIcon, botText.x - botText.width / 2 - 18, this.botSafe + 24, 18, 0x44aadd);
+        Icons.drawMapPin(botIcon, botText.x - botText.width / 2 - (this.isCompact ? 12 : 18), this.botSafe + botTextOffset - 1, this.isCompact ? 14 : 18, 0x44aadd);
 
         // Newt crossing signs - diagonally opposite (top-left and bottom-right at road edges)
-        this.add.image(45, this.topSafe - 25, 'newtXing').setDisplaySize(50, 50);
-        this.add.image(width - 45, this.botSafe - 25, 'newtXing').setDisplaySize(50, 50);
+        const signSize = this.isCompact ? 40 : 50;
+        const signOffset = this.isCompact ? 34 : 45;
+        this.add.image(signOffset, this.topSafe - topTextOffset, 'newtXing').setDisplaySize(signSize, signSize);
+        this.add.image(width - signOffset, this.botSafe - topTextOffset, 'newtXing').setDisplaySize(signSize, signSize);
     }
 
     createCrossingSign(x, y) {
@@ -524,6 +539,7 @@ class GameScene extends Phaser.Scene {
         const { width } = this.scale;
         this.player = this.add.container(width / 2, this.botSafe + 60);
         this.player.setDepth(50);
+        this.player.setScale(this.layoutScale);
         const g = this.add.graphics();
         g.fillStyle(0x000000, 0.4); g.fillEllipse(0, 28, 35, 12);
         g.fillStyle(0x2c3e50); g.fillRoundedRect(-12, 8, 10, 22, 3); g.fillRoundedRect(2, 8, 10, 22, 3);
@@ -558,38 +574,42 @@ class GameScene extends Phaser.Scene {
         g.fillStyle(0xcc0000); g.fillRect(-13, -42, 26, 6); // Cap brim
         this.player.add(g);
         this.player.graphics = g;
-        this.player.speed = GAME_CONFIG.PLAYER_SPEED;
+        this.player.speed = GAME_CONFIG.PLAYER_SPEED * (this.isCompact ? 0.92 : 1);
         this.player.carried = [];
         this.player.invincible = false;
         this.walkTime = 0;
     }
 
     createHUD() {
-        const padding = 20;
-        const style = { fontFamily: 'Fredoka, sans-serif', fontSize: '20px', color: '#ffffff', stroke: '#000', strokeThickness: 3 };
+        const padding = this.isCompact ? 12 : 20;
+        const style = { fontFamily: 'Fredoka, sans-serif', fontSize: this.isCompact ? '16px' : '20px', color: '#ffffff', stroke: '#000', strokeThickness: this.isCompact ? 2 : 3 };
 
         this.livesIconGroup = this.add.group();
 
         // Score display - made more prominent with background panel
         this.scoreBg = this.add.graphics().setDepth(199);
         this.scoreBg.fillStyle(0x000000, 0.7);
-        this.scoreBg.fillRoundedRect(this.scale.width - 130, 10, 120, 50, 10);
+        const scoreWidth = this.isCompact ? 98 : 120;
+        const scoreHeight = this.isCompact ? 40 : 50;
+        const scoreX = this.scale.width - scoreWidth - padding;
+        const scoreY = padding - 6;
+        this.scoreBg.fillRoundedRect(scoreX, scoreY, scoreWidth, scoreHeight, 10);
         this.scoreBg.lineStyle(2, 0xffcc00, 0.8);
-        this.scoreBg.strokeRoundedRect(this.scale.width - 130, 10, 120, 50, 10);
+        this.scoreBg.strokeRoundedRect(scoreX, scoreY, scoreWidth, scoreHeight, 10);
 
-        this.scoreText = this.add.text(this.scale.width - padding - 5, padding + 18, '', {
+        this.scoreText = this.add.text(this.scale.width - padding - 6, padding + (this.isCompact ? 12 : 18), '', {
             fontFamily: 'Fredoka, sans-serif',
-            fontSize: '35px',  // Increased by 75%
+            fontSize: this.isCompact ? '26px' : '35px',  // Increased by 75%
             color: '#ffcc00',
             stroke: '#000000',
-            strokeThickness: 4,
+            strokeThickness: this.isCompact ? 3 : 4,
             shadow: { offsetX: 2, offsetY: 2, color: '#000000', blur: 4, fill: true }
         }).setOrigin(1, 0).setDepth(200);
 
         // "SCORE" label above the number
-        this.add.text(this.scale.width - padding - 5, padding - 2, 'SCORE', {
+        this.add.text(this.scale.width - padding - 6, padding - 2, 'SCORE', {
             fontFamily: 'Outfit, sans-serif',
-            fontSize: '12px',
+            fontSize: this.isCompact ? '10px' : '12px',
             color: '#aaaaaa'
         }).setOrigin(1, 0).setDepth(200);
 
@@ -598,16 +618,20 @@ class GameScene extends Phaser.Scene {
         // Stats panel with semi-transparent dark background
         this.statsBg = this.add.graphics().setDepth(199);
         this.statsBg.fillStyle(0x000000, 0.75);
-        this.statsBg.fillRoundedRect(10, this.scale.height - 55, 200, 45, 10);
+        const statsWidth = this.isCompact ? 170 : 200;
+        const statsHeight = this.isCompact ? 38 : 45;
+        const statsX = padding - 2;
+        const statsY = this.scale.height - statsHeight - padding + 4;
+        this.statsBg.fillRoundedRect(statsX, statsY, statsWidth, statsHeight, 10);
         this.statsBg.lineStyle(2, 0x00ffff, 0.5);
-        this.statsBg.strokeRoundedRect(10, this.scale.height - 55, 200, 45, 10);
+        this.statsBg.strokeRoundedRect(statsX, statsY, statsWidth, statsHeight, 10);
 
-        this.statsText = this.add.text(padding + 5, this.scale.height - padding - 8, '', {
+        this.statsText = this.add.text(padding + 2, this.scale.height - padding - 2, '', {
             fontFamily: 'Fredoka, sans-serif',
-            fontSize: '22px',
+            fontSize: this.isCompact ? '18px' : '22px',
             color: '#ffffff',
             stroke: '#000000',
-            strokeThickness: 3
+            strokeThickness: this.isCompact ? 2 : 3
         }).setOrigin(0, 1).setDepth(200);
 
         this.updateHUD();
@@ -618,10 +642,14 @@ class GameScene extends Phaser.Scene {
 
         // Update Heart Icons
         this.livesIconGroup.clear(true, true);
+        const heartSize = this.isCompact ? 16 : 20;
+        const heartSpacing = this.isCompact ? 22 : 28;
+        const heartStartX = this.isCompact ? 22 : 30;
+        const heartY = this.isCompact ? 26 : 32;
         for (let i = 0; i < GAME_CONFIG.PLAYER_LIVES; i++) {
             const g = this.add.graphics().setDepth(200);
             const color = i < this.lives ? 0xff3366 : 0x333333;
-            Icons.drawHeart(g, 30 + i * 28, 32, 20, color, 2.5);
+            Icons.drawHeart(g, heartStartX + i * heartSpacing, heartY, heartSize, color, 2.5);
             this.livesIconGroup.add(g);
         }
 
@@ -656,10 +684,12 @@ class GameScene extends Phaser.Scene {
         this.inputData = { active: false, x: 0, y: 0, sx: 0, sy: 0 };
         this.cursors = this.input.keyboard.createCursorKeys();
         this.wasd = this.input.keyboard.addKeys('W,A,S,D');
-        this.joyBase = this.add.circle(0, 0, 55, 0xffffff, 0.15).setStrokeStyle(2, 0x00ffff, 0.5).setVisible(false).setDepth(500);
-        this.joyThumb = this.add.circle(0, 0, 28, 0x00ffff, 0.4).setVisible(false).setDepth(501);
+        const joyBaseSize = this.isCompact ? 45 : 55;
+        const joyThumbSize = this.isCompact ? 22 : 28;
+        this.joyBase = this.add.circle(0, 0, joyBaseSize, 0xffffff, 0.15).setStrokeStyle(2, 0x00ffff, 0.5).setVisible(false).setDepth(500);
+        this.joyThumb = this.add.circle(0, 0, joyThumbSize, 0x00ffff, 0.4).setVisible(false).setDepth(501);
         this.input.on('pointerdown', p => {
-            if (p.y < 100 || this.gameOver) return;
+            if (p.y < (this.isCompact ? 80 : 100) || this.gameOver) return;
             this.inputData.active = true;
             this.inputData.sx = p.x;
             this.inputData.sy = p.y;
@@ -698,6 +728,10 @@ class GameScene extends Phaser.Scene {
     }
 
     updateRain(delta) {
+        if (this.isCompact) {
+            this.rainFrameSkip = (this.rainFrameSkip || 0) + 1;
+            if (this.rainFrameSkip % 2 !== 0) return;
+        }
         this.rainGraphics.clear();
         this.rainGraphics.lineStyle(1, 0x6688aa, 0.4);
 
@@ -1041,14 +1075,22 @@ class GameScene extends Phaser.Scene {
         this.newts.getChildren().forEach(newt => {
             if (!newt.isCarried) {
                 newt.y += newt.dir * GAME_CONFIG.NEWT_SPEED * (delta / 1000);
-                newt.rotation = (newt.dir === 1 ? Math.PI / 2 : -Math.PI / 2) + Math.sin(this.time.now * 0.01) * 0.15;
+                if (!this.isCompact) {
+                    newt.rotation = (newt.dir === 1 ? Math.PI / 2 : -Math.PI / 2) + Math.sin(this.time.now * 0.01) * 0.15;
+                } else {
+                    newt.rotation = newt.dir === 1 ? Math.PI / 2 : -Math.PI / 2;
+                }
                 if ((newt.dir === 1 && newt.y > this.botSafe + 30) || (newt.dir === -1 && newt.y < this.topSafe - 30)) { newt.destroy(); }
             } else {
                 const idx = this.player.carried.indexOf(newt);
                 newt.x = this.player.x + (idx === 0 ? -25 : 25);
                 newt.y = this.player.y - 15;
                 newt.setDepth(55);
-                newt.rotation = Math.sin(this.time.now * 0.008) * 0.2;
+                if (!this.isCompact) {
+                    newt.rotation = Math.sin(this.time.now * 0.008) * 0.2;
+                } else {
+                    newt.rotation = 0;
+                }
             }
         });
     }
