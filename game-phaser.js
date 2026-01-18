@@ -1286,6 +1286,14 @@ class GameScene extends Phaser.Scene {
             this.bgmEnd.play();
         }
 
+        // Ensure cleanup when the scene is restarted or shut down
+        this.events.once('shutdown', () => {
+            if (this.bgmEnd) {
+                this.bgmEnd.stop();
+                this.bgmEnd.destroy();
+            }
+        });
+
         const { width, height } = this.scale;
         this.add.rectangle(0, 0, width, height, 0x000000, 0.92).setOrigin(0).setDepth(300);
         this.add.text(width / 2, height * 0.08, 'GAME OVER', {
@@ -1298,7 +1306,7 @@ class GameScene extends Phaser.Scene {
         if (supabaseClient) {
             // Disable Phaser key capture so typing works in the DOM input
             this.input.keyboard.removeCapture('W,A,S,D');
-            this.input.keyboard.removeCapture([37, 38, 39, 40]); // Arrow keys
+            this.input.keyboard.removeCapture([32, 37, 38, 39, 40]); // Space + Arrow keys
 
             this.add.text(width / 2, height * 0.24, 'Enter your name:', {
                 fontFamily: 'Outfit, sans-serif', fontSize: '16px', color: '#aaaaaa'
@@ -1327,7 +1335,7 @@ class GameScene extends Phaser.Scene {
                 if (success) { submitBtnText.setText('Submitted!'); inputEl.remove(); submitIcon.clear(); this.refreshLeaderboard(); }
                 else { submitBtnText.setText('Error - Try Again'); submitted = false; submitBtnText.setInteractive({ useHandCursor: true }); }
             });
-            this.events.once('shutdown', () => { if (inputEl.parentNode) inputEl.remove(); });
+            this.events.once('shutdown', () => { if (inputEl && inputEl.parentNode) inputEl.remove(); });
 
             this.leaderboardY = height * 0.46;
             await this.showLeaderboard();
@@ -1352,7 +1360,6 @@ class GameScene extends Phaser.Scene {
         const retryIcon = this.add.graphics().setDepth(302);
         Icons.drawRefresh(retryIcon, retryBtnText.x - retryBtnText.width / 2 + 22, height * 0.92, 22, 0x00ffff);
         retryBtnText.on('pointerdown', () => {
-            if (this.bgmEnd) { this.bgmEnd.stop(); this.bgmEnd.destroy(); }
             this.scene.restart();
         });
     }
