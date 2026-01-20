@@ -260,6 +260,31 @@ class SplashScene extends Phaser.Scene {
             targets: promptText, alpha: 0.4, duration: 600, yoyo: true, repeat: -1
         });
 
+        // --- SOUND HINT (HTML Overlay) ---
+        const soundHint = document.createElement('div');
+        soundHint.innerHTML = '<i class="fa-solid fa-volume-up" aria-hidden="true"></i><span> Enable sound for best experience</span>';
+        soundHint.style.position = 'absolute';
+        soundHint.style.display = 'flex';
+        soundHint.style.alignItems = 'center';
+        soundHint.style.gap = '8px';
+        soundHint.style.color = '#ffffff';
+        soundHint.style.fontFamily = 'Outfit, sans-serif';
+        soundHint.style.fontSize = isCompact ? '12px' : '14px';
+        soundHint.style.padding = isCompact ? '6px 10px' : '8px 12px';
+        soundHint.style.borderRadius = '999px';
+        soundHint.style.background = 'rgba(0,0,0,0.55)';
+        soundHint.style.boxShadow = '0 4px 14px rgba(0,0,0,0.4)';
+        soundHint.style.border = '1px solid rgba(255,255,255,0.2)';
+        soundHint.style.pointerEvents = 'none';
+        soundHint.style.zIndex = '1001';
+
+        const soundHintY = height - (isCompact ? 86 : 110);
+        soundHint.style.left = (canvasRect.left + (width / 2)) + 'px';
+        soundHint.style.top = (canvasRect.top + soundHintY) + 'px';
+        soundHint.style.transform = 'translate(-50%, -50%)';
+        document.body.appendChild(soundHint);
+        this.soundHint = soundHint;
+
         // --- HIGH SCORE DISPLAY ---
         this.highScoreText = this.add.text(width / 2, height - (isCompact ? 24 : 30), 'BEAT THE CURRENT HIGH SCORE: ...', {
             fontFamily: 'Fredoka, sans-serif', fontSize: isCompact ? '16px' : '20px', color: '#ffcc00', stroke: '#000000', strokeThickness: isCompact ? 2 : 3
@@ -300,6 +325,10 @@ class SplashScene extends Phaser.Scene {
                         this.tutorialVideo = null;
                     }
                 }, 300);
+            }
+            if (this.soundHint && this.soundHint.parentNode) {
+                this.soundHint.parentNode.removeChild(this.soundHint);
+                this.soundHint = null;
             }
             const fallback = this.time.delayedCall(500, () => {
                 if (this.bgm) { this.bgm.stop(); this.bgm.destroy(); }
@@ -667,7 +696,14 @@ class GameScene extends Phaser.Scene {
             color: '#aaaaaa'
         }).setOrigin(1, 0).setDepth(200);
 
-        this.carryText = this.add.text(this.scale.width / 2, padding, '', { ...style, color: '#00ffff' }).setOrigin(0.5, 0).setDepth(200);
+        this.carryText = this.add.text(this.scale.width / 2, padding, '', {
+            ...style,
+            color: '#00ffff',
+            shadow: { offsetX: 2, offsetY: 2, color: '#000000', blur: 3, fill: true }
+        }).setOrigin(0.5, 0).setDepth(200);
+
+        // Carrying label background pill
+        this.carryBg = this.add.graphics().setDepth(199);
 
         // Stats panel with semi-transparent dark background
         this.statsBg = this.add.graphics().setDepth(199);
@@ -709,17 +745,32 @@ class GameScene extends Phaser.Scene {
 
         this.scoreText.setText(`${this.score}`);
 
-        // Update carrying display (Text based - Reverted per user request)
+        // Update carrying display (Text based)
         if (this.carryIconGroup) {
             this.carryIconGroup.clear(true, true);
             this.carryIconGroup.destroy();
             this.carryIconGroup = null;
         }
         const c = this.player.carried.length;
-        let carryStr = '[ ]';
-        if (c === 1) carryStr = '[X]';
-        if (c === 2) carryStr = '[X][X]';
-        this.carryText.setText(`CARRYING: ${carryStr}`);
+        const carryCount = Math.min(c, 2);
+        this.carryText.setText(`Carrying ${carryCount} of 2 Newts`);
+
+        // Draw pill background sized to text
+        if (this.carryBg) {
+            const padX = this.isCompact ? 10 : 12;
+            const padY = this.isCompact ? 5 : 7;
+            const bounds = this.carryText.getBounds();
+            const bgWidth = bounds.width + padX * 2;
+            const bgHeight = bounds.height + padY * 2;
+            const bgX = bounds.centerX - bgWidth / 2;
+            const bgY = bounds.y - padY;
+
+            this.carryBg.clear();
+            this.carryBg.fillStyle(0x000000, 0.6);
+            this.carryBg.fillRoundedRect(bgX, bgY, bgWidth, bgHeight, bgHeight / 2);
+            this.carryBg.lineStyle(2, 0x00ffff, 0.45);
+            this.carryBg.strokeRoundedRect(bgX, bgY, bgWidth, bgHeight, bgHeight / 2);
+        }
 
         this.statsText.setText(`SAVED: ${this.saved} | LOST: ${this.lost}`);
     }
