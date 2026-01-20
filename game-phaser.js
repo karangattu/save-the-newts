@@ -367,6 +367,22 @@ class GameScene extends Phaser.Scene {
         this.gameOver = false;
         this.difficulty = 1;
 
+        // Achievement tracking
+        this.streak = 0;
+        this.maxStreak = 0;
+        this.achievements = {
+            firstSave: false,
+            streak5: false,
+            streak10: false,
+            streak20: false,
+            saved10: false,
+            saved25: false,
+            saved50: false,
+            score500: false,
+            score1000: false,
+            perfectStart: true // Will be set to false if newt is lost
+        };
+
         this.calculateLayout();
 
         this.cars = this.add.group();
@@ -1087,13 +1103,6 @@ class GameScene extends Phaser.Scene {
         g.fillCircle(dir === 1 ? 22 : -22, 0, 4);
     }
 
-    updateCars(delta) {
-        this.cars.getChildren().forEach(car => {
-            car.x += car.speed * (delta / 1000);
-            if (car.x < -200 || car.x > this.scale.width + 200) car.destroy();
-        });
-    }
-
     spawnNewt() {
         if (this.gameOver) return;
         const fromTop = Math.random() < 0.5;
@@ -1160,9 +1169,16 @@ class GameScene extends Phaser.Scene {
                     const correct = (newt.dest === 'FOREST' && inForest) || (newt.dest === 'LAKE' && inLake);
                     if (correct) {
                         this.saved++;
+                        this.streak++;
+                        if (this.streak > this.maxStreak) this.maxStreak = this.streak;
                         this.score += 100;
                         if (this.cache.audio.exists('sfx_saved')) this.sound.play('sfx_saved', { volume: 0.6 });
+                        
+                        // Haptic feedback for save (gentle pulse)
+                        if (navigator.vibrate) navigator.vibrate(30);
+                        
                         this.createSuccessEffect(newt.x, newt.y);
+                        this.checkAchievements();
                         this.updateDifficulty();
                     }
                     newt.destroy();
@@ -1179,6 +1195,9 @@ class GameScene extends Phaser.Scene {
         if (this.gameOver) return;
         this.lives--; this.updateHUD();
 
+        // Reset streak on player hit
+        this.streak = 0;
+
         if (this.cache.audio.exists('sfx_crash')) {
             this.sound.play('sfx_crash', { volume: 0.7 });
         } else if (this.cache.audio.exists('sfx_hit')) {
@@ -1186,8 +1205,11 @@ class GameScene extends Phaser.Scene {
             this.sound.play('sfx_hit', { volume: 0.7 });
         }
 
-        // Haptic feedback for mobile
-        if (navigator.vibrate) navigator.vibrate(200);
+        // Screen shake for impact
+        this.cameras.main.shake(300, 0.02);
+
+        // Haptic feedback for mobile (strong vibration pattern)
+        if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
 
         this.player.carried.forEach(n => n.destroy()); this.player.carried = [];
         this.cameras.main.flash(150, 255, 50, 50, false);
@@ -1200,9 +1222,15 @@ class GameScene extends Phaser.Scene {
 
     splatterNewt(newt) {
         this.lost++;
+        this.streak = 0; // Reset streak when newt is lost
+        this.achievements.perfectStart = false;
         this.score = Math.max(0, this.score - 10); // Deduct 10 points
         this.showFloatingText(newt.x, newt.y, '-10', '#ff0000', true);
         if (this.cache.audio.exists('sfx_hit')) this.sound.play('sfx_hit', { volume: 0.7 });
+        
+        // Light haptic feedback for newt lost
+        if (navigator.vibrate) navigator.vibrate(50);
+        
         this.updateHUD();
 
         for (let i = 0; i < 10; i++) {
@@ -1218,6 +1246,13 @@ class GameScene extends Phaser.Scene {
     createSuccessEffect(x, y) {
         // More prominent floating text for saving newts
         this.showFloatingText(x, y, '+100 PTS', '#00ff00', true);
+
+        // Show streak if active
+        if (this.streak > 1) {
+            this.time.delayedCall(200, () => {
+                this.showFloatingText(x, y - 40, `${this.streak}x STREAK!`, '#ffff00', false);
+            });
+        }
 
         // Visual pulse ring effect
         const ring = this.add.circle(x, y, 20, 0x00ff88, 0.6).setDepth(100);
@@ -1237,6 +1272,174 @@ class GameScene extends Phaser.Scene {
             this.tweens.add({
                 targets: star, x: x + Phaser.Math.Between(-50, 50), y: y - Phaser.Math.Between(30, 80),
                 rotation: 2, alpha: 0, scale: 0.4, duration: 600 + Math.random() * 400, onComplete: () => star.destroy()
+            });
+        }
+    }
+
+    checkAchievements() {
+        // First save achievement
+        if (!this.achievements.firstSave && this.saved === 1) {
+            this.achievements.firstSave = true;
+            this.showAchievement('FIRST RESCUE!', 'You saved your first newt!', 'fa-frog');
+        }
+
+        // Streak achievements
+        if (!this.achievements.streak5 && this.streak >= 5) {
+            this.achievements.streak5 = true;
+            this.showAchievement('5x STREAK!', 'On fire!', 'fa-fire');
+        }
+        if (!this.achievements.streak10 && this.streak >= 10) {
+            this.achievements.streak10 = true;
+            this.showAchievement('10x STREAK!', 'Unstoppable!', 'fa-bolt');
+            if (navigator.vibrate) navigator.vibrate([50, 30, 50, 30, 50]);
+        }
+        if (!this.achievements.streak20 && this.streak >= 20) {
+            this.achievements.streak20 = true;
+            this.showAchievement('20x STREAK!', 'LEGENDARY!', 'fa-trophy');
+            if (navigator.vibrate) navigator.vibrate([100, 50, 100, 50, 100]);
+        }
+
+        // Total saved achievements
+        if (!this.achievements.saved10 && this.saved >= 10) {
+            this.achievements.saved10 = true;
+            this.showAchievement('10 NEWTS SAVED!', 'Great progress!', 'fa-leaf');
+        }
+        if (!this.achievements.saved25 && this.saved >= 25) {
+            this.achievements.saved25 = true;
+            this.showAchievement('25 NEWTS SAVED!', 'Conservation hero!', 'fa-star');
+        }
+        if (!this.achievements.saved50 && this.saved >= 50) {
+            this.achievements.saved50 = true;
+            this.showAchievement('50 NEWTS SAVED!', 'Newt whisperer!', 'fa-crown');
+            if (navigator.vibrate) navigator.vibrate([100, 50, 100, 50, 100]);
+        }
+
+        // Score achievements
+        if (!this.achievements.score500 && this.score >= 500) {
+            this.achievements.score500 = true;
+            this.showAchievement('500 POINTS!', 'Nice score!', 'fa-coins');
+        }
+        if (!this.achievements.score1000 && this.score >= 1000) {
+            this.achievements.score1000 = true;
+            this.showAchievement('1000 POINTS!', 'Pro player!', 'fa-bullseye');
+        }
+    }
+
+    showAchievement(title, subtitle, iconClass = 'fa-award') {
+        const { width, height } = this.scale;
+        const isCompact = this.isCompact;
+
+        // Achievement banner container
+        const bannerY = isCompact ? 100 : 120;
+        const bannerW = isCompact ? 280 : 340;
+        const bannerH = isCompact ? 70 : 80;
+
+        // Create DOM element for achievement banner with Font Awesome icon
+        const canvas = this.game.canvas;
+        const canvasRect = canvas.getBoundingClientRect();
+        
+        const banner = document.createElement('div');
+        banner.className = 'achievement-banner';
+        banner.innerHTML = `
+            <div class="achievement-icon"><i class="fas ${iconClass}"></i></div>
+            <div class="achievement-content">
+                <div class="achievement-title">${title}</div>
+                <div class="achievement-subtitle">${subtitle}</div>
+            </div>
+        `;
+        
+        // Style the banner
+        banner.style.cssText = `
+            position: absolute;
+            left: ${canvasRect.left + (width - bannerW) / 2}px;
+            top: ${canvasRect.top + bannerY - bannerH / 2}px;
+            width: ${bannerW}px;
+            height: ${bannerH}px;
+            background: rgba(0, 0, 0, 0.9);
+            border: 3px solid #ffcc00;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            padding: 0 ${isCompact ? 12 : 16}px;
+            gap: ${isCompact ? 10 : 14}px;
+            z-index: 2000;
+            opacity: 0;
+            transform: translateY(10px) scale(0.95);
+            transition: opacity 0.3s ease, transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+            box-shadow: 0 4px 20px rgba(255, 204, 0, 0.3);
+            font-family: 'Fredoka', sans-serif;
+            pointer-events: none;
+        `;
+        
+        // Style the icon
+        const iconEl = banner.querySelector('.achievement-icon');
+        iconEl.style.cssText = `
+            font-size: ${isCompact ? 28 : 34}px;
+            color: #ffcc00;
+            text-shadow: 0 0 10px rgba(255, 204, 0, 0.5);
+            min-width: ${isCompact ? 40 : 48}px;
+            text-align: center;
+        `;
+        
+        // Style the content
+        const contentEl = banner.querySelector('.achievement-content');
+        contentEl.style.cssText = `
+            flex: 1;
+        `;
+        
+        // Style the title
+        const titleEl = banner.querySelector('.achievement-title');
+        titleEl.style.cssText = `
+            font-size: ${isCompact ? 18 : 22}px;
+            font-weight: 600;
+            color: #ffcc00;
+            text-shadow: 1px 1px 2px #000;
+            line-height: 1.2;
+        `;
+        
+        // Style the subtitle
+        const subtitleEl = banner.querySelector('.achievement-subtitle');
+        subtitleEl.style.cssText = `
+            font-size: ${isCompact ? 13 : 15}px;
+            color: #ffffff;
+            text-shadow: 1px 1px 1px #000;
+            line-height: 1.2;
+        `;
+        
+        document.body.appendChild(banner);
+        
+        // Animate in
+        requestAnimationFrame(() => {
+            banner.style.opacity = '1';
+            banner.style.transform = 'translateY(0) scale(1)';
+        });
+        
+        // Animate out and remove after delay
+        setTimeout(() => {
+            banner.style.opacity = '0';
+            banner.style.transform = 'translateY(-20px) scale(0.95)';
+            setTimeout(() => {
+                if (banner.parentNode) {
+                    banner.parentNode.removeChild(banner);
+                }
+            }, 400);
+        }, 2500);
+
+        // Sparkle effect around the banner (using Phaser graphics)
+        for (let i = 0; i < 8; i++) {
+            const angle = (i / 8) * Math.PI * 2;
+            const sparkX = width / 2 + Math.cos(angle) * (bannerW / 2 + 20);
+            const sparkY = bannerY + Math.sin(angle) * (bannerH / 2 + 10);
+            const spark = this.add.star(sparkX, sparkY, 4, 3, 6, 0xffcc00).setDepth(200).setAlpha(0);
+
+            this.tweens.add({
+                targets: spark,
+                alpha: 1,
+                scale: 1.5,
+                duration: 200,
+                delay: i * 50,
+                yoyo: true,
+                onComplete: () => spark.destroy()
             });
         }
     }
