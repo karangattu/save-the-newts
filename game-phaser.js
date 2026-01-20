@@ -191,7 +191,6 @@ class SplashScene extends Phaser.Scene {
     preload() {
         this.load.image('poster', 'assets/poster.jpg');
         this.load.image('newt', 'assets/newt.png');
-        this.load.image('tutorial', 'assets/tutorial.png');
         this.load.audio('bgm_start', 'assets/bgm_start.mp3');
     }
 
@@ -211,19 +210,46 @@ class SplashScene extends Phaser.Scene {
             targets: poster, alpha: 1, duration: 800, ease: 'Power2'
         });
 
-        // --- TUTORIAL OVERLAY (Hidden initially) ---
-        const tutorialGroup = this.add.container(0, 0);
-        tutorialGroup.setAlpha(0);
-        tutorialGroup.setDepth(10);
-
-        // Use the tutorial image instead of programmatic elements
-        const tutorialImg = this.add.image(width / 2, height / 2, 'tutorial');
-        // Scale to fit nicely on screen (max 90% of width or 85% of height)
-        const maxW = width * (isCompact ? 0.94 : 0.9);
-        const maxH = height * (isCompact ? 0.8 : 0.85);
-        const imgScale = Math.min(maxW / tutorialImg.width, maxH / tutorialImg.height);
-        tutorialImg.setScale(imgScale);
-        tutorialGroup.add(tutorialImg);
+        // --- TUTORIAL VIDEO OVERLAY (Hidden initially) ---
+        // Create HTML video element for the tutorial
+        const tutorialVideo = document.createElement('video');
+        tutorialVideo.src = 'assets/tutorial.mp4';
+        tutorialVideo.muted = true;
+        tutorialVideo.loop = true;
+        tutorialVideo.playsInline = true;
+        tutorialVideo.style.position = 'absolute';
+        tutorialVideo.style.opacity = '0';
+        tutorialVideo.style.transition = 'opacity 0.3s ease';
+        tutorialVideo.style.borderRadius = '12px';
+        tutorialVideo.style.boxShadow = '0 4px 20px rgba(0,0,0,0.5)';
+        tutorialVideo.style.pointerEvents = 'none';
+        
+        // Video dimensions (720x1280 portrait)
+        const videoAspect = 720 / 1280;
+        const maxW = width * (isCompact ? 0.7 : 0.5);
+        const maxH = height * (isCompact ? 0.75 : 0.8);
+        let videoW, videoH;
+        
+        if (maxW / maxH > videoAspect) {
+            videoH = maxH;
+            videoW = videoH * videoAspect;
+        } else {
+            videoW = maxW;
+            videoH = videoW / videoAspect;
+        }
+        
+        tutorialVideo.style.width = videoW + 'px';
+        tutorialVideo.style.height = videoH + 'px';
+        
+        // Position video centered in the game canvas
+        const canvas = this.game.canvas;
+        const canvasRect = canvas.getBoundingClientRect();
+        tutorialVideo.style.left = (canvasRect.left + (width - videoW) / 2) + 'px';
+        tutorialVideo.style.top = (canvasRect.top + (height - videoH) / 2) + 'px';
+        tutorialVideo.style.zIndex = '1000';
+        
+        document.body.appendChild(tutorialVideo);
+        this.tutorialVideo = tutorialVideo;
 
         // --- PROMPT TEXT ---
         const promptText = this.add.text(width / 2, height - (isCompact ? 52 : 70), 'TAP TO START', {
@@ -264,6 +290,17 @@ class SplashScene extends Phaser.Scene {
 
         const startGame = () => {
             console.log("Starting GameScene...");
+            // Hide and remove the tutorial video
+            if (this.tutorialVideo) {
+                this.tutorialVideo.style.opacity = '0';
+                this.tutorialVideo.pause();
+                setTimeout(() => {
+                    if (this.tutorialVideo && this.tutorialVideo.parentNode) {
+                        this.tutorialVideo.parentNode.removeChild(this.tutorialVideo);
+                        this.tutorialVideo = null;
+                    }
+                }, 300);
+            }
             const fallback = this.time.delayedCall(500, () => {
                 if (this.bgm) { this.bgm.stop(); this.bgm.destroy(); }
                 if (this.scene.isActive('SplashScene')) this.scene.start('GameScene');
@@ -286,10 +323,11 @@ class SplashScene extends Phaser.Scene {
 
         const handleInput = () => {
             if (step === 0) {
-                // Show Tutorial
+                // Show Tutorial Video
                 step = 1;
                 promptText.setText('TAP TO PLAY');
-                this.tweens.add({ targets: tutorialGroup, alpha: 1, duration: 300 });
+                tutorialVideo.style.opacity = '1';
+                tutorialVideo.play().catch(e => console.log('Video autoplay blocked:', e));
                 this.tweens.add({ targets: poster, alpha: 0.3, duration: 300 }); // Dim poster
             } else if (step === 1) {
                 // Start Game
