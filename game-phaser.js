@@ -395,6 +395,7 @@ class GameScene extends Phaser.Scene {
         this.lives = GAME_CONFIG.PLAYER_LIVES;
         this.gameOver = false;
         this.difficulty = 1;
+        this.runStartTime = this.time.now;
 
         // Achievement tracking
         this.streak = 0;
@@ -1587,6 +1588,7 @@ class GameScene extends Phaser.Scene {
         });
 
         const { width, height } = this.scale;
+        const isCompact = this.isCompact;
         this.add.rectangle(0, 0, width, height, 0x000000, 0.92).setOrigin(0).setDepth(300);
         this.add.text(width / 2, height * 0.08, 'GAME OVER', {
             fontFamily: 'Fredoka, sans-serif', fontSize: '44px', color: '#ff3366', fontStyle: 'bold'
@@ -1595,26 +1597,90 @@ class GameScene extends Phaser.Scene {
             fontFamily: 'Fredoka, sans-serif', fontSize: '26px', color: '#ffffff'
         }).setOrigin(0.5).setDepth(301);
 
+        const runSeconds = Math.max(0, (this.time.now - this.runStartTime) / 1000);
+        const formatTime = seconds => {
+            const mins = Math.floor(seconds / 60);
+            const secs = Math.floor(seconds % 60);
+            return `${mins}:${secs.toString().padStart(2, '0')}`;
+        };
+        const totalNewts = this.saved + this.lost;
+        const rescueRate = totalNewts > 0 ? Math.round((this.saved / totalNewts) * 100) : 0;
+
+        const summaryTitleY = height * (isCompact ? 0.22 : 0.21);
+        this.add.text(width / 2, summaryTitleY, 'RUN SUMMARY', {
+            fontFamily: 'Outfit, sans-serif',
+            fontSize: isCompact ? '14px' : '16px',
+            color: '#aaaaaa',
+            letterSpacing: 1
+        }).setOrigin(0.5).setDepth(301);
+
+        const summaryLines = [
+            { label: 'Time Survived', value: formatTime(runSeconds) },
+            { label: 'Newts Saved', value: `${this.saved}` },
+            { label: 'Newts Lost', value: `${this.lost}` },
+            { label: 'Rescue Rate', value: `${rescueRate}%` },
+            { label: 'Max Streak', value: `${this.maxStreak}x` }
+        ];
+
+        const summaryFont = isCompact ? 14 : 16;
+        const lineHeight = isCompact ? 18 : 22;
+        const summaryPadX = isCompact ? 14 : 18;
+        const summaryPadY = isCompact ? 10 : 12;
+        const summaryBoxWidth = Math.min(width * 0.78, isCompact ? 320 : 380);
+        const summaryBoxHeight = lineHeight * summaryLines.length + summaryPadY * 2;
+        const summaryBoxY = summaryTitleY + (isCompact ? 16 : 20) + summaryBoxHeight / 2;
+
+        const summaryBg = this.add.graphics().setDepth(301);
+        summaryBg.fillStyle(0x000000, 0.6);
+        summaryBg.fillRoundedRect(width / 2 - summaryBoxWidth / 2, summaryBoxY - summaryBoxHeight / 2, summaryBoxWidth, summaryBoxHeight, 12);
+        summaryBg.lineStyle(2, 0x00ffff, 0.6);
+        summaryBg.strokeRoundedRect(width / 2 - summaryBoxWidth / 2, summaryBoxY - summaryBoxHeight / 2, summaryBoxWidth, summaryBoxHeight, 12);
+
+        const labelText = summaryLines.map(line => line.label).join('\n');
+        const valueText = summaryLines.map(line => line.value).join('\n');
+
+        this.add.text(width / 2 - summaryBoxWidth / 2 + summaryPadX, summaryBoxY - summaryBoxHeight / 2 + summaryPadY, labelText, {
+            fontFamily: 'Outfit, sans-serif',
+            fontSize: `${summaryFont}px`,
+            color: '#cccccc',
+            lineSpacing: isCompact ? 2 : 4
+        }).setOrigin(0, 0).setDepth(302);
+
+        this.add.text(width / 2 + summaryBoxWidth / 2 - summaryPadX, summaryBoxY - summaryBoxHeight / 2 + summaryPadY, valueText, {
+            fontFamily: 'Fredoka, sans-serif',
+            fontSize: `${summaryFont}px`,
+            color: '#ffffff',
+            align: 'right',
+            lineSpacing: isCompact ? 2 : 4
+        }).setOrigin(1, 0).setDepth(302);
+
+        const nextSectionY = summaryBoxY + summaryBoxHeight / 2 + (isCompact ? 18 : 24);
+
         if (supabaseClient) {
             // Disable Phaser key capture so typing works in the DOM input
             this.input.keyboard.removeCapture('W,A,S,D');
             this.input.keyboard.removeCapture([32, 37, 38, 39, 40]); // Space + Arrow keys
 
-            this.add.text(width / 2, height * 0.24, 'Enter your name:', {
+            const namePromptY = nextSectionY;
+            const inputY = namePromptY + (isCompact ? 26 : 32);
+            const submitY = inputY + (isCompact ? 40 : 48);
+
+            this.add.text(width / 2, namePromptY, 'Enter your name:', {
                 fontFamily: 'Outfit, sans-serif', fontSize: '16px', color: '#aaaaaa'
             }).setOrigin(0.5).setDepth(301);
 
             const inputEl = document.createElement('input');
             inputEl.type = 'text'; inputEl.placeholder = 'Your Name'; inputEl.maxLength = 15;
-            inputEl.style.cssText = `position: fixed; left: 50%; top: 30%; transform: translate(-50%, -50%); padding: 10px 18px; font-size: 16px; font-family: 'Fredoka', sans-serif; border: 2px solid #00ffff; border-radius: 8px; background: #111; color: #fff; text-align: center; width: 180px; z-index: 10000; outline: none;`;
+            const canvasRect = this.game.canvas.getBoundingClientRect();
+            inputEl.style.cssText = `position: fixed; left: ${canvasRect.left + width / 2}px; top: ${canvasRect.top + inputY}px; transform: translate(-50%, -50%); padding: 10px 18px; font-size: 16px; font-family: 'Fredoka', sans-serif; border: 2px solid #00ffff; border-radius: 8px; background: #111; color: #fff; text-align: center; width: 180px; z-index: 10000; outline: none;`;
             document.body.appendChild(inputEl); inputEl.focus();
 
-            const submitBtnText = this.add.text(width / 2 + 15, height * 0.38, 'SUBMIT SCORE', {
+            const submitBtnText = this.add.text(width / 2 + 15, submitY, 'SUBMIT SCORE', {
                 fontFamily: 'Fredoka, sans-serif', fontSize: '20px', color: '#00ff00', backgroundColor: '#222', padding: { left: 45, right: 18, top: 8, bottom: 8 }
             }).setOrigin(0.5).setDepth(301).setInteractive({ useHandCursor: true });
 
             const submitIcon = this.add.graphics().setDepth(302);
-            Icons.drawSend(submitIcon, submitBtnText.x - submitBtnText.width / 2 + 22, height * 0.38, 18, 0x00ff00);
+            Icons.drawSend(submitIcon, submitBtnText.x - submitBtnText.width / 2 + 22, submitY, 18, 0x00ff00);
 
             let submitted = false;
             submitBtnText.on('pointerdown', async () => {
@@ -1629,16 +1695,18 @@ class GameScene extends Phaser.Scene {
             });
             this.events.once('shutdown', () => { if (inputEl && inputEl.parentNode) inputEl.remove(); });
 
-            this.leaderboardY = height * 0.46;
+            this.leaderboardY = submitY + (isCompact ? 55 : 65);
             await this.showLeaderboard();
         } else {
-            this.add.text(width / 2, height * 0.35, '(Leaderboard not configured)', {
+            this.add.text(width / 2, nextSectionY, '(Leaderboard not configured)', {
                 fontFamily: 'Outfit, sans-serif', fontSize: '14px', color: '#555'
             }).setOrigin(0.5).setDepth(301);
-            this.leaderboardY = height * 0.40;
+            this.leaderboardY = nextSectionY + (isCompact ? 24 : 30);
         }
 
-        const volunteerY = supabaseClient ? height * 0.78 : height * 0.60;
+        const desiredVolunteerY = supabaseClient ? height * 0.78 : height * 0.66;
+        const minVolunteerY = this.leaderboardY + (isCompact ? 90 : 110);
+        const volunteerY = Math.min(height * 0.88, Math.max(desiredVolunteerY, minVolunteerY));
         const volunteerBg = this.add.rectangle(width / 2, volunteerY, width * 0.85, 60, 0x004422, 0.9).setStrokeStyle(2, 0x00ff88).setOrigin(0.5).setDepth(301);
         this.add.text(width / 2, volunteerY - 10, 'Want to help real newts?', { fontFamily: 'Fredoka, sans-serif', fontSize: '16px', color: '#ffffff' }).setOrigin(0.5).setDepth(302);
         const volunteerLink = this.add.text(width / 2 + 10, volunteerY + 12, 'Volunteer at bioblitz.club/newts', { fontFamily: 'Fredoka, sans-serif', fontSize: '18px', color: '#00ff88', fontStyle: 'bold' }).setOrigin(0.5).setDepth(302).setInteractive({ useHandCursor: true });
