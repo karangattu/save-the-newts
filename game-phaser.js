@@ -47,6 +47,9 @@ async function getLeaderboard() {
     }
 }
 
+// ===== SELECTED CHARACTER =====
+let selectedCharacter = 'male'; // 'male' or 'female'
+
 // ===== ICON UTILITY (Lucide Style) =====
 const Icons = {
     drawHeart(g, x, y, size = 20, color = 0xff3366, stroke = 2) {
@@ -359,9 +362,36 @@ class SplashScene extends Phaser.Scene {
                 tutorialVideo.play().catch(e => console.log('Video autoplay blocked:', e));
                 this.tweens.add({ targets: poster, alpha: 0.3, duration: 300 }); // Dim poster
             } else if (step === 1) {
-                // Start Game
+                // Go to Character Selection
                 step = 2;
-                startGame();
+                // Hide and remove the tutorial video
+                if (this.tutorialVideo) {
+                    this.tutorialVideo.style.opacity = '0';
+                    this.tutorialVideo.pause();
+                    setTimeout(() => {
+                        if (this.tutorialVideo && this.tutorialVideo.parentNode) {
+                            this.tutorialVideo.parentNode.removeChild(this.tutorialVideo);
+                            this.tutorialVideo = null;
+                        }
+                    }, 300);
+                }
+                if (this.soundHint && this.soundHint.parentNode) {
+                    this.soundHint.parentNode.removeChild(this.soundHint);
+                    this.soundHint = null;
+                }
+                // Fade out music
+                if (this.bgm) {
+                    this.tweens.add({
+                        targets: this.bgm,
+                        volume: 0,
+                        duration: 300
+                    });
+                }
+                this.cameras.main.fadeOut(300, 0, 0, 0);
+                this.cameras.main.once('camerafadeoutcomplete', () => {
+                    if (this.bgm) this.bgm.stop();
+                    this.scene.start('CharacterSelectScene');
+                });
             }
         };
 
@@ -630,7 +660,25 @@ class GameScene extends Phaser.Scene {
         this.player.setDepth(50);
         this.player.setScale(this.layoutScale);
         const g = this.add.graphics();
+        
+        if (selectedCharacter === 'female') {
+            this.drawFemalePlayer(g);
+        } else {
+            this.drawMalePlayer(g);
+        }
+        
+        this.player.add(g);
+        this.player.graphics = g;
+        this.player.speed = GAME_CONFIG.PLAYER_SPEED * (this.isCompact ? 0.92 : 1);
+        this.player.carried = [];
+        this.player.invincible = false;
+        this.walkTime = 0;
+    }
+
+    drawMalePlayer(g) {
+        // Shadow
         g.fillStyle(0x000000, 0.4); g.fillEllipse(0, 28, 35, 12);
+        // Legs
         g.fillStyle(0x2c3e50); g.fillRoundedRect(-12, 8, 10, 22, 3); g.fillRoundedRect(2, 8, 10, 22, 3);
         // Hands
         g.fillStyle(0xfce4d6);
@@ -655,18 +703,113 @@ class GameScene extends Phaser.Scene {
         g.fillRect(-12, -18, 8, 32); // Left vertical
         g.fillRect(4, -18, 8, 32);   // Right vertical
         g.fillRect(-18, -2, 36, 8);  // Horizontal waist band
+        // Head
         g.fillStyle(0xfce4d6); g.fillCircle(0, -26, 14);
+        // Eyes
         g.fillStyle(0x000000); g.fillCircle(-5, -28, 2.5); g.fillCircle(5, -28, 2.5);
+        // Nose
         g.fillStyle(0xcc9988); g.fillEllipse(0, -22, 4, 2);
         // More prominent cap/hat
         g.fillStyle(0xff0000); g.fillEllipse(0, -40, 26, 14); // Main cap
         g.fillStyle(0xcc0000); g.fillRect(-13, -42, 26, 6); // Cap brim
-        this.player.add(g);
-        this.player.graphics = g;
-        this.player.speed = GAME_CONFIG.PLAYER_SPEED * (this.isCompact ? 0.92 : 1);
-        this.player.carried = [];
-        this.player.invincible = false;
-        this.walkTime = 0;
+    }
+
+    drawFemalePlayer(g) {
+        // Shadow
+        g.fillStyle(0x000000, 0.4); g.fillEllipse(0, 28, 35, 12);
+        // Legs
+        g.fillStyle(0x2c3e50); g.fillRoundedRect(-12, 8, 10, 22, 3); g.fillRoundedRect(2, 8, 10, 22, 3);
+        // Hands
+        g.fillStyle(0xfce4d6);
+        g.fillCircle(-20, -5, 6); // Left hand
+        g.fillCircle(20, -5, 6);  // Right hand
+        // Safety Vest
+        const vestGreen = 0xccff00;
+        const reflectiveSilver = 0xdddddd;
+        const safetyOrange = 0xff6b00;
+
+        g.fillStyle(vestGreen);
+        g.fillRoundedRect(-18, -18, 36, 32, 5); // Main vest body
+
+        // Reflective Strips - Orange Borders
+        g.fillStyle(safetyOrange);
+        g.fillRect(-14, -18, 12, 32); // Left vertical border
+        g.fillRect(2, -18, 12, 32);   // Right vertical border
+        g.fillRect(-18, -4, 36, 12);  // Horizontal waist band border
+
+        // Reflective Strips - Silver 
+        g.fillStyle(reflectiveSilver);
+        g.fillRect(-12, -18, 8, 32); // Left vertical
+        g.fillRect(4, -18, 8, 32);   // Right vertical
+        g.fillRect(-18, -2, 36, 8);  // Horizontal waist band
+        // Hair base (drawn behind head, anchored to scalp)
+        g.fillStyle(0x3d2314); // Dark brown base
+        g.fillEllipse(0, -30, 22, 18); // Scalp coverage
+        g.fillEllipse(-14, -15, 12, 34); // Left side hair
+        g.fillEllipse(14, -15, 12, 34); // Right side hair
+        g.fillEllipse(-12, 5, 9, 16); // Left hair tips
+        g.fillEllipse(12, 5, 9, 16); // Right hair tips
+        // Hair highlights
+        g.fillStyle(0x5a3d2b); // Lighter brown highlights
+        g.fillEllipse(-10, -22, 4, 20);
+        g.fillEllipse(10, -22, 4, 20);
+        // Head
+        g.fillStyle(0xfce4d6); g.fillCircle(0, -26, 13);
+        // Hairline and top hair (drawn over head for attachment)
+        g.fillStyle(0x3d2314);
+        g.fillEllipse(0, -34, 18, 8);
+        g.fillEllipse(-6, -33, 8, 6);
+        g.fillEllipse(6, -33, 8, 6);
+        g.fillEllipse(0, -38, 20, 10);
+        // Hairline and top hair (drawn over head for attachment)
+        g.fillStyle(0x3d2314);
+        g.fillEllipse(0, -34, 18, 8);
+        g.fillEllipse(-6, -33, 8, 6);
+        g.fillEllipse(6, -33, 8, 6);
+        g.fillEllipse(0, -38, 20, 10);
+        // Hairline and bangs (drawn over head for attachment)
+        g.fillStyle(0x3d2314);
+        g.fillEllipse(0, -34, 18, 8);
+        g.fillEllipse(-6, -33, 8, 6);
+        g.fillEllipse(6, -33, 8, 6);
+        // Rosy cheeks
+        g.fillStyle(0xffcccc, 0.5);
+        g.fillCircle(-8, -23, 4);
+        g.fillCircle(8, -23, 4);
+        // Eyes (larger, more expressive)
+        g.fillStyle(0xffffff);
+        g.fillEllipse(-5, -28, 4, 3.5);
+        g.fillEllipse(5, -28, 4, 3.5);
+        g.fillStyle(0x4a3728); // Brown iris
+        g.fillCircle(-5, -28, 2.2);
+        g.fillCircle(5, -28, 2.2);
+        g.fillStyle(0x000000); // Pupil
+        g.fillCircle(-5, -28, 1.2);
+        g.fillCircle(5, -28, 1.2);
+        g.fillStyle(0xffffff); // Eye shine
+        g.fillCircle(-4, -29, 0.8);
+        g.fillCircle(6, -29, 0.8);
+        // Eyelashes
+        g.lineStyle(1.5, 0x000000);
+        g.lineBetween(-7, -30, -8, -33);
+        g.lineBetween(-5, -31, -5, -34);
+        g.lineBetween(5, -31, 5, -34);
+        g.lineBetween(7, -30, 8, -33);
+        // Eyebrows (subtle, feminine)
+        g.lineStyle(1.5, 0x3d2314);
+        g.beginPath();
+        g.arc(-5, -34, 5, Math.PI * 0.15, Math.PI * 0.85, false);
+        g.strokePath();
+        g.beginPath();
+        g.arc(5, -34, 5, Math.PI * 0.15, Math.PI * 0.85, false);
+        g.strokePath();
+        // Nose (small, cute)
+        g.fillStyle(0xe8c4b8); g.fillEllipse(0, -24, 2.5, 1.5);
+        // Lips (fuller, with color)
+        g.fillStyle(0xe07070);
+        g.fillEllipse(0, -19, 5, 2);
+        g.fillStyle(0xd06060);
+        g.fillEllipse(0, -18.5, 4, 1.2);
     }
 
     createHUD() {
@@ -1752,8 +1895,292 @@ class GameScene extends Phaser.Scene {
     }
 }
 
+// ===== CHARACTER SELECT SCENE =====
+class CharacterSelectScene extends Phaser.Scene {
+    constructor() { super({ key: 'CharacterSelectScene' }); }
+
+    create() {
+        const { width, height } = this.scale;
+        const isCompact = isCompactViewport(width, height);
+        const isMobile = width < 500;
+
+        // Background with gradient effect
+        this.add.rectangle(0, 0, width, height, 0x0a1a2d).setOrigin(0);
+        
+        // Add subtle stars/dots for visual interest
+        const starGraphics = this.add.graphics();
+        starGraphics.fillStyle(0xffffff, 0.3);
+        for (let i = 0; i < 30; i++) {
+            starGraphics.fillCircle(
+                Phaser.Math.Between(0, width),
+                Phaser.Math.Between(0, height * 0.4),
+                Phaser.Math.Between(1, 2)
+            );
+        }
+
+        // Title - responsive sizing
+        const titleSize = isMobile ? '20px' : (isCompact ? '24px' : '32px');
+        this.add.text(width / 2, height * (isMobile ? 0.08 : 0.10), 'CHOOSE YOUR VOLUNTEER', {
+            fontFamily: 'Fredoka, sans-serif',
+            fontSize: titleSize,
+            color: '#ffffff',
+            stroke: '#000000',
+            strokeThickness: isMobile ? 2 : (isCompact ? 3 : 4)
+        }).setOrigin(0.5);
+
+        // Character preview area - responsive positioning
+        const charY = height * (isMobile ? 0.42 : 0.45);
+        const charSpacing = isMobile ? 70 : (isCompact ? 100 : 140);
+        const charScale = isMobile ? 1.5 : (isCompact ? 1.8 : 2.2);
+        const boxWidth = isMobile ? 90 : (isCompact ? 110 : 130);
+        const boxHeight = isMobile ? 120 : (isCompact ? 140 : 170);
+
+        // Male character preview
+        const maleX = width / 2 - charSpacing;
+        const maleContainer = this.add.container(maleX, charY);
+        const maleGraphics = this.add.graphics();
+        this.drawMaleCharacter(maleGraphics);
+        maleContainer.add(maleGraphics);
+        maleContainer.setScale(charScale);
+
+        // Male selection box
+        const maleBox = this.add.rectangle(maleX, charY, boxWidth, boxHeight, 0x000000, 0.3)
+            .setStrokeStyle(3, 0x00ffff, 1)
+            .setInteractive({ useHandCursor: true });
+
+        // Male label
+        const labelSize = isMobile ? '14px' : (isCompact ? '16px' : '20px');
+        const labelOffset = isMobile ? 70 : (isCompact ? 85 : 105);
+        this.add.text(maleX, charY + labelOffset, 'VOLUNTEER A', {
+            fontFamily: 'Fredoka, sans-serif',
+            fontSize: labelSize,
+            color: '#00ffff',
+            stroke: '#000000',
+            strokeThickness: 2
+        }).setOrigin(0.5);
+
+        // Female character preview
+        const femaleX = width / 2 + charSpacing;
+        const femaleContainer = this.add.container(femaleX, charY);
+        const femaleGraphics = this.add.graphics();
+        this.drawFemaleCharacter(femaleGraphics);
+        femaleContainer.add(femaleGraphics);
+        femaleContainer.setScale(charScale);
+
+        // Female selection box
+        const femaleBox = this.add.rectangle(femaleX, charY, boxWidth, boxHeight, 0x000000, 0.3)
+            .setStrokeStyle(3, 0xff00ff, 1)
+            .setInteractive({ useHandCursor: true });
+
+        // Female label
+        this.add.text(femaleX, charY + labelOffset, 'VOLUNTEER B', {
+            fontFamily: 'Fredoka, sans-serif',
+            fontSize: labelSize,
+            color: '#ff00ff',
+            stroke: '#000000',
+            strokeThickness: 2
+        }).setOrigin(0.5);
+
+        // Selection indicator
+        const selectIndicator = this.add.graphics();
+        const updateSelection = (selected) => {
+            selectIndicator.clear();
+            selectIndicator.lineStyle(4, selected === 'male' ? 0x00ffff : 0xff00ff, 1);
+            const x = selected === 'male' ? maleX : femaleX;
+            const selBoxW = boxWidth + 10;
+            const selBoxH = boxHeight + 10;
+            selectIndicator.strokeRoundedRect(x - selBoxW/2, charY - selBoxH/2, selBoxW, selBoxH, 12);
+            
+            // Update box styles
+            maleBox.setStrokeStyle(selected === 'male' ? 4 : 2, 0x00ffff, selected === 'male' ? 1 : 0.5);
+            femaleBox.setStrokeStyle(selected === 'female' ? 4 : 2, 0xff00ff, selected === 'female' ? 1 : 0.5);
+        };
+
+        // Initial selection
+        updateSelection(selectedCharacter);
+
+        // Click handlers with visual feedback
+        maleBox.on('pointerdown', () => {
+            selectedCharacter = 'male';
+            updateSelection('male');
+            maleContainer.setScale(charScale * 1.05);
+            this.time.delayedCall(100, () => maleContainer.setScale(charScale));
+        });
+
+        femaleBox.on('pointerdown', () => {
+            selectedCharacter = 'female';
+            updateSelection('female');
+            femaleContainer.setScale(charScale * 1.05);
+            this.time.delayedCall(100, () => femaleContainer.setScale(charScale));
+        });
+
+        // Tap instruction for mobile
+        if (isMobile) {
+            this.add.text(width / 2, charY + labelOffset + 35, 'Tap to select', {
+                fontFamily: 'Outfit, sans-serif',
+                fontSize: '12px',
+                color: '#888888'
+            }).setOrigin(0.5);
+        }
+
+        // Start button - responsive
+        const btnSize = isMobile ? '22px' : (isCompact ? '26px' : '32px');
+        const btnPadding = isMobile ? { left: 24, right: 24, top: 10, bottom: 10 } : { left: 30, right: 30, top: 12, bottom: 12 };
+        const startBtn = this.add.text(width / 2, height * (isMobile ? 0.82 : 0.85), 'START GAME', {
+            fontFamily: 'Fredoka, sans-serif',
+            fontSize: btnSize,
+            color: '#000000',
+            backgroundColor: '#ccff00',
+            padding: btnPadding
+        }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+
+        startBtn.on('pointerover', () => startBtn.setScale(1.05));
+        startBtn.on('pointerout', () => startBtn.setScale(1));
+        startBtn.on('pointerdown', () => {
+            this.cameras.main.fadeOut(300, 0, 0, 0);
+            this.cameras.main.once('camerafadeoutcomplete', () => {
+                this.scene.start('GameScene');
+            });
+        });
+
+        // Keyboard support
+        this.input.keyboard.on('keydown-LEFT', () => {
+            selectedCharacter = 'male';
+            updateSelection('male');
+        });
+        this.input.keyboard.on('keydown-RIGHT', () => {
+            selectedCharacter = 'female';
+            updateSelection('female');
+        });
+        this.input.keyboard.on('keydown-ENTER', () => {
+            this.cameras.main.fadeOut(300, 0, 0, 0);
+            this.cameras.main.once('camerafadeoutcomplete', () => {
+                this.scene.start('GameScene');
+            });
+        });
+        this.input.keyboard.on('keydown-SPACE', () => {
+            this.cameras.main.fadeOut(300, 0, 0, 0);
+            this.cameras.main.once('camerafadeoutcomplete', () => {
+                this.scene.start('GameScene');
+            });
+        });
+
+        this.cameras.main.fadeIn(300);
+    }
+
+    drawMaleCharacter(g) {
+        // Shadow
+        g.fillStyle(0x000000, 0.4); g.fillEllipse(0, 28, 35, 12);
+        // Legs
+        g.fillStyle(0x2c3e50); g.fillRoundedRect(-12, 8, 10, 22, 3); g.fillRoundedRect(2, 8, 10, 22, 3);
+        // Hands
+        g.fillStyle(0xfce4d6);
+        g.fillCircle(-20, -5, 6);
+        g.fillCircle(20, -5, 6);
+        // Safety Vest
+        const vestGreen = 0xccff00;
+        const reflectiveSilver = 0xdddddd;
+        const safetyOrange = 0xff6b00;
+        g.fillStyle(vestGreen);
+        g.fillRoundedRect(-18, -18, 36, 32, 5);
+        g.fillStyle(safetyOrange);
+        g.fillRect(-14, -18, 12, 32);
+        g.fillRect(2, -18, 12, 32);
+        g.fillRect(-18, -4, 36, 12);
+        g.fillStyle(reflectiveSilver);
+        g.fillRect(-12, -18, 8, 32);
+        g.fillRect(4, -18, 8, 32);
+        g.fillRect(-18, -2, 36, 8);
+        // Head
+        g.fillStyle(0xfce4d6); g.fillCircle(0, -26, 14);
+        // Eyes
+        g.fillStyle(0x000000); g.fillCircle(-5, -28, 2.5); g.fillCircle(5, -28, 2.5);
+        // Nose
+        g.fillStyle(0xcc9988); g.fillEllipse(0, -22, 4, 2);
+        // Cap
+        g.fillStyle(0xff0000); g.fillEllipse(0, -40, 26, 14);
+        g.fillStyle(0xcc0000); g.fillRect(-13, -42, 26, 6);
+    }
+
+    drawFemaleCharacter(g) {
+        // Shadow
+        g.fillStyle(0x000000, 0.4); g.fillEllipse(0, 28, 35, 12);
+        // Legs
+        g.fillStyle(0x2c3e50); g.fillRoundedRect(-12, 8, 10, 22, 3); g.fillRoundedRect(2, 8, 10, 22, 3);
+        // Hands
+        g.fillStyle(0xfce4d6);
+        g.fillCircle(-20, -5, 6);
+        g.fillCircle(20, -5, 6);
+        // Safety Vest
+        const vestGreen = 0xccff00;
+        const reflectiveSilver = 0xdddddd;
+        const safetyOrange = 0xff6b00;
+        g.fillStyle(vestGreen);
+        g.fillRoundedRect(-18, -18, 36, 32, 5);
+        g.fillStyle(safetyOrange);
+        g.fillRect(-14, -18, 12, 32);
+        g.fillRect(2, -18, 12, 32);
+        g.fillRect(-18, -4, 36, 12);
+        g.fillStyle(reflectiveSilver);
+        g.fillRect(-12, -18, 8, 32);
+        g.fillRect(4, -18, 8, 32);
+        g.fillRect(-18, -2, 36, 8);
+        // Beautiful flowing hair (drawn behind head)
+        g.fillStyle(0x3d2314); // Dark brown base
+        g.fillEllipse(0, -28, 18, 16); // Top of head hair coverage
+        g.fillEllipse(-13, -15, 9, 32); // Left side flowing hair
+        g.fillEllipse(13, -15, 9, 32); // Right side flowing hair
+        g.fillEllipse(-11, 5, 7, 14); // Left hair tips
+        g.fillEllipse(11, 5, 7, 14); // Right hair tips
+        // Hair highlights
+        g.fillStyle(0x5a3d2b); // Lighter brown highlights
+        g.fillEllipse(-10, -20, 4, 18);
+        g.fillEllipse(10, -20, 4, 18);
+        // Head
+        g.fillStyle(0xfce4d6); g.fillCircle(0, -26, 13);
+        // Rosy cheeks
+        g.fillStyle(0xffcccc, 0.5);
+        g.fillCircle(-8, -23, 4);
+        g.fillCircle(8, -23, 4);
+        // Eyes (larger, more expressive)
+        g.fillStyle(0xffffff);
+        g.fillEllipse(-5, -28, 4, 3.5);
+        g.fillEllipse(5, -28, 4, 3.5);
+        g.fillStyle(0x4a3728); // Brown iris
+        g.fillCircle(-5, -28, 2.2);
+        g.fillCircle(5, -28, 2.2);
+        g.fillStyle(0x000000); // Pupil
+        g.fillCircle(-5, -28, 1.2);
+        g.fillCircle(5, -28, 1.2);
+        g.fillStyle(0xffffff); // Eye shine
+        g.fillCircle(-4, -29, 0.8);
+        g.fillCircle(6, -29, 0.8);
+        // Eyelashes
+        g.lineStyle(1.5, 0x000000);
+        g.lineBetween(-7, -30, -8, -33);
+        g.lineBetween(-5, -31, -5, -34);
+        g.lineBetween(5, -31, 5, -34);
+        g.lineBetween(7, -30, 8, -33);
+        // Eyebrows (subtle, feminine)
+        g.lineStyle(1.5, 0x3d2314);
+        g.beginPath();
+        g.arc(-5, -34, 5, Math.PI * 0.15, Math.PI * 0.85, false);
+        g.strokePath();
+        g.beginPath();
+        g.arc(5, -34, 5, Math.PI * 0.15, Math.PI * 0.85, false);
+        g.strokePath();
+        // Nose (small, cute)
+        g.fillStyle(0xe8c4b8); g.fillEllipse(0, -24, 2.5, 1.5);
+        // Lips (fuller, with color)
+        g.fillStyle(0xe07070);
+        g.fillEllipse(0, -19, 5, 2);
+        g.fillStyle(0xd06060);
+        g.fillEllipse(0, -18.5, 4, 1.2);
+    }
+}
+
 const config = {
     type: Phaser.AUTO, backgroundColor: '#000000', scale: { mode: Phaser.Scale.RESIZE, parent: 'game-container' },
-    dom: { createContainer: true }, scene: [SplashScene, GameScene]
+    dom: { createContainer: true }, scene: [SplashScene, CharacterSelectScene, GameScene]
 };
 window.addEventListener('load', () => new Phaser.Game(config));
