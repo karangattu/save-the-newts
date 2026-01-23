@@ -422,7 +422,12 @@ class GameScene extends Phaser.Scene {
         this.createHUD();
         this.createControls();
 
-        this.scale.on('resize', () => this.scene.restart());
+        this.scale.on('resize', () => {
+            // Don't restart during game over to preserve the name input form
+            if (!this.gameOver) {
+                this.scene.restart();
+            }
+        });
 
         this.carTimer = this.time.addEvent({
             delay: GAME_CONFIG.CAR_SPAWN_RATE,
