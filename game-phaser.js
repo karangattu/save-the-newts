@@ -50,6 +50,20 @@ async function getLeaderboard() {
 // ===== SELECTED CHARACTER =====
 let selectedCharacter = 'male'; // 'male' or 'female'
 
+// Character-specific stats
+const CHARACTER_STATS = {
+    male: {
+        speedMultiplier: 1.2,  // 20% faster
+        carryCapacity: 1,
+        description: 'FAST but carries 1 newt'
+    },
+    female: {
+        speedMultiplier: 0.85, // 15% slower
+        carryCapacity: 2,
+        description: 'STEADY and carries 2 newts'
+    }
+};
+
 // ===== ICON UTILITY (Lucide Style) =====
 const Icons = {
     drawHeart(g, x, y, size = 20, color = 0xff3366, stroke = 2) {
@@ -669,7 +683,12 @@ class GameScene extends Phaser.Scene {
         
         this.player.add(g);
         this.player.graphics = g;
-        this.player.speed = GAME_CONFIG.PLAYER_SPEED * (this.isCompact ? 0.92 : 1);
+        
+        // Apply character-specific stats
+        const stats = CHARACTER_STATS[selectedCharacter];
+        this.player.speed = GAME_CONFIG.PLAYER_SPEED * stats.speedMultiplier * (this.isCompact ? 0.92 : 1);
+        this.player.carryCapacity = stats.carryCapacity;
+        
         this.player.carried = [];
         this.player.invincible = false;
         this.walkTime = 0;
@@ -901,8 +920,9 @@ class GameScene extends Phaser.Scene {
             this.carryIconGroup = null;
         }
         const c = this.player.carried.length;
-        const carryCount = Math.min(c, 2);
-        this.carryText.setText(`Carrying ${carryCount} of 2 Newts`);
+        const maxCapacity = this.player.carryCapacity;
+        const carryCount = Math.min(c, maxCapacity);
+        this.carryText.setText(`Carrying ${carryCount} of ${maxCapacity} Newt${maxCapacity > 1 ? 's' : ''}`);
 
         // Draw pill background sized to text
         if (this.carryBg) {
@@ -1351,7 +1371,7 @@ class GameScene extends Phaser.Scene {
             });
         });
         this.newts.getChildren().forEach(newt => {
-            if (!newt.isCarried && this.player.carried.length < 2) {
+            if (!newt.isCarried && this.player.carried.length < this.player.carryCapacity) {
                 const dist = Phaser.Math.Distance.Between(this.player.x, this.player.y, newt.x, newt.y);
                 if (dist < 50) {
                     newt.isCarried = true;
@@ -1959,6 +1979,50 @@ class CharacterSelectScene extends Phaser.Scene {
             strokeThickness: 2
         }).setOrigin(0.5);
 
+        // Male stats
+        const statsSize = isMobile ? '11px' : (isCompact ? '12px' : '14px');
+        const statsOffset = isMobile ? 88 : (isCompact ? 105 : 128);
+        const statsStyle = {
+            fontFamily: 'Outfit, sans-serif',
+            fontSize: statsSize,
+            color: '#d8f5ff',
+            fontStyle: 'bold'
+        };
+        const drawStatBadge = (g, x, y, size, accent, fill = 0x06131f) => {
+            const radius = size / 2;
+            g.fillStyle(fill, 0.9);
+            g.fillCircle(x, y, radius);
+            g.lineStyle(Math.max(1.5, size * 0.12), accent, 1);
+            g.strokeCircle(x, y, radius);
+        };
+        const drawBoltIcon = (g, x, y, size, color) => {
+            const w = size * 0.6;
+            const h = size * 0.95;
+            g.fillStyle(color, 1);
+            g.beginPath();
+            g.moveTo(x + w * 0.1, y - h * 0.6);
+            g.lineTo(x - w * 0.5, y - h * 0.05);
+            g.lineTo(x - w * 0.05, y - h * 0.05);
+            g.lineTo(x - w * 0.5, y + h * 0.6);
+            g.lineTo(x + w * 0.55, y + h * 0.05);
+            g.lineTo(x + w * 0.1, y + h * 0.05);
+            g.closePath();
+            g.fillPath();
+        };
+        const drawHeartIcon = (g, x, y, size, color) => {
+            Icons.drawHeart(g, x, y, size, color);
+        };
+        const maleStatsText = this.add.text(maleX + 10, charY + statsOffset, 'FAST · Carries 1', statsStyle)
+            .setOrigin(0.5)
+            .setColor('#8feaff')
+            .setShadow(0, 2, '#000000', 4, true, true);
+        const maleIcon = this.add.graphics();
+        const maleBadgeSize = isMobile ? 16 : 20;
+        const maleIconX = maleStatsText.x - maleStatsText.width / 2 - (isMobile ? 12 : 14);
+        const maleIconY = charY + statsOffset;
+        drawStatBadge(maleIcon, maleIconX, maleIconY, maleBadgeSize, 0x6de6ff);
+        drawBoltIcon(maleIcon, maleIconX, maleIconY, maleBadgeSize * 0.7, 0x6de6ff);
+
         // Female character preview
         const femaleX = width / 2 + charSpacing;
         const femaleContainer = this.add.container(femaleX, charY);
@@ -1980,6 +2044,18 @@ class CharacterSelectScene extends Phaser.Scene {
             stroke: '#000000',
             strokeThickness: 2
         }).setOrigin(0.5);
+
+        // Female stats
+        const femaleStatsText = this.add.text(femaleX + 10, charY + statsOffset, 'STEADY · Carries 2', statsStyle)
+            .setOrigin(0.5)
+            .setColor('#ffb6de')
+            .setShadow(0, 2, '#000000', 4, true, true);
+        const femaleIcon = this.add.graphics();
+        const femaleBadgeSize = isMobile ? 16 : 20;
+        const femaleIconX = femaleStatsText.x - femaleStatsText.width / 2 - (isMobile ? 12 : 14);
+        const femaleIconY = charY + statsOffset;
+        drawStatBadge(femaleIcon, femaleIconX, femaleIconY, femaleBadgeSize, 0xffa1d4, 0x1a0b1b);
+        drawHeartIcon(femaleIcon, femaleIconX, femaleIconY, femaleBadgeSize * 0.75, 0xffa1d4);
 
         // Selection indicator
         const selectIndicator = this.add.graphics();
