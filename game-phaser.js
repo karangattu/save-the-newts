@@ -2125,19 +2125,25 @@ class CharacterSelectScene extends Phaser.Scene {
         g.fillRect(-12, -18, 8, 32);
         g.fillRect(4, -18, 8, 32);
         g.fillRect(-18, -2, 36, 8);
-        // Beautiful flowing hair (drawn behind head)
+        // Hair base (drawn behind head, anchored to scalp)
         g.fillStyle(0x3d2314); // Dark brown base
-        g.fillEllipse(0, -28, 18, 16); // Top of head hair coverage
-        g.fillEllipse(-13, -15, 9, 32); // Left side flowing hair
-        g.fillEllipse(13, -15, 9, 32); // Right side flowing hair
-        g.fillEllipse(-11, 5, 7, 14); // Left hair tips
-        g.fillEllipse(11, 5, 7, 14); // Right hair tips
+        g.fillEllipse(0, -30, 22, 18); // Scalp coverage
+        g.fillEllipse(-14, -15, 12, 34); // Left side hair
+        g.fillEllipse(14, -15, 12, 34); // Right side hair
+        g.fillEllipse(-12, 5, 9, 16); // Left hair tips
+        g.fillEllipse(12, 5, 9, 16); // Right hair tips
         // Hair highlights
         g.fillStyle(0x5a3d2b); // Lighter brown highlights
-        g.fillEllipse(-10, -20, 4, 18);
-        g.fillEllipse(10, -20, 4, 18);
+        g.fillEllipse(-10, -22, 4, 20);
+        g.fillEllipse(10, -22, 4, 20);
         // Head
         g.fillStyle(0xfce4d6); g.fillCircle(0, -26, 13);
+        // Hairline and top hair (drawn over head for attachment)
+        g.fillStyle(0x3d2314);
+        g.fillEllipse(0, -34, 18, 8);
+        g.fillEllipse(-6, -33, 8, 6);
+        g.fillEllipse(6, -33, 8, 6);
+        g.fillEllipse(0, -38, 20, 10);
         // Rosy cheeks
         g.fillStyle(0xffcccc, 0.5);
         g.fillCircle(-8, -23, 4);
