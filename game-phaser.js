@@ -15,12 +15,12 @@ if (supabaseUrl && supabaseKey && window.supabase) {
     console.log("Supabase not configured. Leaderboard disabled.");
 }
 
-async function submitScore(name, score) {
+async function submitScore(name, score, isMultiplayer = false) {
     if (!supabaseClient) return false;
     try {
         const { error } = await supabaseClient
             .from('leaderboard')
-            .insert([{ player_name: name, score: score }]);
+            .insert([{ player_name: name, score: score, is_multiplayer: isMultiplayer }]);
         if (error) {
             console.error("Error submitting score:", error);
             return false;
@@ -49,6 +49,151 @@ async function getLeaderboard() {
 
 // ===== SELECTED CHARACTER =====
 let selectedCharacter = 'male'; // 'male' or 'female'
+
+// ===== MULTIPLAYER STATE =====
+let gameMode = 'single'; // 'single' or 'multi'
+let isHost = false;
+let roomCode = null;
+let roomId = null;
+let playerId = null;
+let remotePlayerId = null;
+let remoteCharacter = null;
+let multiplayerChannel = null;
+let lastRemoteUpdate = 0;
+
+// Generate unique player ID
+function generatePlayerId() {
+    return 'player_' + Math.random().toString(36).substring(2, 15);
+}
+
+// Generate 4-digit room code
+function generateRoomCode() {
+    return Math.floor(1000 + Math.random() * 9000).toString();
+}
+
+// Room management functions
+async function createRoom(hostCharacter) {
+    if (!supabaseClient) return null;
+    const code = generateRoomCode();
+    const hostId = generatePlayerId();
+    
+    try {
+        const { data, error } = await supabaseClient
+            .from('game_rooms')
+            .insert([{ 
+                room_code: code, 
+                host_id: hostId,
+                host_character: hostCharacter,
+                status: 'waiting'
+            }])
+            .select()
+            .single();
+        
+        if (error) {
+            console.error("Error creating room:", error);
+            return null;
+        }
+        
+        playerId = hostId;
+        roomCode = code;
+        roomId = data.id;
+        isHost = true;
+        
+        return data;
+    } catch (e) {
+        console.error("Exception creating room:", e);
+        return null;
+    }
+}
+
+async function joinRoom(code, guestCharacter) {
+    if (!supabaseClient) return null;
+    const guestId = generatePlayerId();
+    
+    try {
+        // First check if room exists and is waiting
+        const { data: room, error: fetchError } = await supabaseClient
+            .from('game_rooms')
+            .select('*')
+            .eq('room_code', code)
+            .eq('status', 'waiting')
+            .is('guest_id', null)
+            .single();
+        
+        if (fetchError || !room) {
+            console.error("Room not found or not available:", fetchError);
+            return null;
+        }
+        
+        // Update room with guest info
+        const { data, error } = await supabaseClient
+            .from('game_rooms')
+            .update({ 
+                guest_id: guestId,
+                guest_character: guestCharacter,
+                status: 'playing'
+            })
+            .eq('id', room.id)
+            .select()
+            .single();
+        
+        if (error) {
+            console.error("Error joining room:", error);
+            return null;
+        }
+        
+        playerId = guestId;
+        roomCode = code;
+        roomId = data.id;
+        isHost = false;
+        remotePlayerId = data.host_id;
+        remoteCharacter = data.host_character;
+        
+        return data;
+    } catch (e) {
+        console.error("Exception joining room:", e);
+        return null;
+    }
+}
+
+async function updateRoomStatus(status) {
+    if (!supabaseClient || !roomId) return;
+    try {
+        await supabaseClient
+            .from('game_rooms')
+            .update({ status: status })
+            .eq('id', roomId);
+    } catch (e) {
+        console.error("Error updating room status:", e);
+    }
+}
+
+async function deleteRoom() {
+    if (!supabaseClient || !roomId) return;
+    try {
+        await supabaseClient
+            .from('game_rooms')
+            .delete()
+            .eq('id', roomId);
+    } catch (e) {
+        console.error("Error deleting room:", e);
+    }
+}
+
+function cleanupMultiplayerState() {
+    if (multiplayerChannel) {
+        supabaseClient.removeChannel(multiplayerChannel);
+        multiplayerChannel = null;
+    }
+    gameMode = 'single';
+    isHost = false;
+    roomCode = null;
+    roomId = null;
+    playerId = null;
+    remotePlayerId = null;
+    remoteCharacter = null;
+    lastRemoteUpdate = 0;
+}
 
 // Character-specific stats
 const CHARACTER_STATS = {
@@ -376,7 +521,7 @@ class SplashScene extends Phaser.Scene {
                 tutorialVideo.play().catch(e => console.log('Video autoplay blocked:', e));
                 this.tweens.add({ targets: poster, alpha: 0.3, duration: 300 }); // Dim poster
             } else if (step === 1) {
-                // Go to Character Selection
+                // Go to Mode Selection
                 step = 2;
                 // Hide and remove the tutorial video
                 if (this.tutorialVideo) {
@@ -404,7 +549,7 @@ class SplashScene extends Phaser.Scene {
                 this.cameras.main.fadeOut(300, 0, 0, 0);
                 this.cameras.main.once('camerafadeoutcomplete', () => {
                     if (this.bgm) this.bgm.stop();
-                    this.scene.start('CharacterSelectScene');
+                    this.scene.start('ModeSelectScene');
                 });
             }
         };
@@ -415,6 +560,525 @@ class SplashScene extends Phaser.Scene {
         this.input.keyboard.on('keydown', handleInput);
 
         console.log("SplashScene ready. Two-step start active.");
+    }
+}
+
+// ===== MODE SELECT SCENE =====
+class ModeSelectScene extends Phaser.Scene {
+    constructor() { super({ key: 'ModeSelectScene' }); }
+
+    create() {
+        const { width, height } = this.scale;
+        const isCompact = isCompactViewport(width, height);
+        const isMobile = width < 500;
+
+        // Background
+        this.add.rectangle(0, 0, width, height, 0x0a1a2d).setOrigin(0);
+
+        // Add subtle decoration
+        const starGraphics = this.add.graphics();
+        starGraphics.fillStyle(0xffffff, 0.2);
+        for (let i = 0; i < 40; i++) {
+            starGraphics.fillCircle(
+                Phaser.Math.Between(0, width),
+                Phaser.Math.Between(0, height),
+                Phaser.Math.Between(1, 2)
+            );
+        }
+
+        // Title
+        const titleSize = isMobile ? '22px' : (isCompact ? '28px' : '36px');
+        this.add.text(width / 2, height * 0.15, 'SELECT MODE', {
+            fontFamily: 'Fredoka, sans-serif',
+            fontSize: titleSize,
+            color: '#ffffff',
+            stroke: '#000000',
+            strokeThickness: isMobile ? 3 : 4
+        }).setOrigin(0.5);
+
+        // Mode buttons
+        const btnY = height * 0.45;
+        const btnSpacing = isMobile ? 70 : (isCompact ? 90 : 110);
+        const btnWidth = isMobile ? 200 : (isCompact ? 260 : 320);
+        const btnHeight = isMobile ? 70 : (isCompact ? 85 : 100);
+
+        // Single Player Button
+        const singleY = btnY - btnSpacing / 2;
+        const singleBg = this.add.rectangle(width / 2, singleY, btnWidth, btnHeight, 0x1a3a2a, 0.9)
+            .setStrokeStyle(3, 0x00ff88, 1)
+            .setInteractive({ useHandCursor: true });
+
+        this.add.text(width / 2, singleY - 12, '👤 SINGLE PLAYER', {
+            fontFamily: 'Fredoka, sans-serif',
+            fontSize: isMobile ? '18px' : (isCompact ? '22px' : '26px'),
+            color: '#00ff88'
+        }).setOrigin(0.5);
+
+        this.add.text(width / 2, singleY + 16, 'Classic solo adventure', {
+            fontFamily: 'Outfit, sans-serif',
+            fontSize: isMobile ? '12px' : (isCompact ? '14px' : '16px'),
+            color: '#aaffcc'
+        }).setOrigin(0.5);
+
+        // Multiplayer Button
+        const multiY = btnY + btnSpacing / 2 + 20;
+        const multiBg = this.add.rectangle(width / 2, multiY, btnWidth, btnHeight, 0x1a2a3a, 0.9)
+            .setStrokeStyle(3, 0x00ccff, 1)
+            .setInteractive({ useHandCursor: true });
+
+        this.add.text(width / 2, multiY - 12, '👥 MULTIPLAYER', {
+            fontFamily: 'Fredoka, sans-serif',
+            fontSize: isMobile ? '18px' : (isCompact ? '22px' : '26px'),
+            color: '#00ccff'
+        }).setOrigin(0.5);
+
+        this.add.text(width / 2, multiY + 16, 'Team up with a friend!', {
+            fontFamily: 'Outfit, sans-serif',
+            fontSize: isMobile ? '12px' : (isCompact ? '14px' : '16px'),
+            color: '#aaccff'
+        }).setOrigin(0.5);
+
+        // Multiplayer availability check
+        if (!supabaseClient) {
+            multiBg.setAlpha(0.5);
+            multiBg.disableInteractive();
+            this.add.text(width / 2, multiY + 40, '(Requires online connection)', {
+                fontFamily: 'Outfit, sans-serif',
+                fontSize: '11px',
+                color: '#666666'
+            }).setOrigin(0.5);
+        }
+
+        // Button interactions
+        singleBg.on('pointerover', () => singleBg.setStrokeStyle(4, 0x00ff88, 1));
+        singleBg.on('pointerout', () => singleBg.setStrokeStyle(3, 0x00ff88, 1));
+        singleBg.on('pointerdown', () => {
+            gameMode = 'single';
+            cleanupMultiplayerState();
+            this.cameras.main.fadeOut(300, 0, 0, 0);
+            this.cameras.main.once('camerafadeoutcomplete', () => {
+                this.scene.start('CharacterSelectScene');
+            });
+        });
+
+        multiBg.on('pointerover', () => multiBg.setStrokeStyle(4, 0x00ccff, 1));
+        multiBg.on('pointerout', () => multiBg.setStrokeStyle(3, 0x00ccff, 1));
+        multiBg.on('pointerdown', () => {
+            gameMode = 'multi';
+            this.cameras.main.fadeOut(300, 0, 0, 0);
+            this.cameras.main.once('camerafadeoutcomplete', () => {
+                this.scene.start('LobbyScene');
+            });
+        });
+
+        // Back button (small, top-left)
+        const backBtn = this.add.text(20, 20, '← BACK', {
+            fontFamily: 'Outfit, sans-serif',
+            fontSize: '14px',
+            color: '#888888'
+        }).setInteractive({ useHandCursor: true });
+
+        backBtn.on('pointerover', () => backBtn.setColor('#ffffff'));
+        backBtn.on('pointerout', () => backBtn.setColor('#888888'));
+        backBtn.on('pointerdown', () => {
+            this.cameras.main.fadeOut(200, 0, 0, 0);
+            this.cameras.main.once('camerafadeoutcomplete', () => {
+                this.scene.start('SplashScene');
+            });
+        });
+
+        this.cameras.main.fadeIn(300);
+    }
+}
+
+// ===== LOBBY SCENE =====
+class LobbyScene extends Phaser.Scene {
+    constructor() { super({ key: 'LobbyScene' }); }
+
+    create() {
+        const { width, height } = this.scale;
+        const isCompact = isCompactViewport(width, height);
+        const isMobile = width < 500;
+
+        // Background
+        this.add.rectangle(0, 0, width, height, 0x0a1a2d).setOrigin(0);
+
+        // Title
+        this.add.text(width / 2, height * 0.10, 'MULTIPLAYER LOBBY', {
+            fontFamily: 'Fredoka, sans-serif',
+            fontSize: isMobile ? '20px' : (isCompact ? '26px' : '32px'),
+            color: '#00ccff',
+            stroke: '#000000',
+            strokeThickness: 3
+        }).setOrigin(0.5);
+
+        this.lobbyState = 'menu'; // 'menu', 'creating', 'waiting', 'joining'
+        this.roomSubscription = null;
+        this.inputEl = null;
+
+        this.createLobbyMenu();
+
+        // Back button
+        const backBtn = this.add.text(20, 20, '← BACK', {
+            fontFamily: 'Outfit, sans-serif',
+            fontSize: '14px',
+            color: '#888888'
+        }).setInteractive({ useHandCursor: true });
+
+        backBtn.on('pointerover', () => backBtn.setColor('#ffffff'));
+        backBtn.on('pointerout', () => backBtn.setColor('#888888'));
+        backBtn.on('pointerdown', () => {
+            this.cleanup();
+            this.cameras.main.fadeOut(200, 0, 0, 0);
+            this.cameras.main.once('camerafadeoutcomplete', () => {
+                this.scene.start('ModeSelectScene');
+            });
+        });
+
+        this.events.once('shutdown', () => this.cleanup());
+        this.cameras.main.fadeIn(300);
+    }
+
+    cleanup() {
+        if (this.roomSubscription) {
+            supabaseClient.removeChannel(this.roomSubscription);
+            this.roomSubscription = null;
+        }
+        if (this.inputEl && this.inputEl.parentNode) {
+            this.inputEl.parentNode.removeChild(this.inputEl);
+            this.inputEl = null;
+        }
+        // If we created a room but didn't start, delete it
+        if (isHost && roomId && this.lobbyState === 'waiting') {
+            deleteRoom();
+        }
+    }
+
+    createLobbyMenu() {
+        const { width, height } = this.scale;
+        const isCompact = isCompactViewport(width, height);
+        const isMobile = width < 500;
+
+        // Container for menu items (so we can destroy and recreate)
+        if (this.menuContainer) {
+            this.menuContainer.destroy();
+        }
+        this.menuContainer = this.add.container(0, 0);
+
+        const btnWidth = isMobile ? 220 : (isCompact ? 280 : 340);
+        const btnHeight = isMobile ? 60 : (isCompact ? 70 : 80);
+        const btnY = height * 0.40;
+
+        // Create Room Button
+        const createBg = this.add.rectangle(width / 2, btnY, btnWidth, btnHeight, 0x1a3a2a, 0.9)
+            .setStrokeStyle(3, 0x00ff88, 1)
+            .setInteractive({ useHandCursor: true });
+
+        const createText = this.add.text(width / 2, btnY, '🏠 CREATE ROOM', {
+            fontFamily: 'Fredoka, sans-serif',
+            fontSize: isMobile ? '18px' : (isCompact ? '22px' : '26px'),
+            color: '#00ff88'
+        }).setOrigin(0.5);
+
+        this.menuContainer.add([createBg, createText]);
+
+        createBg.on('pointerover', () => createBg.setStrokeStyle(4, 0x00ff88, 1));
+        createBg.on('pointerout', () => createBg.setStrokeStyle(3, 0x00ff88, 1));
+        createBg.on('pointerdown', () => this.showCreateRoom());
+
+        // Join Room Button
+        const joinY = btnY + btnHeight + 30;
+        const joinBg = this.add.rectangle(width / 2, joinY, btnWidth, btnHeight, 0x1a2a3a, 0.9)
+            .setStrokeStyle(3, 0x00ccff, 1)
+            .setInteractive({ useHandCursor: true });
+
+        const joinText = this.add.text(width / 2, joinY, '🔗 JOIN ROOM', {
+            fontFamily: 'Fredoka, sans-serif',
+            fontSize: isMobile ? '18px' : (isCompact ? '22px' : '26px'),
+            color: '#00ccff'
+        }).setOrigin(0.5);
+
+        this.menuContainer.add([joinBg, joinText]);
+
+        joinBg.on('pointerover', () => joinBg.setStrokeStyle(4, 0x00ccff, 1));
+        joinBg.on('pointerout', () => joinBg.setStrokeStyle(3, 0x00ccff, 1));
+        joinBg.on('pointerdown', () => this.showJoinRoom());
+
+        // Instructions
+        const instrText = this.add.text(width / 2, height * 0.75, 
+            'Create a room and share the code\nwith your friend to play together!', {
+            fontFamily: 'Outfit, sans-serif',
+            fontSize: isMobile ? '12px' : '14px',
+            color: '#888888',
+            align: 'center'
+        }).setOrigin(0.5);
+        this.menuContainer.add(instrText);
+    }
+
+    async showCreateRoom() {
+        const { width, height } = this.scale;
+        const isCompact = isCompactViewport(width, height);
+        const isMobile = width < 500;
+
+        this.lobbyState = 'creating';
+        this.menuContainer.destroy();
+        this.menuContainer = this.add.container(0, 0);
+
+        // Show creating message
+        const creatingText = this.add.text(width / 2, height * 0.4, 'Creating room...', {
+            fontFamily: 'Fredoka, sans-serif',
+            fontSize: '20px',
+            color: '#ffffff'
+        }).setOrigin(0.5);
+        this.menuContainer.add(creatingText);
+
+        // Create the room
+        const room = await createRoom(selectedCharacter);
+        
+        if (!room) {
+            creatingText.setText('Failed to create room.\nPlease try again.');
+            creatingText.setColor('#ff6666');
+            this.time.delayedCall(2000, () => {
+                this.lobbyState = 'menu';
+                this.createLobbyMenu();
+            });
+            return;
+        }
+
+        this.showWaitingForPlayer();
+    }
+
+    showWaitingForPlayer() {
+        const { width, height } = this.scale;
+        const isCompact = isCompactViewport(width, height);
+        const isMobile = width < 500;
+
+        this.lobbyState = 'waiting';
+        this.menuContainer.destroy();
+        this.menuContainer = this.add.container(0, 0);
+
+        // Room code display
+        this.add.text(width / 2, height * 0.25, 'ROOM CODE', {
+            fontFamily: 'Outfit, sans-serif',
+            fontSize: '14px',
+            color: '#888888'
+        }).setOrigin(0.5);
+
+        const codeBox = this.add.rectangle(width / 2, height * 0.35, 200, 70, 0x000000, 0.6)
+            .setStrokeStyle(3, 0x00ff88, 1);
+
+        const codeText = this.add.text(width / 2, height * 0.35, roomCode, {
+            fontFamily: 'Fredoka, sans-serif',
+            fontSize: isMobile ? '36px' : '48px',
+            color: '#00ff88',
+            letterSpacing: 8
+        }).setOrigin(0.5);
+
+        this.menuContainer.add([codeBox, codeText]);
+
+        // Waiting message with animation
+        const waitingText = this.add.text(width / 2, height * 0.50, 'Waiting for player to join...', {
+            fontFamily: 'Outfit, sans-serif',
+            fontSize: '16px',
+            color: '#ffffff'
+        }).setOrigin(0.5);
+        this.menuContainer.add(waitingText);
+
+        // Animated dots
+        let dots = 0;
+        this.dotsTimer = this.time.addEvent({
+            delay: 500,
+            callback: () => {
+                dots = (dots + 1) % 4;
+                waitingText.setText('Waiting for player to join' + '.'.repeat(dots));
+            },
+            loop: true
+        });
+
+        // Share instructions
+        const shareText = this.add.text(width / 2, height * 0.60, 
+            'Share this code with your friend!', {
+            fontFamily: 'Outfit, sans-serif',
+            fontSize: '14px',
+            color: '#aaaaaa'
+        }).setOrigin(0.5);
+        this.menuContainer.add(shareText);
+
+        // Cancel button
+        const cancelBtn = this.add.text(width / 2, height * 0.75, 'CANCEL', {
+            fontFamily: 'Fredoka, sans-serif',
+            fontSize: '18px',
+            color: '#ff6666',
+            backgroundColor: '#330000',
+            padding: { left: 20, right: 20, top: 8, bottom: 8 }
+        }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+        this.menuContainer.add(cancelBtn);
+
+        cancelBtn.on('pointerdown', async () => {
+            if (this.dotsTimer) this.dotsTimer.destroy();
+            await deleteRoom();
+            cleanupMultiplayerState();
+            this.lobbyState = 'menu';
+            this.createLobbyMenu();
+        });
+
+        // Subscribe to room changes (wait for guest to join)
+        this.roomSubscription = supabaseClient
+            .channel(`room-${roomId}`)
+            .on('postgres_changes', 
+                { event: 'UPDATE', schema: 'public', table: 'game_rooms', filter: `id=eq.${roomId}` },
+                (payload) => {
+                    console.log('Room updated:', payload);
+                    if (payload.new.guest_id && payload.new.status === 'playing') {
+                        // Guest joined!
+                        remotePlayerId = payload.new.guest_id;
+                        remoteCharacter = payload.new.guest_character;
+                        this.startMultiplayerGame();
+                    }
+                }
+            )
+            .subscribe();
+    }
+
+    showJoinRoom() {
+        const { width, height } = this.scale;
+        const isCompact = isCompactViewport(width, height);
+        const isMobile = width < 500;
+
+        this.lobbyState = 'joining';
+        this.menuContainer.destroy();
+        this.menuContainer = this.add.container(0, 0);
+
+        // Input label
+        const labelText = this.add.text(width / 2, height * 0.30, 'ENTER ROOM CODE', {
+            fontFamily: 'Outfit, sans-serif',
+            fontSize: '14px',
+            color: '#888888'
+        }).setOrigin(0.5);
+        this.menuContainer.add(labelText);
+
+        // Create DOM input for room code
+        const canvasRect = this.game.canvas.getBoundingClientRect();
+        this.inputEl = document.createElement('input');
+        this.inputEl.type = 'text';
+        this.inputEl.placeholder = '0000';
+        this.inputEl.maxLength = 4;
+        this.inputEl.style.cssText = `
+            position: fixed;
+            left: ${canvasRect.left + width / 2}px;
+            top: ${canvasRect.top + height * 0.40}px;
+            transform: translate(-50%, -50%);
+            padding: 15px 25px;
+            font-size: 32px;
+            font-family: 'Fredoka', sans-serif;
+            border: 3px solid #00ccff;
+            border-radius: 12px;
+            background: #111;
+            color: #00ccff;
+            text-align: center;
+            width: 160px;
+            letter-spacing: 8px;
+            z-index: 10000;
+            outline: none;
+        `;
+        document.body.appendChild(this.inputEl);
+        this.inputEl.focus();
+
+        // Disable keyboard capture for typing
+        this.input.keyboard.removeCapture('W,A,S,D');
+        this.input.keyboard.removeCapture([32, 37, 38, 39, 40]);
+
+        // Status text
+        this.statusText = this.add.text(width / 2, height * 0.55, '', {
+            fontFamily: 'Outfit, sans-serif',
+            fontSize: '14px',
+            color: '#ffffff'
+        }).setOrigin(0.5);
+        this.menuContainer.add(this.statusText);
+
+        // Join button
+        const joinBtn = this.add.text(width / 2, height * 0.65, 'JOIN', {
+            fontFamily: 'Fredoka, sans-serif',
+            fontSize: '22px',
+            color: '#000000',
+            backgroundColor: '#00ccff',
+            padding: { left: 40, right: 40, top: 10, bottom: 10 }
+        }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+        this.menuContainer.add(joinBtn);
+
+        joinBtn.on('pointerdown', () => this.attemptJoin());
+
+        // Also allow Enter key to join
+        this.inputEl.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                this.attemptJoin();
+            }
+        });
+
+        // Cancel button
+        const cancelBtn = this.add.text(width / 2, height * 0.78, 'CANCEL', {
+            fontFamily: 'Outfit, sans-serif',
+            fontSize: '16px',
+            color: '#888888'
+        }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+        this.menuContainer.add(cancelBtn);
+
+        cancelBtn.on('pointerdown', () => {
+            if (this.inputEl && this.inputEl.parentNode) {
+                this.inputEl.parentNode.removeChild(this.inputEl);
+                this.inputEl = null;
+            }
+            this.lobbyState = 'menu';
+            this.createLobbyMenu();
+        });
+    }
+
+    async attemptJoin() {
+        const code = this.inputEl.value.trim();
+        
+        if (code.length !== 4 || !/^\d{4}$/.test(code)) {
+            this.statusText.setText('Please enter a 4-digit code');
+            this.statusText.setColor('#ff6666');
+            return;
+        }
+
+        this.statusText.setText('Joining room...');
+        this.statusText.setColor('#ffffff');
+
+        const room = await joinRoom(code, selectedCharacter);
+        
+        if (!room) {
+            this.statusText.setText('Room not found or already full');
+            this.statusText.setColor('#ff6666');
+            return;
+        }
+
+        // Successfully joined - go to character select then game
+        if (this.inputEl && this.inputEl.parentNode) {
+            this.inputEl.parentNode.removeChild(this.inputEl);
+            this.inputEl = null;
+        }
+
+        this.startMultiplayerGame();
+    }
+
+    startMultiplayerGame() {
+        if (this.dotsTimer) this.dotsTimer.destroy();
+        if (this.roomSubscription) {
+            supabaseClient.removeChannel(this.roomSubscription);
+            this.roomSubscription = null;
+        }
+        if (this.inputEl && this.inputEl.parentNode) {
+            this.inputEl.parentNode.removeChild(this.inputEl);
+            this.inputEl = null;
+        }
+
+        // Both players now go to character select (but their choice is already made)
+        // For simplicity, we'll skip character select in multiplayer and go straight to game
+        this.cameras.main.fadeOut(300, 0, 0, 0);
+        this.cameras.main.once('camerafadeoutcomplete', () => {
+            this.scene.start('GameScene');
+        });
     }
 }
 
@@ -441,6 +1105,16 @@ class GameScene extends Phaser.Scene {
         this.difficulty = 1;
         this.runStartTime = this.time.now;
 
+        // Multiplayer state
+        this.isMultiplayer = gameMode === 'multi';
+        this.teamScore = 0;
+        this.remotePlayer = null;
+        this.remotePlayerGraphics = null;
+        this.remoteCarried = [];
+        this.lastBroadcastTime = 0;
+        this.disconnectTimer = null;
+        this.partnerDisconnected = false;
+
         // Achievement tracking
         this.streak = 0;
         this.maxStreak = 0;
@@ -464,6 +1138,13 @@ class GameScene extends Phaser.Scene {
 
         this.createEnvironment();
         this.createPlayer();
+        
+        // Create remote player for multiplayer
+        if (this.isMultiplayer) {
+            this.createRemotePlayer();
+            this.setupMultiplayerSync();
+        }
+        
         this.createHUD();
         this.createControls();
 
@@ -474,15 +1155,18 @@ class GameScene extends Phaser.Scene {
             }
         });
 
-        this.carTimer = this.time.addEvent({
-            delay: GAME_CONFIG.CAR_SPAWN_RATE,
-            callback: this.spawnCar,
-            callbackScope: this,
-            loop: true
-        });
-        this.time.addEvent({ delay: GAME_CONFIG.NEWT_SPAWN_RATE, callback: this.spawnNewt, callbackScope: this, loop: true });
+        // Only host spawns cars and newts in multiplayer
+        if (!this.isMultiplayer || isHost) {
+            this.carTimer = this.time.addEvent({
+                delay: GAME_CONFIG.CAR_SPAWN_RATE,
+                callback: this.spawnCar,
+                callbackScope: this,
+                loop: true
+            });
+            this.time.addEvent({ delay: GAME_CONFIG.NEWT_SPAWN_RATE, callback: this.spawnNewt, callbackScope: this, loop: true });
+            this.spawnNewt();
+        }
 
-        this.spawnNewt();
         this.cameras.main.fadeIn(300);
 
         // Rain effect
@@ -694,25 +1378,482 @@ class GameScene extends Phaser.Scene {
         this.walkTime = 0;
     }
 
-    drawMalePlayer(g) {
+    createRemotePlayer() {
+        const { width } = this.scale;
+        // Remote player starts on opposite side
+        const startX = isHost ? width / 2 + 60 : width / 2 - 60;
+        
+        this.remotePlayer = this.add.container(startX, this.botSafe + 60);
+        this.remotePlayer.setDepth(49); // Slightly below local player
+        this.remotePlayer.setScale(this.layoutScale);
+        
+        const g = this.add.graphics();
+        
+        // Draw remote player with P2 colors
+        if (remoteCharacter === 'female') {
+            this.drawFemalePlayer(g, true); // true = isPlayer2
+        } else {
+            this.drawMalePlayer(g, true);
+        }
+        
+        this.remotePlayer.add(g);
+        this.remotePlayer.graphics = g;
+        
+        // Apply remote character stats
+        const remoteStats = CHARACTER_STATS[remoteCharacter] || CHARACTER_STATS['male'];
+        this.remotePlayer.carryCapacity = remoteStats.carryCapacity;
+        this.remotePlayer.carried = [];
+        
+        // Add P2 label above remote player
+        const label = this.add.text(0, -55, 'P2', {
+            fontFamily: 'Fredoka, sans-serif',
+            fontSize: '12px',
+            color: '#00ccff',
+            stroke: '#000000',
+            strokeThickness: 2
+        }).setOrigin(0.5);
+        this.remotePlayer.add(label);
+        
+        // Add P1 label above local player
+        const p1Label = this.add.text(0, -55, 'P1', {
+            fontFamily: 'Fredoka, sans-serif',
+            fontSize: '12px',
+            color: '#00ff88',
+            stroke: '#000000',
+            strokeThickness: 2
+        }).setOrigin(0.5);
+        this.player.add(p1Label);
+        
+        this.remoteWalkTime = 0;
+    }
+
+    setupMultiplayerSync() {
+        if (!supabaseClient || !roomCode) return;
+        
+        // Create broadcast channel for real-time sync
+        multiplayerChannel = supabaseClient.channel(`game-${roomCode}`, {
+            config: {
+                broadcast: { self: false }
+            }
+        });
+
+        // Listen for remote player updates
+        multiplayerChannel.on('broadcast', { event: 'player_update' }, (payload) => {
+            if (payload.payload.playerId !== playerId) {
+                this.handleRemotePlayerUpdate(payload.payload);
+            }
+        });
+
+        // Listen for game state updates (from host)
+        multiplayerChannel.on('broadcast', { event: 'game_state' }, (payload) => {
+            if (!isHost) {
+                this.handleGameStateUpdate(payload.payload);
+            }
+        });
+
+        // Note: newt_spawn events removed - newts are synced via game_state broadcast
+
+        // Listen for newt pickup events
+        multiplayerChannel.on('broadcast', { event: 'newt_pickup' }, (payload) => {
+            if (payload.payload.playerId !== playerId) {
+                this.handleRemoteNewtPickup(payload.payload);
+            }
+        });
+
+        // Listen for newt save events
+        multiplayerChannel.on('broadcast', { event: 'newt_save' }, (payload) => {
+            if (isHost || payload.payload.playerId !== playerId) {
+                this.handleNewtSave(payload.payload);
+            }
+        });
+
+        // Listen for partner disconnect
+        multiplayerChannel.on('broadcast', { event: 'player_disconnect' }, (payload) => {
+            if (payload.payload.playerId !== playerId) {
+                this.handlePartnerDisconnect();
+            }
+        });
+
+        multiplayerChannel.subscribe((status) => {
+            console.log('Multiplayer channel status:', status);
+            if (status === 'SUBSCRIBED') {
+                // Start broadcasting position
+                this.broadcastTimer = this.time.addEvent({
+                    delay: 50, // 20Hz broadcast rate
+                    callback: this.broadcastPlayerState,
+                    callbackScope: this,
+                    loop: true
+                });
+                
+                // Start disconnect detection
+                lastRemoteUpdate = Date.now();
+                this.disconnectCheckTimer = this.time.addEvent({
+                    delay: 1000,
+                    callback: this.checkPartnerConnection,
+                    callbackScope: this,
+                    loop: true
+                });
+            }
+        });
+    }
+
+    broadcastPlayerState() {
+        if (!multiplayerChannel || this.gameOver) return;
+        
+        const w = this.scale.width;
+        const h = this.scale.height;
+        
+        const payload = {
+            playerId: playerId,
+            xRatio: this.player.x / w,  // Normalized 0-1
+            yRatio: this.player.y / h,
+            scaleX: this.player.scaleX,
+            carriedCount: this.player.carried.length,
+            timestamp: Date.now()
+        };
+
+        multiplayerChannel.send({
+            type: 'broadcast',
+            event: 'player_update',
+            payload: payload
+        });
+
+        // Host also broadcasts game state
+        if (isHost) {
+            this.broadcastGameState();
+        }
+    }
+
+    broadcastGameState() {
+        if (!multiplayerChannel || !isHost) return;
+        
+        const w = this.scale.width;
+        const h = this.scale.height;
+        
+        const newtsData = this.newts.getChildren().map(n => ({
+            id: n.newtId,
+            xRatio: n.x / w,  // Normalized 0-1
+            yRatio: n.y / h,
+            dest: n.dest,
+            dir: n.dir,
+            isCarried: n.isCarried,
+            carriedBy: n.carriedBy || null
+        }));
+
+        const carsData = this.cars.getChildren().map(c => ({
+            id: c.carId,
+            xRatio: c.x / w,  // Normalized 0-1
+            yRatio: c.y / h,
+            speed: c.speed,
+            speedRatio: c.speed / w,  // Speed relative to screen width
+            type: c.type,
+            color: c.carColor,
+            dir: c.dir,
+            lane: c.lane,
+            w: c.w,
+            h: c.h
+        }));
+
+        const payload = {
+            teamScore: this.teamScore,
+            lives: this.lives,
+            saved: this.saved,
+            lost: this.lost,
+            difficulty: this.difficulty,
+            newts: newtsData,
+            cars: carsData
+        };
+
+        multiplayerChannel.send({
+            type: 'broadcast',
+            event: 'game_state',
+            payload: payload
+        });
+    }
+
+    handleRemotePlayerUpdate(data) {
+        if (!this.remotePlayer || this.gameOver) return;
+        
+        lastRemoteUpdate = Date.now();
+        
+        const w = this.scale.width;
+        const h = this.scale.height;
+        
+        // Convert normalized coordinates to local screen coordinates
+        const targetX = data.xRatio * w;
+        const targetY = data.yRatio * h;
+        
+        // Smoothly interpolate to new position
+        this.tweens.add({
+            targets: this.remotePlayer,
+            x: targetX,
+            y: targetY,
+            duration: 50,
+            ease: 'Linear'
+        });
+        
+        this.remotePlayer.scaleX = data.scaleX;
+        
+        // Update remote carried count for display
+        this.remoteCarriedCount = data.carriedCount;
+        this.updateHUD();
+    }
+
+    handleGameStateUpdate(data) {
+        if (isHost || this.gameOver) return;
+        
+        this.teamScore = data.teamScore;
+        this.lives = data.lives;
+        this.saved = data.saved;
+        this.lost = data.lost;
+        this.difficulty = data.difficulty;
+        
+        // Sync newts and cars (for guest)
+        this.syncNewts(data.newts);
+        if (data.cars) {
+            this.syncCars(data.cars);
+        }
+        this.updateHUD();
+    }
+
+    syncNewts(newtsData) {
+        if (!newtsData) return;
+        
+        const w = this.scale.width;
+        const h = this.scale.height;
+        
+        // Build map of current newts
+        const currentNewts = new Map();
+        this.newts.getChildren().forEach(n => {
+            if (n.newtId) currentNewts.set(n.newtId, n);
+        });
+        
+        newtsData.forEach(nData => {
+            const existing = currentNewts.get(nData.id);
+            
+            // Convert normalized coordinates to local screen
+            const localX = nData.xRatio * w;
+            const localY = nData.yRatio * h;
+            
+            if (existing) {
+                // Update position only if not carried
+                if (!nData.isCarried) {
+                    existing.x = localX;
+                    existing.y = localY;
+                    existing.visible = true;
+                } else {
+                    // Newt is carried - position it with the carrier
+                    if (nData.carriedBy === playerId) {
+                        // We're carrying this newt, local player will position it
+                        existing.visible = true;
+                    } else if (nData.carriedBy && nData.carriedBy !== playerId) {
+                        // Remote player is carrying it
+                        if (this.remotePlayer && !this.remotePlayer.carried.includes(existing)) {
+                            this.remotePlayer.carried.push(existing);
+                        }
+                        existing.visible = true;
+                    }
+                }
+                existing.isCarried = nData.isCarried;
+                existing.carriedBy = nData.carriedBy;
+                existing.dir = nData.dir || existing.dir;
+                existing.dest = nData.dest || existing.dest;
+                currentNewts.delete(nData.id);
+            } else if (!nData.isCarried) {
+                // Create new newt on guest
+                const newt = this.add.image(localX, localY, 'newt');
+                newt.setDisplaySize(GAME_CONFIG.NEWT_SIZE, GAME_CONFIG.NEWT_SIZE);
+                newt.setDepth(25);
+                newt.dir = nData.dir || 1;
+                newt.dest = nData.dest;
+                newt.isCarried = false;
+                newt.newtId = nData.id;
+                newt.rotation = newt.dir === 1 ? Math.PI / 2 : -Math.PI / 2;
+                this.newts.add(newt);
+            }
+        });
+        
+        // Remove newts that no longer exist on host
+        currentNewts.forEach(n => n.destroy());
+        
+        // Clean up remote player's carried array
+        if (this.remotePlayer && this.remotePlayer.carried) {
+            this.remotePlayer.carried = this.remotePlayer.carried.filter(n => n && n.active && n.isCarried);
+        }
+    }
+
+    syncCars(carsData) {
+        if (!carsData) return;
+        
+        const w = this.scale.width;
+        const h = this.scale.height;
+        
+        // Build map of current cars
+        const currentCars = new Map();
+        this.cars.getChildren().forEach(c => {
+            if (c.carId) currentCars.set(c.carId, c);
+        });
+        
+        carsData.forEach(cData => {
+            const existing = currentCars.get(cData.id);
+            
+            // Convert normalized coordinates to local screen
+            const localX = cData.xRatio * w;
+            const localY = cData.yRatio * h;
+            const localSpeed = cData.speedRatio ? cData.speedRatio * w : cData.speed;
+            
+            if (existing) {
+                // Store target position and speed for local interpolation
+                existing.targetX = localX;
+                existing.targetY = localY;
+                existing.speed = localSpeed;
+                currentCars.delete(cData.id);
+            } else {
+                // Create new car on guest with local coordinates
+                this.createCarFromData({
+                    ...cData,
+                    x: localX,
+                    y: localY,
+                    speed: localSpeed
+                });
+            }
+        });
+        
+        // Remove cars that no longer exist on host
+        currentCars.forEach(c => c.destroy());
+    }
+
+    createCarFromData(data) {
+        const container = this.add.container(data.x, data.y);
+        container.setDepth(30);
+
+        const g = this.add.graphics();
+        const color = data.color;
+        const dir = data.dir;
+
+        if (data.type === 'car') this.draw3DCar(g, color, dir);
+        else if (data.type === 'truck') this.draw3DTruck(g, color, dir);
+        else if (data.type === 'motorbike') this.draw3DMotorbike(g, color, dir);
+
+        container.add(g);
+        container.speed = data.speed;
+        container.type = data.type;
+        container.carColor = color;
+        container.dir = dir;
+        container.lane = data.lane;
+        container.carId = data.id;
+        container.w = data.w;
+        container.h = data.h;
+
+        this.cars.add(container);
+    }
+
+    handleNewtSpawn(data) {
+        if (isHost) return; // Host spawns locally
+        
+        const newt = this.add.image(data.x, data.y, 'newt');
+        newt.setDisplaySize(GAME_CONFIG.NEWT_SIZE, GAME_CONFIG.NEWT_SIZE);
+        newt.setDepth(25);
+        newt.dir = data.dir;
+        newt.dest = data.dest;
+        newt.isCarried = false;
+        newt.newtId = data.id;
+        newt.rotation = newt.dir === 1 ? Math.PI / 2 : -Math.PI / 2;
+        this.newts.add(newt);
+    }
+
+    handleRemoteNewtPickup(data) {
+        // Find the newt and mark it as carried by remote
+        const newt = this.newts.getChildren().find(n => n.newtId === data.newtId);
+        if (newt && !newt.isCarried) {
+            newt.isCarried = true;
+            newt.carriedBy = data.playerId; // Use actual playerId for proper sync
+            if (this.remotePlayer) {
+                this.remotePlayer.carried.push(newt);
+            }
+            this.createPickupEffect(newt.x, newt.y);
+        }
+    }
+
+    handleNewtSave(data) {
+        // Update team score and stats
+        if (data.correct) {
+            this.teamScore += 100;
+            this.saved++;
+            if (this.cache.audio.exists('sfx_saved')) this.sound.play('sfx_saved', { volume: 0.6 });
+            this.createSuccessEffect(data.x, data.y);
+        }
+        this.updateHUD();
+    }
+
+    checkPartnerConnection() {
+        if (this.gameOver || this.partnerDisconnected) return;
+        
+        const timeSinceUpdate = Date.now() - lastRemoteUpdate;
+        if (timeSinceUpdate > 10000) { // 10 seconds timeout
+            this.handlePartnerDisconnect();
+        }
+    }
+
+    handlePartnerDisconnect() {
+        if (this.partnerDisconnected) return;
+        this.partnerDisconnected = true;
+        
+        // Show disconnect message and end game
+        const { width, height } = this.scale;
+        
+        const overlay = this.add.rectangle(0, 0, width, height, 0x000000, 0.8).setOrigin(0).setDepth(400);
+        const disconnectText = this.add.text(width / 2, height / 2 - 30, 'Partner Disconnected', {
+            fontFamily: 'Fredoka, sans-serif',
+            fontSize: '28px',
+            color: '#ff6666',
+            stroke: '#000000',
+            strokeThickness: 4
+        }).setOrigin(0.5).setDepth(401);
+        
+        const subText = this.add.text(width / 2, height / 2 + 10, 'Game ending...', {
+            fontFamily: 'Outfit, sans-serif',
+            fontSize: '16px',
+            color: '#ffffff'
+        }).setOrigin(0.5).setDepth(401);
+        
+        this.time.delayedCall(2000, () => {
+            this.gameOver = true;
+            this.score = this.teamScore; // Use team score for leaderboard
+            this.showGameOver();
+        });
+    }
+
+    broadcastDisconnect() {
+        if (multiplayerChannel) {
+            multiplayerChannel.send({
+                type: 'broadcast',
+                event: 'player_disconnect',
+                payload: { playerId: playerId }
+            });
+        }
+    }
+
+    drawMalePlayer(g, isPlayer2 = false) {
         // Shadow
         g.fillStyle(0x000000, 0.4); g.fillEllipse(0, 28, 35, 12);
         // Legs
         g.fillStyle(0x2c3e50); g.fillRoundedRect(-12, 8, 10, 22, 3); g.fillRoundedRect(2, 8, 10, 22, 3);
-        // Hands
-        g.fillStyle(0xfce4d6);
+        // Hands - different skin tone for P2
+        const skinColor = isPlayer2 ? 0xd4a574 : 0xfce4d6;
+        g.fillStyle(skinColor);
         g.fillCircle(-20, -5, 6); // Left hand
         g.fillCircle(20, -5, 6);  // Right hand
-        // Safety Vest
-        const vestGreen = 0xccff00;
+        // Safety Vest - P2 gets orange vest instead of green
+        const vestColor = isPlayer2 ? 0xff8800 : 0xccff00;
         const reflectiveSilver = 0xdddddd;
-        const safetyOrange = 0xff6b00;
+        const accentColor = isPlayer2 ? 0xffcc00 : 0xff6b00;
 
-        g.fillStyle(vestGreen);
+        g.fillStyle(vestColor);
         g.fillRoundedRect(-18, -18, 36, 32, 5); // Main vest body
 
-        // Reflective Strips - Orange Borders
-        g.fillStyle(safetyOrange);
+        // Reflective Strips - accent color borders
+        g.fillStyle(accentColor);
         g.fillRect(-14, -18, 12, 32); // Left vertical border
         g.fillRect(2, -18, 12, 32);   // Right vertical border
         g.fillRect(-18, -4, 36, 12);  // Horizontal waist band border
@@ -722,36 +1863,40 @@ class GameScene extends Phaser.Scene {
         g.fillRect(-12, -18, 8, 32); // Left vertical
         g.fillRect(4, -18, 8, 32);   // Right vertical
         g.fillRect(-18, -2, 36, 8);  // Horizontal waist band
-        // Head
-        g.fillStyle(0xfce4d6); g.fillCircle(0, -26, 14);
+        // Head - different skin tone for P2
+        g.fillStyle(skinColor); g.fillCircle(0, -26, 14);
         // Eyes
         g.fillStyle(0x000000); g.fillCircle(-5, -28, 2.5); g.fillCircle(5, -28, 2.5);
         // Nose
-        g.fillStyle(0xcc9988); g.fillEllipse(0, -22, 4, 2);
-        // More prominent cap/hat
-        g.fillStyle(0xff0000); g.fillEllipse(0, -40, 26, 14); // Main cap
-        g.fillStyle(0xcc0000); g.fillRect(-13, -42, 26, 6); // Cap brim
+        const noseColor = isPlayer2 ? 0xb8906a : 0xcc9988;
+        g.fillStyle(noseColor); g.fillEllipse(0, -22, 4, 2);
+        // Cap - P2 gets blue cap instead of red
+        const capColor = isPlayer2 ? 0x0066cc : 0xff0000;
+        const capDarkColor = isPlayer2 ? 0x004499 : 0xcc0000;
+        g.fillStyle(capColor); g.fillEllipse(0, -40, 26, 14); // Main cap
+        g.fillStyle(capDarkColor); g.fillRect(-13, -42, 26, 6); // Cap brim
     }
 
-    drawFemalePlayer(g) {
+    drawFemalePlayer(g, isPlayer2 = false) {
         // Shadow
         g.fillStyle(0x000000, 0.4); g.fillEllipse(0, 28, 35, 12);
         // Legs
         g.fillStyle(0x2c3e50); g.fillRoundedRect(-12, 8, 10, 22, 3); g.fillRoundedRect(2, 8, 10, 22, 3);
-        // Hands
-        g.fillStyle(0xfce4d6);
+        // Hands - different skin tone for P2
+        const skinColor = isPlayer2 ? 0xd4a574 : 0xfce4d6;
+        g.fillStyle(skinColor);
         g.fillCircle(-20, -5, 6); // Left hand
         g.fillCircle(20, -5, 6);  // Right hand
-        // Safety Vest
-        const vestGreen = 0xccff00;
+        // Safety Vest - P2 gets teal vest instead of green
+        const vestColor = isPlayer2 ? 0x00ccaa : 0xccff00;
         const reflectiveSilver = 0xdddddd;
-        const safetyOrange = 0xff6b00;
+        const accentColor = isPlayer2 ? 0x00ffcc : 0xff6b00;
 
-        g.fillStyle(vestGreen);
+        g.fillStyle(vestColor);
         g.fillRoundedRect(-18, -18, 36, 32, 5); // Main vest body
 
-        // Reflective Strips - Orange Borders
-        g.fillStyle(safetyOrange);
+        // Reflective Strips - accent color borders
+        g.fillStyle(accentColor);
         g.fillRect(-14, -18, 12, 32); // Left vertical border
         g.fillRect(2, -18, 12, 32);   // Right vertical border
         g.fillRect(-18, -4, 36, 12);  // Horizontal waist band border
@@ -761,36 +1906,43 @@ class GameScene extends Phaser.Scene {
         g.fillRect(-12, -18, 8, 32); // Left vertical
         g.fillRect(4, -18, 8, 32);   // Right vertical
         g.fillRect(-18, -2, 36, 8);  // Horizontal waist band
-        // Hair base (drawn behind head, anchored to scalp)
-        g.fillStyle(0x3d2314); // Dark brown base
+        // Hair base - P2 gets different hair color (auburn/red)
+        const hairColor = isPlayer2 ? 0x8b2500 : 0x3d2314;
+        const hairHighlight = isPlayer2 ? 0xa83c14 : 0x5a3d2b;
+        g.fillStyle(hairColor); // Hair base
         g.fillEllipse(0, -30, 22, 18); // Scalp coverage
         g.fillEllipse(-14, -15, 12, 34); // Left side hair
         g.fillEllipse(14, -15, 12, 34); // Right side hair
         g.fillEllipse(-12, 5, 9, 16); // Left hair tips
         g.fillEllipse(12, 5, 9, 16); // Right hair tips
         // Hair highlights
-        g.fillStyle(0x5a3d2b); // Lighter brown highlights
+        g.fillStyle(hairHighlight);
         g.fillEllipse(-10, -22, 4, 20);
         g.fillEllipse(10, -22, 4, 20);
-        // Head
-        g.fillStyle(0xfce4d6); g.fillCircle(0, -26, 13);
+        // Head - different skin tone for P2
+        g.fillStyle(skinColor); g.fillCircle(0, -26, 13);
         // Hairline and top hair (drawn over head for attachment)
-        g.fillStyle(0x3d2314);
+        g.fillStyle(hairColor);
         g.fillEllipse(0, -34, 18, 8);
         g.fillEllipse(-6, -33, 8, 6);
         g.fillEllipse(6, -33, 8, 6);
         g.fillEllipse(0, -38, 20, 10);
         // Hairline and top hair (drawn over head for attachment)
-        g.fillStyle(0x3d2314);
+        g.fillStyle(hairColor);
         g.fillEllipse(0, -34, 18, 8);
         g.fillEllipse(-6, -33, 8, 6);
         g.fillEllipse(6, -33, 8, 6);
         g.fillEllipse(0, -38, 20, 10);
         // Hairline and bangs (drawn over head for attachment)
-        g.fillStyle(0x3d2314);
+        g.fillStyle(hairColor);
         g.fillEllipse(0, -34, 18, 8);
         g.fillEllipse(-6, -33, 8, 6);
         g.fillEllipse(6, -33, 8, 6);
+        // P2 headband - purple instead of none
+        if (isPlayer2) {
+            g.fillStyle(0x9933ff);
+            g.fillRoundedRect(-14, -38, 28, 5, 2);
+        }
         // Rosy cheeks
         g.fillStyle(0xffcccc, 0.5);
         g.fillCircle(-8, -23, 4);
@@ -799,7 +1951,9 @@ class GameScene extends Phaser.Scene {
         g.fillStyle(0xffffff);
         g.fillEllipse(-5, -28, 4, 3.5);
         g.fillEllipse(5, -28, 4, 3.5);
-        g.fillStyle(0x4a3728); // Brown iris
+        // Eye color - P2 gets green eyes
+        const irisColor = isPlayer2 ? 0x2e8b57 : 0x4a3728;
+        g.fillStyle(irisColor);
         g.fillCircle(-5, -28, 2.2);
         g.fillCircle(5, -28, 2.2);
         g.fillStyle(0x000000); // Pupil
@@ -815,7 +1969,7 @@ class GameScene extends Phaser.Scene {
         g.lineBetween(5, -31, 5, -34);
         g.lineBetween(7, -30, 8, -33);
         // Eyebrows (subtle, feminine)
-        g.lineStyle(1.5, 0x3d2314);
+        g.lineStyle(1.5, hairColor);
         g.beginPath();
         g.arc(-5, -34, 5, Math.PI * 0.15, Math.PI * 0.85, false);
         g.strokePath();
@@ -823,7 +1977,8 @@ class GameScene extends Phaser.Scene {
         g.arc(5, -34, 5, Math.PI * 0.15, Math.PI * 0.85, false);
         g.strokePath();
         // Nose (small, cute)
-        g.fillStyle(0xe8c4b8); g.fillEllipse(0, -24, 2.5, 1.5);
+        const noseColor = isPlayer2 ? 0xc4a088 : 0xe8c4b8;
+        g.fillStyle(noseColor); g.fillEllipse(0, -24, 2.5, 1.5);
         // Lips (fuller, with color)
         g.fillStyle(0xe07070);
         g.fillEllipse(0, -19, 5, 2);
@@ -892,6 +2047,17 @@ class GameScene extends Phaser.Scene {
             strokeThickness: this.isCompact ? 2 : 3
         }).setOrigin(0, 1).setDepth(200);
 
+        // Room code display for multiplayer (top-left corner below hearts)
+        if (this.isMultiplayer && roomCode) {
+            this.roomCodeText = this.add.text(padding, this.isCompact ? 50 : 60, `ROOM: ${roomCode}`, {
+                fontFamily: 'Outfit, sans-serif',
+                fontSize: this.isCompact ? '12px' : '14px',
+                color: '#00ccff',
+                stroke: '#000000',
+                strokeThickness: 2
+            }).setOrigin(0, 0).setDepth(200);
+        }
+
         this.updateHUD();
     }
 
@@ -911,18 +2077,30 @@ class GameScene extends Phaser.Scene {
             this.livesIconGroup.add(g);
         }
 
-        this.scoreText.setText(`${this.score}`);
+        // Display team score in multiplayer, regular score otherwise
+        const displayScore = this.isMultiplayer ? this.teamScore : this.score;
+        this.scoreText.setText(`${displayScore}`);
 
-        // Update carrying display (Text based)
+        // Update carrying display
         if (this.carryIconGroup) {
             this.carryIconGroup.clear(true, true);
             this.carryIconGroup.destroy();
             this.carryIconGroup = null;
         }
-        const c = this.player.carried.length;
-        const maxCapacity = this.player.carryCapacity;
-        const carryCount = Math.min(c, maxCapacity);
-        this.carryText.setText(`Carrying ${carryCount} of ${maxCapacity} Newt${maxCapacity > 1 ? 's' : ''}`);
+        
+        // In multiplayer, show both players' carry status
+        if (this.isMultiplayer) {
+            const p1Count = this.player.carried.length;
+            const p1Max = this.player.carryCapacity;
+            const p2Count = this.remoteCarriedCount || 0;
+            const p2Max = this.remotePlayer ? this.remotePlayer.carryCapacity : 1;
+            this.carryText.setText(`P1: newts x ${p1Count} | P2: newts x ${p2Count}`);
+        } else {
+            const c = this.player.carried.length;
+            const maxCapacity = this.player.carryCapacity;
+            const carryCount = Math.min(c, maxCapacity);
+            this.carryText.setText(`Carrying ${carryCount} of ${maxCapacity} Newt${maxCapacity > 1 ? 's' : ''}`);
+        }
 
         // Draw pill background sized to text
         if (this.carryBg) {
@@ -937,16 +2115,22 @@ class GameScene extends Phaser.Scene {
             this.carryBg.clear();
             this.carryBg.fillStyle(0x000000, 0.6);
             this.carryBg.fillRoundedRect(bgX, bgY, bgWidth, bgHeight, bgHeight / 2);
-            this.carryBg.lineStyle(2, 0x00ffff, 0.45);
+            this.carryBg.lineStyle(2, this.isMultiplayer ? 0x00ccff : 0x00ffff, 0.45);
             this.carryBg.strokeRoundedRect(bgX, bgY, bgWidth, bgHeight, bgHeight / 2);
         }
 
         this.statsText.setText(`SAVED: ${this.saved} | LOST: ${this.lost}`);
+        
+        // Update room code display in multiplayer
+        if (this.isMultiplayer && this.roomCodeText) {
+            this.roomCodeText.setText(`ROOM: ${roomCode}`);
+        }
     }
 
     updateDifficulty() {
-        if (this.score >= GAME_CONFIG.DIFFICULTY_THRESHOLD) {
-            const excess = this.score - GAME_CONFIG.DIFFICULTY_THRESHOLD;
+        const scoreToUse = this.isMultiplayer ? this.teamScore : this.score;
+        if (scoreToUse >= GAME_CONFIG.DIFFICULTY_THRESHOLD) {
+            const excess = scoreToUse - GAME_CONFIG.DIFFICULTY_THRESHOLD;
             this.difficulty = 1 + (excess / 1000) * 0.5;
             this.difficulty = Math.min(this.difficulty, 2.5);
             const newDelay = Math.max(600, GAME_CONFIG.CAR_SPAWN_RATE / this.difficulty);
@@ -995,7 +2179,13 @@ class GameScene extends Phaser.Scene {
     update(time, delta) {
         if (this.gameOver) return;
         this.updatePlayer(time, delta);
-        this.updateCars(delta);
+        // Host moves cars locally; guest interpolates from synced data
+        if (!this.isMultiplayer || isHost) {
+            this.updateCars(delta);
+        } else {
+            // Guest: interpolate car positions locally for smoothness
+            this.interpolateCars(delta);
+        }
         this.updateNewts(delta);
         this.checkCollisions();
         this.updateRain(delta);
@@ -1043,6 +2233,15 @@ class GameScene extends Phaser.Scene {
             n.x = this.player.x + (i === 0 ? -22 : 22);
             n.y = this.player.y - 18;
         });
+        
+        // Also update remote player's carried newts position
+        if (this.isMultiplayer && this.remotePlayer && this.remotePlayer.carried) {
+            this.remotePlayer.carried.forEach((n, i) => {
+                n.x = this.remotePlayer.x + (i === 0 ? -22 : 22);
+                n.y = this.remotePlayer.y - 18;
+            });
+        }
+        
         if (this.player.invincible) {
             this.player.alpha = (Math.floor(time / 100) % 2 === 0) ? 0.4 : 0.9;
         }
@@ -1102,6 +2301,31 @@ class GameScene extends Phaser.Scene {
 
             if (dir === 1 && car.x > this.scale.width + 200) car.destroy();
             else if (dir === -1 && car.x < -200) car.destroy();
+        });
+    }
+
+    // Guest-side car interpolation for smooth movement
+    interpolateCars(delta) {
+        const dt = delta / 1000;
+        const cars = this.cars.getChildren();
+        
+        cars.forEach(car => {
+            // Move car locally based on speed for smooth animation
+            car.x += car.speed * dt;
+            
+            // If we have a target position from host, smoothly correct towards it
+            if (car.targetX !== undefined) {
+                const diff = car.targetX - car.x;
+                // Only correct if we're drifting too far from expected position
+                if (Math.abs(diff) > 5) {
+                    car.x += diff * 0.15; // Smooth correction
+                }
+            }
+            
+            // Destroy cars that are off-screen
+            if (car.x > this.scale.width + 200 || car.x < -200) {
+                car.destroy();
+            }
         });
     }
 
@@ -1190,6 +2414,10 @@ class GameScene extends Phaser.Scene {
         container.add(g);
         container.speed = speed;
         container.type = type;
+        container.carColor = mainColor;
+        container.dir = dir;
+        container.lane = lane;
+        container.carId = 'car_' + Date.now() + '_' + Math.random().toString(36).substring(2, 8);
 
         if (type === 'truck') { container.w = 140; container.h = 45; }
         else if (type === 'motorbike') { container.w = 50; container.h = 20; }
@@ -1334,8 +2562,10 @@ class GameScene extends Phaser.Scene {
         newt.dir = fromTop ? 1 : -1;
         newt.dest = fromTop ? 'LAKE' : 'FOREST';
         newt.isCarried = false;
+        newt.newtId = 'newt_' + Date.now() + '_' + Math.random().toString(36).substring(2, 8);
         newt.rotation = newt.dir === 1 ? Math.PI / 2 : -Math.PI / 2;
         this.newts.add(newt);
+        // Note: Newts are synced via game_state broadcast, no need for individual spawn events
     }
 
     updateNewts(delta) {
@@ -1371,13 +2601,26 @@ class GameScene extends Phaser.Scene {
             });
         });
         this.newts.getChildren().forEach(newt => {
-            if (!newt.isCarried && this.player.carried.length < this.player.carryCapacity) {
+            if (!newt.isCarried && !newt.carriedBy && this.player.carried.length < this.player.carryCapacity) {
                 const dist = Phaser.Math.Distance.Between(this.player.x, this.player.y, newt.x, newt.y);
                 if (dist < 50) {
                     newt.isCarried = true;
+                    newt.carriedBy = playerId || 'local'; // Use playerId for multiplayer sync
                     this.player.carried.push(newt);
                     this.createPickupEffect(newt.x, newt.y);
                     this.updateHUD();
+                    
+                    // Broadcast pickup in multiplayer
+                    if (this.isMultiplayer && multiplayerChannel) {
+                        multiplayerChannel.send({
+                            type: 'broadcast',
+                            event: 'newt_pickup',
+                            payload: {
+                                playerId: playerId,
+                                newtId: newt.newtId
+                            }
+                        });
+                    }
                 }
             }
         });
@@ -1391,7 +2634,14 @@ class GameScene extends Phaser.Scene {
                         this.saved++;
                         this.streak++;
                         if (this.streak > this.maxStreak) this.maxStreak = this.streak;
-                        this.score += 100;
+                        
+                        // Use teamScore in multiplayer, score in single player
+                        if (this.isMultiplayer) {
+                            this.teamScore += 100;
+                        } else {
+                            this.score += 100;
+                        }
+                        
                         if (this.cache.audio.exists('sfx_saved')) this.sound.play('sfx_saved', { volume: 0.6 });
                         
                         // Haptic feedback for save (gentle pulse)
@@ -1400,6 +2650,21 @@ class GameScene extends Phaser.Scene {
                         this.createSuccessEffect(newt.x, newt.y);
                         this.checkAchievements();
                         this.updateDifficulty();
+                        
+                        // Broadcast save in multiplayer
+                        if (this.isMultiplayer && multiplayerChannel) {
+                            multiplayerChannel.send({
+                                type: 'broadcast',
+                                event: 'newt_save',
+                                payload: {
+                                    playerId: playerId,
+                                    newtId: newt.newtId,
+                                    correct: true,
+                                    x: newt.x,
+                                    y: newt.y
+                                }
+                            });
+                        }
                     }
                     newt.destroy();
                 });
@@ -1742,6 +3007,14 @@ class GameScene extends Phaser.Scene {
     }
 
     async showGameOver() {
+        // Cleanup multiplayer
+        if (this.isMultiplayer) {
+            this.broadcastDisconnect();
+            if (this.broadcastTimer) this.broadcastTimer.destroy();
+            if (this.disconnectCheckTimer) this.disconnectCheckTimer.destroy();
+            await updateRoomStatus('finished');
+        }
+        
         if (this.cache.audio.exists('bgm_end')) {
             this.bgmEnd = this.sound.add('bgm_end', { volume: 0.6, loop: true });
             this.bgmEnd.play();
@@ -1753,15 +3026,24 @@ class GameScene extends Phaser.Scene {
                 this.bgmEnd.stop();
                 this.bgmEnd.destroy();
             }
+            if (this.isMultiplayer) {
+                cleanupMultiplayerState();
+            }
         });
 
         const { width, height } = this.scale;
         const isCompact = this.isCompact;
+        
+        // Use team score in multiplayer
+        const finalScore = this.isMultiplayer ? this.teamScore : this.score;
+        
         this.add.rectangle(0, 0, width, height, 0x000000, 0.92).setOrigin(0).setDepth(300);
         this.add.text(width / 2, height * 0.08, 'GAME OVER', {
             fontFamily: 'Fredoka, sans-serif', fontSize: '44px', color: '#ff3366', fontStyle: 'bold'
         }).setOrigin(0.5).setDepth(301);
-        this.add.text(width / 2, height * 0.16, `FINAL SCORE: ${this.score}`, {
+        
+        const scoreLabel = this.isMultiplayer ? 'TEAM SCORE' : 'FINAL SCORE';
+        this.add.text(width / 2, height * 0.16, `${scoreLabel}: ${finalScore}`, {
             fontFamily: 'Fredoka, sans-serif', fontSize: '26px', color: '#ffffff'
         }).setOrigin(0.5).setDepth(301);
 
@@ -1775,7 +3057,8 @@ class GameScene extends Phaser.Scene {
         const rescueRate = totalNewts > 0 ? Math.round((this.saved / totalNewts) * 100) : 0;
 
         const summaryTitleY = height * (isCompact ? 0.22 : 0.21);
-        this.add.text(width / 2, summaryTitleY, 'RUN SUMMARY', {
+        const summaryTitle = this.isMultiplayer ? 'TEAM SUMMARY' : 'RUN SUMMARY';
+        this.add.text(width / 2, summaryTitleY, summaryTitle, {
             fontFamily: 'Outfit, sans-serif',
             fontSize: isCompact ? '14px' : '16px',
             color: '#aaaaaa',
@@ -1801,7 +3084,7 @@ class GameScene extends Phaser.Scene {
         const summaryBg = this.add.graphics().setDepth(301);
         summaryBg.fillStyle(0x000000, 0.6);
         summaryBg.fillRoundedRect(width / 2 - summaryBoxWidth / 2, summaryBoxY - summaryBoxHeight / 2, summaryBoxWidth, summaryBoxHeight, 12);
-        summaryBg.lineStyle(2, 0x00ffff, 0.6);
+        summaryBg.lineStyle(2, this.isMultiplayer ? 0x00ccff : 0x00ffff, 0.6);
         summaryBg.strokeRoundedRect(width / 2 - summaryBoxWidth / 2, summaryBoxY - summaryBoxHeight / 2, summaryBoxWidth, summaryBoxHeight, 12);
 
         const labelText = summaryLines.map(line => line.label).join('\n');
@@ -1857,7 +3140,8 @@ class GameScene extends Phaser.Scene {
                 submitted = true;
                 submitBtnText.setText('Submitting...');
                 submitBtnText.disableInteractive();
-                const success = await submitScore(name, this.score);
+                const scoreToSubmit = this.isMultiplayer ? this.teamScore : this.score;
+                const success = await submitScore(name, scoreToSubmit, this.isMultiplayer);
                 if (success) { submitBtnText.setText('Submitted!'); inputEl.remove(); submitIcon.clear(); this.refreshLeaderboard(); }
                 else { submitBtnText.setText('Error - Try Again'); submitted = false; submitBtnText.setInteractive({ useHandCursor: true }); }
             });
@@ -1888,7 +3172,13 @@ class GameScene extends Phaser.Scene {
         const retryIcon = this.add.graphics().setDepth(302);
         Icons.drawRefresh(retryIcon, retryBtnText.x - retryBtnText.width / 2 + 22, height * 0.92, 22, 0x00ffff);
         retryBtnText.on('pointerdown', () => {
-            this.scene.restart();
+            // In multiplayer, go back to mode select; in single player, restart game
+            if (this.isMultiplayer) {
+                cleanupMultiplayerState();
+                this.scene.start('ModeSelectScene');
+            } else {
+                this.scene.restart();
+            }
         });
     }
 
@@ -2263,6 +3553,6 @@ class CharacterSelectScene extends Phaser.Scene {
 
 const config = {
     type: Phaser.AUTO, backgroundColor: '#000000', scale: { mode: Phaser.Scale.RESIZE, parent: 'game-container' },
-    dom: { createContainer: true }, scene: [SplashScene, CharacterSelectScene, GameScene]
+    dom: { createContainer: true }, scene: [SplashScene, ModeSelectScene, LobbyScene, CharacterSelectScene, GameScene]
 };
 window.addEventListener('load', () => new Phaser.Game(config));
