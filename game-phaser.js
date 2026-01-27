@@ -1114,6 +1114,8 @@ class GameScene extends Phaser.Scene {
         this.lastBroadcastTime = 0;
         this.disconnectTimer = null;
         this.partnerDisconnected = false;
+        this.lastHitIntentAt = 0;
+        this.lastHitByPlayer = new Map();
 
         // Achievement tracking
         this.streak = 0;
@@ -1474,6 +1476,17 @@ class GameScene extends Phaser.Scene {
             }
         });
 
+        // Guest -> host hit intent, host -> guest hit outcome
+        multiplayerChannel.on('broadcast', { event: 'player_hit_intent' }, (payload) => {
+            if (isHost) {
+                this.handlePlayerHitIntent(payload.payload);
+            }
+        });
+
+        multiplayerChannel.on('broadcast', { event: 'player_hit' }, (payload) => {
+            this.handlePlayerHitOutcome(payload.payload);
+        });
+
         multiplayerChannel.subscribe((status) => {
             console.log('Multiplayer channel status:', status);
             if (status === 'SUBSCRIBED') {
@@ -1596,6 +1609,16 @@ class GameScene extends Phaser.Scene {
         
         // Update remote carried count for display
         this.remoteCarriedCount = data.carriedCount;
+        if (this.remotePlayer && this.remotePlayer.carried) {
+            while (this.remotePlayer.carried.length > this.remoteCarriedCount) {
+                const extra = this.remotePlayer.carried.pop();
+                if (extra) {
+                    extra.isCarried = false;
+                    extra.carriedBy = null;
+                    extra.destroy();
+                }
+            }
+        }
         this.updateHUD();
     }
 
@@ -1769,13 +1792,28 @@ class GameScene extends Phaser.Scene {
             newt.isCarried = true;
             newt.carriedBy = data.playerId; // Use actual playerId for proper sync
             if (this.remotePlayer) {
-                this.remotePlayer.carried.push(newt);
+                if (!this.remotePlayer.carried.includes(newt)) {
+                    this.remotePlayer.carried.push(newt);
+                }
             }
             this.createPickupEffect(newt.x, newt.y);
         }
     }
 
     handleNewtSave(data) {
+        if (isHost && data.playerId === playerId) {
+            return;
+        }
+        if (data.newtId) {
+            const savedNewt = this.newts.getChildren().find(n => n.newtId === data.newtId);
+            if (savedNewt) {
+                if (this.remotePlayer && this.remotePlayer.carried) {
+                    this.remotePlayer.carried = this.remotePlayer.carried.filter(n => n !== savedNewt);
+                }
+                savedNewt.destroy();
+            }
+        }
+
         // Update team score and stats
         if (data.correct) {
             this.teamScore += 100;
@@ -1784,6 +1822,86 @@ class GameScene extends Phaser.Scene {
             this.createSuccessEffect(data.x, data.y);
         }
         this.updateHUD();
+    }
+
+    requestPlayerHit() {
+        if (!multiplayerChannel || !this.isMultiplayer || isHost || this.gameOver) return;
+        const now = Date.now();
+        if (now - this.lastHitIntentAt < 1000) return;
+        this.lastHitIntentAt = now;
+        multiplayerChannel.send({
+            type: 'broadcast',
+            event: 'player_hit_intent',
+            payload: { playerId: playerId, timestamp: now }
+        });
+    }
+
+    handlePlayerHitIntent(data) {
+        if (!isHost || this.gameOver || !data || !data.playerId) return;
+        const now = Date.now();
+        const last = this.lastHitByPlayer.get(data.playerId) || 0;
+        if (now - last < 1000) return;
+        this.lastHitByPlayer.set(data.playerId, now);
+
+        this.lives--;
+        this.streak = 0;
+        this.updateHUD();
+
+        if (data.playerId !== playerId && this.remotePlayer && this.remotePlayer.carried) {
+            this.remotePlayer.carried.forEach(n => n && n.destroy());
+            this.remotePlayer.carried = [];
+        }
+
+        if (this.lives <= 0) {
+            this.gameOver = true;
+            this.showGameOver();
+        }
+
+        multiplayerChannel.send({
+            type: 'broadcast',
+            event: 'player_hit',
+            payload: { playerId: data.playerId, lives: this.lives }
+        });
+    }
+
+    handlePlayerHitOutcome(data) {
+        if (!data || data.playerId !== playerId || this.gameOver) return;
+        if (typeof data.lives === 'number') {
+            this.lives = data.lives;
+        }
+        this.applyHitEffects(false);
+    }
+
+    applyHitEffects(decrementLives = true) {
+        if (this.gameOver) return;
+        if (decrementLives) {
+            this.lives--;
+        }
+        this.updateHUD();
+
+        // Reset streak on player hit
+        this.streak = 0;
+
+        if (this.cache.audio.exists('sfx_crash')) {
+            this.sound.play('sfx_crash', { volume: 0.7 });
+        } else if (this.cache.audio.exists('sfx_hit')) {
+            // Fallback if sfx_crash missing
+            this.sound.play('sfx_hit', { volume: 0.7 });
+        }
+
+        // Screen shake for impact
+        this.cameras.main.shake(300, 0.02);
+
+        // Haptic feedback for mobile (strong vibration pattern)
+        if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
+
+        this.player.carried.forEach(n => n.destroy()); this.player.carried = [];
+        this.cameras.main.flash(150, 255, 50, 50, false);
+        this.player.invincible = true;
+        this.time.delayedCall(2000, () => { this.player.invincible = false; this.player.alpha = 1; });
+        this.player.x = this.scale.width / 2;
+        this.player.y = this.botSafe + 60;
+        if (this.lives <= 0) { this.gameOver = true; this.showGameOver(); }
     }
 
     checkPartnerConnection() {
@@ -2578,8 +2696,13 @@ class GameScene extends Phaser.Scene {
                     newt.rotation = newt.dir === 1 ? Math.PI / 2 : -Math.PI / 2;
                 }
                 if ((newt.dir === 1 && newt.y > this.botSafe + 30) || (newt.dir === -1 && newt.y < this.topSafe - 30)) { newt.destroy(); }
-            } else {
+            } else if (!this.isMultiplayer || newt.carriedBy === playerId) {
                 const idx = this.player.carried.indexOf(newt);
+                if (idx === -1) {
+                    newt.isCarried = false;
+                    newt.carriedBy = null;
+                    return;
+                }
                 newt.x = this.player.x + (idx === 0 ? -25 : 25);
                 newt.y = this.player.y - 15;
                 newt.setDepth(55);
@@ -2590,15 +2713,27 @@ class GameScene extends Phaser.Scene {
                 }
             }
         });
+        
+        if (this.isMultiplayer && this.remotePlayer && this.remotePlayer.carried) {
+            this.remotePlayer.carried = this.remotePlayer.carried.filter(n => n && n.active && n.isCarried);
+        }
     }
 
     checkCollisions() {
         if (this.gameOver) return;
         this.cars.getChildren().forEach(car => {
-            if (!this.player.invincible && Math.abs(this.player.x - car.x) < car.w / 2 && Math.abs(this.player.y - car.y) < car.h / 2) { this.hitPlayer(); }
-            this.newts.getChildren().forEach(newt => {
-                if (!newt.isCarried && Math.abs(newt.x - car.x) < car.w / 2 && Math.abs(newt.y - car.y) < car.h / 2) { this.splatterNewt(newt); }
-            });
+            if (!this.player.invincible && Math.abs(this.player.x - car.x) < car.w / 2 && Math.abs(this.player.y - car.y) < car.h / 2) {
+                if (!this.isMultiplayer || isHost) {
+                    this.hitPlayer();
+                } else {
+                    this.requestPlayerHit();
+                }
+            }
+            if (!this.isMultiplayer || isHost) {
+                this.newts.getChildren().forEach(newt => {
+                    if (!newt.isCarried && Math.abs(newt.x - car.x) < car.w / 2 && Math.abs(newt.y - car.y) < car.h / 2) { this.splatterNewt(newt); }
+                });
+            }
         });
         this.newts.getChildren().forEach(newt => {
             if (!newt.isCarried && !newt.carriedBy && this.player.carried.length < this.player.carryCapacity) {
@@ -2677,32 +2812,7 @@ class GameScene extends Phaser.Scene {
 
 
     hitPlayer() {
-        if (this.gameOver) return;
-        this.lives--; this.updateHUD();
-
-        // Reset streak on player hit
-        this.streak = 0;
-
-        if (this.cache.audio.exists('sfx_crash')) {
-            this.sound.play('sfx_crash', { volume: 0.7 });
-        } else if (this.cache.audio.exists('sfx_hit')) {
-            // Fallback if sfx_crash missing
-            this.sound.play('sfx_hit', { volume: 0.7 });
-        }
-
-        // Screen shake for impact
-        this.cameras.main.shake(300, 0.02);
-
-        // Haptic feedback for mobile (strong vibration pattern)
-        if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
-
-        this.player.carried.forEach(n => n.destroy()); this.player.carried = [];
-        this.cameras.main.flash(150, 255, 50, 50, false);
-        this.player.invincible = true;
-        this.time.delayedCall(2000, () => { this.player.invincible = false; this.player.alpha = 1; });
-        this.player.x = this.scale.width / 2;
-        this.player.y = this.botSafe + 60;
-        if (this.lives <= 0) { this.gameOver = true; this.showGameOver(); }
+        this.applyHitEffects(true);
     }
 
     splatterNewt(newt) {
