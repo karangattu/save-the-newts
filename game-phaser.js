@@ -1093,6 +1093,7 @@ class GameScene extends Phaser.Scene {
         this.load.audio('sfx_hit', 'assets/sfx_hit.mp3');
         this.load.audio('sfx_crash', 'assets/sfx_crash.mp3');
         this.load.audio('bgm_end', 'assets/bgm_end.mp3');
+        this.load.audio('rain_ambient', 'assets/rain_background.mp3');
     }
 
     create() {
@@ -1184,6 +1185,19 @@ class GameScene extends Phaser.Scene {
         this.rainGraphics = this.add.graphics().setDepth(100);
         if (this.isCompact) {
             this.rainGraphics.setAlpha(0.8);
+        }
+
+        // Rain ambient sound with fade-in
+        if (this.cache.audio.exists('rain_ambient')) {
+            this.rainSound = this.sound.add('rain_ambient', { loop: true, volume: 0 });
+            this.rainSound.play();
+            // Fade in over 2 seconds
+            this.tweens.add({
+                targets: this.rainSound,
+                volume: 0.4,
+                duration: 2000,
+                ease: 'Power2'
+            });
         }
     }
 
@@ -3243,11 +3257,30 @@ class GameScene extends Phaser.Scene {
             this.bgmEnd.play();
         }
 
+        // Fade out rain sound on game over
+        if (this.rainSound && this.rainSound.isPlaying) {
+            this.tweens.add({
+                targets: this.rainSound,
+                volume: 0,
+                duration: 1500,
+                ease: 'Power2',
+                onComplete: () => {
+                    if (this.rainSound) {
+                        this.rainSound.stop();
+                    }
+                }
+            });
+        }
+
         // Ensure cleanup when the scene is restarted or shut down
         this.events.once('shutdown', () => {
             if (this.bgmEnd) {
                 this.bgmEnd.stop();
                 this.bgmEnd.destroy();
+            }
+            if (this.rainSound) {
+                this.rainSound.stop();
+                this.rainSound.destroy();
             }
             if (this.isMultiplayer) {
                 cleanupMultiplayerState();
