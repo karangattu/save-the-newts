@@ -608,18 +608,11 @@ class ModeSelectScene extends Phaser.Scene {
             .setStrokeStyle(3, 0x00ff88, 1)
             .setInteractive({ useHandCursor: true });
 
-        const singleText = this.add.text(width / 2, singleY - 12, '    SINGLE PLAYER', {
+        this.add.text(width / 2, singleY - 12, '👤 SINGLE PLAYER', {
             fontFamily: 'Fredoka, sans-serif',
             fontSize: isMobile ? '18px' : (isCompact ? '22px' : '26px'),
             color: '#00ff88'
         }).setOrigin(0.5);
-
-        this.add.text(singleText.x - singleText.width / 2 + 5, singleY - 12, '\uf007', {
-            fontFamily: '"Font Awesome 6 Free"',
-            fontWeight: '900',
-            fontSize: isMobile ? '16px' : (isCompact ? '20px' : '24px'),
-            color: '#00ff88'
-        }).setOrigin(0, 0.5);
 
         this.add.text(width / 2, singleY + 16, 'Classic solo adventure', {
             fontFamily: 'Outfit, sans-serif',
@@ -633,18 +626,11 @@ class ModeSelectScene extends Phaser.Scene {
             .setStrokeStyle(3, 0x00ccff, 1)
             .setInteractive({ useHandCursor: true });
 
-        const multiText = this.add.text(width / 2, multiY - 12, '     MULTIPLAYER', {
+        this.add.text(width / 2, multiY - 12, '👥 MULTIPLAYER', {
             fontFamily: 'Fredoka, sans-serif',
             fontSize: isMobile ? '18px' : (isCompact ? '22px' : '26px'),
             color: '#00ccff'
         }).setOrigin(0.5);
-
-        this.add.text(multiText.x - multiText.width / 2 + 5, multiY - 12, '\uf0c0', {
-            fontFamily: '"Font Awesome 6 Free"',
-            fontWeight: '900',
-            fontSize: isMobile ? '16px' : (isCompact ? '20px' : '24px'),
-            color: '#00ccff'
-        }).setOrigin(0, 0.5);
 
         this.add.text(width / 2, multiY + 16, 'Team up with a friend!', {
             fontFamily: 'Outfit, sans-serif',
@@ -733,27 +719,14 @@ class LobbyScene extends Phaser.Scene {
         this.createLobbyMenu();
 
         // Back button
-        const backBtn = this.add.text(20, 20, '    BACK', {
+        const backBtn = this.add.text(20, 20, '← BACK', {
             fontFamily: 'Outfit, sans-serif',
             fontSize: '14px',
             color: '#888888'
         }).setInteractive({ useHandCursor: true });
-        
-        const backIcon = this.add.text(22, 20, '\uf060', {
-            fontFamily: '"Font Awesome 6 Free"',
-            fontWeight: '900',
-            fontSize: '12px',
-            color: '#888888'
-        }).setOrigin(0, 0);
 
-        backBtn.on('pointerover', () => {
-            backBtn.setColor('#ffffff');
-            backIcon.setColor('#ffffff');
-        });
-        backBtn.on('pointerout', () => {
-            backBtn.setColor('#888888');
-            backIcon.setColor('#888888');
-        });
+        backBtn.on('pointerover', () => backBtn.setColor('#ffffff'));
+        backBtn.on('pointerout', () => backBtn.setColor('#888888'));
         backBtn.on('pointerdown', () => {
             this.cleanup();
             this.cameras.main.fadeOut(200, 0, 0, 0);
@@ -801,18 +774,11 @@ class LobbyScene extends Phaser.Scene {
             .setStrokeStyle(3, 0x00ff88, 1)
             .setInteractive({ useHandCursor: true });
 
-        const createText = this.add.text(width / 2, btnY, '      CREATE ROOM', {
+        const createText = this.add.text(width / 2, btnY, '🏠 CREATE ROOM', {
             fontFamily: 'Fredoka, sans-serif',
             fontSize: isMobile ? '18px' : (isCompact ? '22px' : '26px'),
             color: '#00ff88'
         }).setOrigin(0.5);
-
-        this.add.text(createText.x - createText.width / 2 + 5, btnY, '\uf015', {
-            fontFamily: '"Font Awesome 6 Free"',
-            fontWeight: '900',
-            fontSize: isMobile ? '16px' : (isCompact ? '20px' : '24px'),
-            color: '#00ff88'
-        }).setOrigin(0, 0.5);
 
         this.menuContainer.add([createBg, createText]);
 
