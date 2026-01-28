@@ -315,6 +315,77 @@ const Icons = {
         g.lineTo(x + s + 1, y - s - 1);
         g.lineTo(x + s - 4, y - s - 1);
         g.strokePath();
+    },
+    // User icon (single person)
+    drawUser(g, x, y, size = 20, color = 0x00ff88, stroke = 2) {
+        g.lineStyle(stroke, color);
+        const s = size / 2;
+        // Head (circle)
+        g.strokeCircle(x, y - s * 0.5, s * 0.4);
+        // Body (arc/shoulders)
+        g.beginPath();
+        g.arc(x, y + s * 0.8, s * 0.7, Math.PI * 1.2, Math.PI * 1.8, false);
+        g.strokePath();
+    },
+    // Users icon (two people)
+    drawUsers(g, x, y, size = 20, color = 0x00ccff, stroke = 2) {
+        g.lineStyle(stroke, color);
+        const s = size / 2;
+        // Front person head
+        g.strokeCircle(x - s * 0.2, y - s * 0.4, s * 0.35);
+        // Front person body
+        g.beginPath();
+        g.arc(x - s * 0.2, y + s * 0.7, s * 0.55, Math.PI * 1.2, Math.PI * 1.8, false);
+        g.strokePath();
+        // Back person head (slightly behind)
+        g.strokeCircle(x + s * 0.5, y - s * 0.55, s * 0.3);
+        // Back person body
+        g.beginPath();
+        g.arc(x + s * 0.5, y + s * 0.5, s * 0.45, Math.PI * 1.25, Math.PI * 1.75, false);
+        g.strokePath();
+    },
+    // Home icon
+    drawHome(g, x, y, size = 20, color = 0x00ff88, stroke = 2) {
+        g.lineStyle(stroke, color);
+        const s = size / 2;
+        // Roof (triangle)
+        g.beginPath();
+        g.moveTo(x, y - s);
+        g.lineTo(x + s, y);
+        g.lineTo(x - s, y);
+        g.closePath();
+        g.strokePath();
+        // House body
+        g.strokeRect(x - s * 0.7, y, s * 1.4, s * 0.9);
+        // Door
+        g.strokeRect(x - s * 0.2, y + s * 0.3, s * 0.4, s * 0.6);
+    },
+    // Link icon
+    drawLink(g, x, y, size = 20, color = 0x00ccff, stroke = 2) {
+        g.lineStyle(stroke, color);
+        const s = size / 2;
+        // First chain link
+        g.beginPath();
+        g.arc(x - s * 0.4, y - s * 0.2, s * 0.4, Math.PI * 0.75, Math.PI * 1.75, false);
+        g.arc(x - s * 0.1, y + s * 0.1, s * 0.4, Math.PI * 1.75, Math.PI * 0.75, false);
+        g.closePath();
+        g.strokePath();
+        // Second chain link
+        g.beginPath();
+        g.arc(x + s * 0.4, y + s * 0.2, s * 0.4, Math.PI * 1.75, Math.PI * 0.75, false);
+        g.arc(x + s * 0.1, y - s * 0.1, s * 0.4, Math.PI * 0.75, Math.PI * 1.75, false);
+        g.closePath();
+        g.strokePath();
+    },
+    // Chevron Left (back arrow)
+    drawChevronLeft(g, x, y, size = 16, color = 0x888888, stroke = 2) {
+        g.lineStyle(stroke, color);
+        const s = size / 2;
+        g.beginPath();
+        g.moveTo(x + s * 0.4, y - s);
+        g.lineTo(x - s * 0.4, y);
+        g.lineTo(x + s * 0.4, y + s);
+        g.strokePath();
     }
 };
 
@@ -608,11 +679,16 @@ class ModeSelectScene extends Phaser.Scene {
             .setStrokeStyle(3, 0x00ff88, 1)
             .setInteractive({ useHandCursor: true });
 
-        this.add.text(width / 2, singleY - 12, '👤 SINGLE PLAYER', {
+        const singleText = this.add.text(width / 2 + 12, singleY - 12, 'SINGLE PLAYER', {
             fontFamily: 'Fredoka, sans-serif',
             fontSize: isMobile ? '18px' : (isCompact ? '22px' : '26px'),
             color: '#00ff88'
         }).setOrigin(0.5);
+        
+        // User icon for single player
+        const singleIcon = this.add.graphics();
+        const singleIconSize = isMobile ? 18 : (isCompact ? 22 : 26);
+        Icons.drawUser(singleIcon, singleText.x - singleText.width/2 - singleIconSize, singleY - 12, singleIconSize, 0x00ff88, 2);
 
         this.add.text(width / 2, singleY + 16, 'Classic solo adventure', {
             fontFamily: 'Outfit, sans-serif',
@@ -626,11 +702,16 @@ class ModeSelectScene extends Phaser.Scene {
             .setStrokeStyle(3, 0x00ccff, 1)
             .setInteractive({ useHandCursor: true });
 
-        this.add.text(width / 2, multiY - 12, '👥 MULTIPLAYER', {
+        const multiText = this.add.text(width / 2 + 12, multiY - 12, 'MULTIPLAYER', {
             fontFamily: 'Fredoka, sans-serif',
             fontSize: isMobile ? '18px' : (isCompact ? '22px' : '26px'),
             color: '#00ccff'
         }).setOrigin(0.5);
+
+        // Users icon for multiplayer
+        const multiIcon = this.add.graphics();
+        const multiIconSize = isMobile ? 20 : (isCompact ? 24 : 28);
+        Icons.drawUsers(multiIcon, multiText.x - multiText.width/2 - multiIconSize, multiY - 12, multiIconSize, 0x00ccff, 2);
 
         this.add.text(width / 2, multiY + 16, 'Team up with a friend!', {
             fontFamily: 'Outfit, sans-serif',
@@ -672,14 +753,25 @@ class ModeSelectScene extends Phaser.Scene {
         });
 
         // Back button (small, top-left)
-        const backBtn = this.add.text(20, 20, '← BACK', {
+        const backBtn = this.add.text(36, 20, 'BACK', {
             fontFamily: 'Outfit, sans-serif',
             fontSize: '14px',
             color: '#888888'
         }).setInteractive({ useHandCursor: true });
+        
+        const backIcon = this.add.graphics();
+        Icons.drawChevronLeft(backIcon, 20, 27, 14, 0x888888, 2);
 
-        backBtn.on('pointerover', () => backBtn.setColor('#ffffff'));
-        backBtn.on('pointerout', () => backBtn.setColor('#888888'));
+        backBtn.on('pointerover', () => {
+            backBtn.setColor('#ffffff');
+            backIcon.clear();
+            Icons.drawChevronLeft(backIcon, 20, 27, 14, 0xffffff, 2);
+        });
+        backBtn.on('pointerout', () => {
+            backBtn.setColor('#888888');
+            backIcon.clear();
+            Icons.drawChevronLeft(backIcon, 20, 27, 14, 0x888888, 2);
+        });
         backBtn.on('pointerdown', () => {
             this.cameras.main.fadeOut(200, 0, 0, 0);
             this.cameras.main.once('camerafadeoutcomplete', () => {
@@ -719,14 +811,25 @@ class LobbyScene extends Phaser.Scene {
         this.createLobbyMenu();
 
         // Back button
-        const backBtn = this.add.text(20, 20, '← BACK', {
+        const backBtn = this.add.text(36, 20, 'BACK', {
             fontFamily: 'Outfit, sans-serif',
             fontSize: '14px',
             color: '#888888'
         }).setInteractive({ useHandCursor: true });
 
-        backBtn.on('pointerover', () => backBtn.setColor('#ffffff'));
-        backBtn.on('pointerout', () => backBtn.setColor('#888888'));
+        const backIcon = this.add.graphics();
+        Icons.drawChevronLeft(backIcon, 20, 27, 14, 0x888888, 2);
+
+        backBtn.on('pointerover', () => {
+            backBtn.setColor('#ffffff');
+            backIcon.clear();
+            Icons.drawChevronLeft(backIcon, 20, 27, 14, 0xffffff, 2);
+        });
+        backBtn.on('pointerout', () => {
+            backBtn.setColor('#888888');
+            backIcon.clear();
+            Icons.drawChevronLeft(backIcon, 20, 27, 14, 0x888888, 2);
+        });
         backBtn.on('pointerdown', () => {
             this.cleanup();
             this.cameras.main.fadeOut(200, 0, 0, 0);
@@ -774,13 +877,18 @@ class LobbyScene extends Phaser.Scene {
             .setStrokeStyle(3, 0x00ff88, 1)
             .setInteractive({ useHandCursor: true });
 
-        const createText = this.add.text(width / 2, btnY, '🏠 CREATE ROOM', {
+        const createText = this.add.text(width / 2 + 14, btnY, 'CREATE ROOM', {
             fontFamily: 'Fredoka, sans-serif',
             fontSize: isMobile ? '18px' : (isCompact ? '22px' : '26px'),
             color: '#00ff88'
         }).setOrigin(0.5);
 
-        this.menuContainer.add([createBg, createText]);
+        // Home icon for create room
+        const createIcon = this.add.graphics();
+        const createIconSize = isMobile ? 20 : (isCompact ? 24 : 28);
+        Icons.drawHome(createIcon, createText.x - createText.width/2 - createIconSize, btnY, createIconSize, 0x00ff88, 2);
+
+        this.menuContainer.add([createBg, createText, createIcon]);
 
         createBg.on('pointerover', () => createBg.setStrokeStyle(4, 0x00ff88, 1));
         createBg.on('pointerout', () => createBg.setStrokeStyle(3, 0x00ff88, 1));
@@ -792,13 +900,18 @@ class LobbyScene extends Phaser.Scene {
             .setStrokeStyle(3, 0x00ccff, 1)
             .setInteractive({ useHandCursor: true });
 
-        const joinText = this.add.text(width / 2, joinY, '🔗 JOIN ROOM', {
+        const joinText = this.add.text(width / 2 + 14, joinY, 'JOIN ROOM', {
             fontFamily: 'Fredoka, sans-serif',
             fontSize: isMobile ? '18px' : (isCompact ? '22px' : '26px'),
             color: '#00ccff'
         }).setOrigin(0.5);
 
-        this.menuContainer.add([joinBg, joinText]);
+        // Link icon for join room
+        const joinIcon = this.add.graphics();
+        const joinIconSize = isMobile ? 20 : (isCompact ? 24 : 28);
+        Icons.drawLink(joinIcon, joinText.x - joinText.width/2 - joinIconSize, joinY, joinIconSize, 0x00ccff, 2);
+
+        this.menuContainer.add([joinBg, joinText, joinIcon]);
 
         joinBg.on('pointerover', () => joinBg.setStrokeStyle(4, 0x00ccff, 1));
         joinBg.on('pointerout', () => joinBg.setStrokeStyle(3, 0x00ccff, 1));
@@ -3843,7 +3956,7 @@ class GameScene extends Phaser.Scene {
         } else {
             scores.forEach((s, i) => {
                 const medal = i === 0 ? '1st' : i === 1 ? '2nd' : i === 2 ? '3rd' : `${i + 1}th`;
-                this.add.text(width / 2, startY + 35 + (i * 22), `${medal}  ${s.player_name} — ${s.score}`, { fontFamily: 'Outfit, sans-serif', fontSize: '15px', color: '#ffffff' }).setOrigin(0.5).setDepth(301);
+                this.add.text(width / 2, startY + 35 + (i * 22), `${medal}  ${s.player_name} - ${s.score}`, { fontFamily: 'Outfit, sans-serif', fontSize: '15px', color: '#ffffff' }).setOrigin(0.5).setDepth(301);
             });
         }
     }
@@ -3964,7 +4077,7 @@ class CharacterSelectScene extends Phaser.Scene {
         const drawHeartIcon = (g, x, y, size, color) => {
             Icons.drawHeart(g, x, y, size, color);
         };
-        const maleStatsText = this.add.text(maleX + 10, charY + statsOffset, 'FAST · Carries 1', statsStyle)
+        const maleStatsText = this.add.text(maleX + 10, charY + statsOffset, 'FAST | Carries 1', statsStyle)
             .setOrigin(0.5)
             .setColor('#8feaff')
             .setShadow(0, 2, '#000000', 4, true, true);
@@ -4022,7 +4135,7 @@ class CharacterSelectScene extends Phaser.Scene {
         }).setOrigin(0.5);
 
         // Female stats
-        const femaleStatsText = this.add.text(femaleX + 10, charY + statsOffset, 'STEADY · Carries 2', statsStyle)
+        const femaleStatsText = this.add.text(femaleX + 10, charY + statsOffset, 'STEADY | Carries 2', statsStyle)
             .setOrigin(0.5)
             .setColor('#ffb6de')
             .setShadow(0, 2, '#000000', 4, true, true);
