@@ -1476,6 +1476,13 @@ class GameScene extends Phaser.Scene {
             }
         });
 
+        // Listen for game over event (normal end of game)
+        multiplayerChannel.on('broadcast', { event: 'game_over' }, (payload) => {
+            if (payload.payload.playerId !== playerId && !this.gameOver) {
+                this.handleRemoteGameOver(payload.payload);
+            }
+        });
+
         // Guest -> host hit intent, host -> guest hit outcome
         multiplayerChannel.on('broadcast', { event: 'player_hit_intent' }, (payload) => {
             if (isHost) {
@@ -1950,6 +1957,36 @@ class GameScene extends Phaser.Scene {
                 payload: { playerId: playerId }
             });
         }
+    }
+
+    broadcastGameOver() {
+        if (multiplayerChannel) {
+            multiplayerChannel.send({
+                type: 'broadcast',
+                event: 'game_over',
+                payload: { 
+                    playerId: playerId,
+                    teamScore: this.teamScore,
+                    saved: this.saved,
+                    lost: this.lost,
+                    maxStreak: this.maxStreak
+                }
+            });
+        }
+    }
+
+    handleRemoteGameOver(data) {
+        if (this.gameOver) return;
+        
+        // Sync final stats from the host/partner
+        if (data.teamScore !== undefined) this.teamScore = data.teamScore;
+        if (data.saved !== undefined) this.saved = data.saved;
+        if (data.lost !== undefined) this.lost = data.lost;
+        if (data.maxStreak !== undefined) this.maxStreak = data.maxStreak;
+        
+        this.gameOver = true;
+        this.score = this.teamScore; // Use team score for leaderboard
+        this.showGameOver();
     }
 
     drawMalePlayer(g, isPlayer2 = false) {
@@ -3119,7 +3156,8 @@ class GameScene extends Phaser.Scene {
     async showGameOver() {
         // Cleanup multiplayer
         if (this.isMultiplayer) {
-            this.broadcastDisconnect();
+            // Broadcast game over to partner (not disconnect)
+            this.broadcastGameOver();
             if (this.broadcastTimer) this.broadcastTimer.destroy();
             if (this.disconnectCheckTimer) this.disconnectCheckTimer.destroy();
             await updateRoomStatus('finished');
