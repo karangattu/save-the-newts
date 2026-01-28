@@ -1483,6 +1483,18 @@ class GameScene extends Phaser.Scene {
             }
         });
 
+        // Listen for partner's name during game over screen
+        multiplayerChannel.on('broadcast', { event: 'player_name' }, (payload) => {
+            if (payload.payload.playerId !== playerId) {
+                this.handlePartnerName(payload.payload);
+            }
+        });
+
+        // Listen for score submission confirmation
+        multiplayerChannel.on('broadcast', { event: 'score_submitted' }, (payload) => {
+            this.handleScoreSubmitted(payload.payload);
+        });
+
         // Guest -> host hit intent, host -> guest hit outcome
         multiplayerChannel.on('broadcast', { event: 'player_hit_intent' }, (payload) => {
             if (isHost) {
@@ -1987,6 +1999,69 @@ class GameScene extends Phaser.Scene {
         this.gameOver = true;
         this.score = this.teamScore; // Use team score for leaderboard
         this.showGameOver();
+    }
+
+    broadcastPlayerName(name) {
+        if (multiplayerChannel) {
+            multiplayerChannel.send({
+                type: 'broadcast',
+                event: 'player_name',
+                payload: { playerId: playerId, name: name }
+            });
+        }
+    }
+
+    handlePartnerName(data) {
+        if (data.name) {
+            this.partnerName = data.name;
+            this.updateSubmitButtonState();
+        }
+    }
+
+    broadcastScoreSubmitted(combinedName, success) {
+        if (multiplayerChannel) {
+            multiplayerChannel.send({
+                type: 'broadcast',
+                event: 'score_submitted',
+                payload: { combinedName: combinedName, success: success }
+            });
+        }
+    }
+
+    handleScoreSubmitted(data) {
+        if (this.multiplayerSubmitBtn && data.success) {
+            this.multiplayerSubmitBtn.setText('Submitted!');
+            this.multiplayerSubmitBtn.disableInteractive();
+            if (this.multiplayerInputEl && this.multiplayerInputEl.parentNode) {
+                this.multiplayerInputEl.remove();
+            }
+            if (this.multiplayerSubmitIcon) {
+                this.multiplayerSubmitIcon.clear();
+            }
+            this.multiplayerSubmitted = true;
+            this.refreshLeaderboard();
+        }
+    }
+
+    updateSubmitButtonState() {
+        if (!this.multiplayerSubmitBtn || this.multiplayerSubmitted) return;
+        
+        const myName = this.myName || '';
+        const partnerName = this.partnerName || '';
+        
+        if (myName && partnerName) {
+            this.multiplayerSubmitBtn.setText('SUBMIT TEAM SCORE');
+            this.multiplayerSubmitBtn.setColor('#00ff00');
+            this.multiplayerSubmitBtn.setInteractive({ useHandCursor: true });
+        } else if (myName && !partnerName) {
+            this.multiplayerSubmitBtn.setText('Waiting for partner...');
+            this.multiplayerSubmitBtn.setColor('#ffaa00');
+            this.multiplayerSubmitBtn.disableInteractive();
+        } else {
+            this.multiplayerSubmitBtn.setText('Enter your name');
+            this.multiplayerSubmitBtn.setColor('#888888');
+            this.multiplayerSubmitBtn.disableInteractive();
+        }
     }
 
     drawMalePlayer(g, isPlayer2 = false) {
@@ -3264,35 +3339,109 @@ class GameScene extends Phaser.Scene {
             const inputY = namePromptY + (isCompact ? 26 : 32);
             const submitY = inputY + (isCompact ? 40 : 48);
 
-            this.add.text(width / 2, namePromptY, 'Enter your name:', {
+            // Different prompt for multiplayer
+            const promptText = this.isMultiplayer ? 'Enter your name (team submission):' : 'Enter your name:';
+            this.add.text(width / 2, namePromptY, promptText, {
                 fontFamily: 'Outfit, sans-serif', fontSize: '16px', color: '#aaaaaa'
             }).setOrigin(0.5).setDepth(301);
 
             const inputEl = document.createElement('input');
             inputEl.type = 'text'; inputEl.placeholder = 'Your Name'; inputEl.maxLength = 15;
             const canvasRect = this.game.canvas.getBoundingClientRect();
-            inputEl.style.cssText = `position: fixed; left: ${canvasRect.left + width / 2}px; top: ${canvasRect.top + inputY}px; transform: translate(-50%, -50%); padding: 10px 18px; font-size: 16px; font-family: 'Fredoka', sans-serif; border: 2px solid #00ffff; border-radius: 8px; background: #111; color: #fff; text-align: center; width: 180px; z-index: 10000; outline: none;`;
+            const borderColor = this.isMultiplayer ? '#00ccff' : '#00ffff';
+            inputEl.style.cssText = `position: fixed; left: ${canvasRect.left + width / 2}px; top: ${canvasRect.top + inputY}px; transform: translate(-50%, -50%); padding: 10px 18px; font-size: 16px; font-family: 'Fredoka', sans-serif; border: 2px solid ${borderColor}; border-radius: 8px; background: #111; color: #fff; text-align: center; width: 180px; z-index: 10000; outline: none;`;
             document.body.appendChild(inputEl); inputEl.focus();
 
-            const submitBtnText = this.add.text(width / 2 + 15, submitY, 'SUBMIT SCORE', {
-                fontFamily: 'Fredoka, sans-serif', fontSize: '20px', color: '#00ff00', backgroundColor: '#222', padding: { left: 45, right: 18, top: 8, bottom: 8 }
-            }).setOrigin(0.5).setDepth(301).setInteractive({ useHandCursor: true });
+            const initialBtnText = this.isMultiplayer ? 'Enter your name' : 'SUBMIT SCORE';
+            const initialBtnColor = this.isMultiplayer ? '#888888' : '#00ff00';
+            const submitBtnText = this.add.text(width / 2 + 15, submitY, initialBtnText, {
+                fontFamily: 'Fredoka, sans-serif', fontSize: '20px', color: initialBtnColor, backgroundColor: '#222', padding: { left: 45, right: 18, top: 8, bottom: 8 }
+            }).setOrigin(0.5).setDepth(301);
+
+            // Only make interactive for single player initially
+            if (!this.isMultiplayer) {
+                submitBtnText.setInteractive({ useHandCursor: true });
+            }
 
             const submitIcon = this.add.graphics().setDepth(302);
-            Icons.drawSend(submitIcon, submitBtnText.x - submitBtnText.width / 2 + 22, submitY, 18, 0x00ff00);
+            Icons.drawSend(submitIcon, submitBtnText.x - submitBtnText.width / 2 + 22, submitY, 18, this.isMultiplayer ? 0x888888 : 0x00ff00);
 
-            let submitted = false;
-            submitBtnText.on('pointerdown', async () => {
-                if (submitted) return;
-                const name = inputEl.value.trim() || 'Anonymous';
-                submitted = true;
-                submitBtnText.setText('Submitting...');
-                submitBtnText.disableInteractive();
-                const scoreToSubmit = this.isMultiplayer ? this.teamScore : this.score;
-                const success = await submitScore(name, scoreToSubmit, this.isMultiplayer);
-                if (success) { submitBtnText.setText('Submitted!'); inputEl.remove(); submitIcon.clear(); this.refreshLeaderboard(); }
-                else { submitBtnText.setText('Error - Try Again'); submitted = false; submitBtnText.setInteractive({ useHandCursor: true }); }
-            });
+            if (this.isMultiplayer) {
+                // Multiplayer: coordinate name submission between both players
+                this.myName = '';
+                this.partnerName = '';
+                this.multiplayerSubmitBtn = submitBtnText;
+                this.multiplayerInputEl = inputEl;
+                this.multiplayerSubmitIcon = submitIcon;
+                this.multiplayerSubmitted = false;
+
+                // When user types their name, broadcast it to partner
+                inputEl.addEventListener('input', () => {
+                    const name = inputEl.value.trim();
+                    this.myName = name;
+                    if (name) {
+                        this.broadcastPlayerName(name);
+                    }
+                    this.updateSubmitButtonState();
+                });
+
+                // Also broadcast on blur in case they tab away
+                inputEl.addEventListener('blur', () => {
+                    const name = inputEl.value.trim();
+                    if (name) {
+                        this.myName = name;
+                        this.broadcastPlayerName(name);
+                        this.updateSubmitButtonState();
+                    }
+                });
+
+                submitBtnText.on('pointerdown', async () => {
+                    if (this.multiplayerSubmitted) return;
+                    if (!this.myName || !this.partnerName) return;
+
+                    const combinedName = `${this.myName} & ${this.partnerName}`;
+                    this.multiplayerSubmitted = true;
+                    submitBtnText.setText('Submitting...');
+                    submitBtnText.disableInteractive();
+
+                    // Only the host actually submits to avoid duplicates
+                    let success = false;
+                    if (isHost) {
+                        success = await submitScore(combinedName, this.teamScore, true);
+                    } else {
+                        // Guest waits for host to submit, assume success
+                        success = true;
+                    }
+
+                    // Broadcast submission result to partner
+                    this.broadcastScoreSubmitted(combinedName, success);
+
+                    if (success) {
+                        submitBtnText.setText('Submitted!');
+                        inputEl.remove();
+                        submitIcon.clear();
+                        this.refreshLeaderboard();
+                    } else {
+                        submitBtnText.setText('Error - Try Again');
+                        this.multiplayerSubmitted = false;
+                        this.updateSubmitButtonState();
+                    }
+                });
+            } else {
+                // Single player: original behavior
+                let submitted = false;
+                submitBtnText.on('pointerdown', async () => {
+                    if (submitted) return;
+                    const name = inputEl.value.trim() || 'Anonymous';
+                    submitted = true;
+                    submitBtnText.setText('Submitting...');
+                    submitBtnText.disableInteractive();
+                    const success = await submitScore(name, this.score, false);
+                    if (success) { submitBtnText.setText('Submitted!'); inputEl.remove(); submitIcon.clear(); this.refreshLeaderboard(); }
+                    else { submitBtnText.setText('Error - Try Again'); submitted = false; submitBtnText.setInteractive({ useHandCursor: true }); }
+                });
+            }
+
             this.events.once('shutdown', () => { if (inputEl && inputEl.parentNode) inputEl.remove(); });
 
             this.leaderboardY = submitY + (isCompact ? 55 : 65);
