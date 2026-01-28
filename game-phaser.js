@@ -608,11 +608,18 @@ class ModeSelectScene extends Phaser.Scene {
             .setStrokeStyle(3, 0x00ff88, 1)
             .setInteractive({ useHandCursor: true });
 
-        this.add.text(width / 2, singleY - 12, '👤 SINGLE PLAYER', {
+        const singleText = this.add.text(width / 2, singleY - 12, '    SINGLE PLAYER', {
             fontFamily: 'Fredoka, sans-serif',
             fontSize: isMobile ? '18px' : (isCompact ? '22px' : '26px'),
             color: '#00ff88'
         }).setOrigin(0.5);
+
+        this.add.text(singleText.x - singleText.width / 2 + 5, singleY - 12, '\uf007', {
+            fontFamily: '"Font Awesome 6 Free"',
+            fontWeight: '900',
+            fontSize: isMobile ? '16px' : (isCompact ? '20px' : '24px'),
+            color: '#00ff88'
+        }).setOrigin(0, 0.5);
 
         this.add.text(width / 2, singleY + 16, 'Classic solo adventure', {
             fontFamily: 'Outfit, sans-serif',
@@ -626,11 +633,18 @@ class ModeSelectScene extends Phaser.Scene {
             .setStrokeStyle(3, 0x00ccff, 1)
             .setInteractive({ useHandCursor: true });
 
-        this.add.text(width / 2, multiY - 12, '👥 MULTIPLAYER', {
+        const multiText = this.add.text(width / 2, multiY - 12, '     MULTIPLAYER', {
             fontFamily: 'Fredoka, sans-serif',
             fontSize: isMobile ? '18px' : (isCompact ? '22px' : '26px'),
             color: '#00ccff'
         }).setOrigin(0.5);
+
+        this.add.text(multiText.x - multiText.width / 2 + 5, multiY - 12, '\uf0c0', {
+            fontFamily: '"Font Awesome 6 Free"',
+            fontWeight: '900',
+            fontSize: isMobile ? '16px' : (isCompact ? '20px' : '24px'),
+            color: '#00ccff'
+        }).setOrigin(0, 0.5);
 
         this.add.text(width / 2, multiY + 16, 'Team up with a friend!', {
             fontFamily: 'Outfit, sans-serif',
@@ -719,14 +733,27 @@ class LobbyScene extends Phaser.Scene {
         this.createLobbyMenu();
 
         // Back button
-        const backBtn = this.add.text(20, 20, '← BACK', {
+        const backBtn = this.add.text(20, 20, '    BACK', {
             fontFamily: 'Outfit, sans-serif',
             fontSize: '14px',
             color: '#888888'
         }).setInteractive({ useHandCursor: true });
+        
+        const backIcon = this.add.text(22, 20, '\uf060', {
+            fontFamily: '"Font Awesome 6 Free"',
+            fontWeight: '900',
+            fontSize: '12px',
+            color: '#888888'
+        }).setOrigin(0, 0);
 
-        backBtn.on('pointerover', () => backBtn.setColor('#ffffff'));
-        backBtn.on('pointerout', () => backBtn.setColor('#888888'));
+        backBtn.on('pointerover', () => {
+            backBtn.setColor('#ffffff');
+            backIcon.setColor('#ffffff');
+        });
+        backBtn.on('pointerout', () => {
+            backBtn.setColor('#888888');
+            backIcon.setColor('#888888');
+        });
         backBtn.on('pointerdown', () => {
             this.cleanup();
             this.cameras.main.fadeOut(200, 0, 0, 0);
@@ -774,11 +801,18 @@ class LobbyScene extends Phaser.Scene {
             .setStrokeStyle(3, 0x00ff88, 1)
             .setInteractive({ useHandCursor: true });
 
-        const createText = this.add.text(width / 2, btnY, '🏠 CREATE ROOM', {
+        const createText = this.add.text(width / 2, btnY, '      CREATE ROOM', {
             fontFamily: 'Fredoka, sans-serif',
             fontSize: isMobile ? '18px' : (isCompact ? '22px' : '26px'),
             color: '#00ff88'
         }).setOrigin(0.5);
+
+        this.add.text(createText.x - createText.width / 2 + 5, btnY, '\uf015', {
+            fontFamily: '"Font Awesome 6 Free"',
+            fontWeight: '900',
+            fontSize: isMobile ? '16px' : (isCompact ? '20px' : '24px'),
+            color: '#00ff88'
+        }).setOrigin(0, 0.5);
 
         this.menuContainer.add([createBg, createText]);
 
@@ -1105,6 +1139,7 @@ class GameScene extends Phaser.Scene {
         this.gameOver = false;
         this.difficulty = 1;
         this.runStartTime = this.time.now;
+        this.displayedScore = 0;
 
         // Multiplayer state
         this.isMultiplayer = gameMode === 'multi';
@@ -1928,6 +1963,9 @@ class GameScene extends Phaser.Scene {
         // Haptic feedback for mobile (strong vibration pattern)
         if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
 
+        // Enhanced impact particle explosion
+        this.createImpactExplosion(this.player.x, this.player.y);
+
         this.player.carried.forEach(n => n.destroy()); this.player.carried = [];
         this.cameras.main.flash(150, 255, 50, 50, false);
         this.player.invincible = true;
@@ -1935,6 +1973,147 @@ class GameScene extends Phaser.Scene {
         this.player.x = this.scale.width / 2;
         this.player.y = this.botSafe + 60;
         if (this.lives <= 0) { this.gameOver = true; this.showGameOver(); }
+    }
+
+    createImpactExplosion(x, y) {
+        // Create a dramatic explosion effect when player is hit
+        const centerX = x;
+        const centerY = y;
+        
+        // Central flash
+        const flash = this.add.circle(centerX, centerY, 60, 0xffffff, 0.9);
+        flash.setDepth(200);
+        this.tweens.add({
+            targets: flash,
+            scale: 3,
+            alpha: 0,
+            duration: 300,
+            ease: 'Power2',
+            onComplete: () => flash.destroy()
+        });
+        
+        // Expanding shockwave ring
+        const shockwave = this.add.ellipse(centerX, centerY, 40, 20, 0xff6600, 0);
+        shockwave.setStrokeStyle(4, 0xff6600, 0.8);
+        shockwave.setDepth(199);
+        this.tweens.add({
+            targets: shockwave,
+            scaleX: 8,
+            scaleY: 4,
+            alpha: 0,
+            duration: 500,
+            ease: 'Power2',
+            onComplete: () => shockwave.destroy()
+        });
+        
+        // Fire particles - fast moving
+        for (let i = 0; i < 20; i++) {
+            const angle = (Math.random() * Math.PI * 2);
+            const speed = Phaser.Math.Between(100, 250);
+            const size = Phaser.Math.Between(6, 14);
+            const particle = this.add.circle(
+                centerX, centerY, size,
+                Phaser.Display.Color.GetColor(
+                    255,
+                    Phaser.Math.Between(50, 150),
+                    0
+                ),
+                0.9
+            );
+            particle.setDepth(198);
+            
+            const targetX = centerX + Math.cos(angle) * speed;
+            const targetY = centerY + Math.sin(angle) * speed;
+            
+            this.tweens.add({
+                targets: particle,
+                x: targetX,
+                y: targetY,
+                scale: 0.2,
+                alpha: 0,
+                duration: 400 + Math.random() * 300,
+                ease: 'Power2',
+                onComplete: () => particle.destroy()
+            });
+        }
+        
+        // Smoke particles - slower, darker
+        for (let i = 0; i < 12; i++) {
+            const angle = (Math.random() * Math.PI * 2);
+            const speed = Phaser.Math.Between(50, 120);
+            const particle = this.add.circle(
+                centerX, centerY,
+                Phaser.Math.Between(8, 16),
+                0x333333,
+                0.6
+            );
+            particle.setDepth(197);
+            
+            const targetX = centerX + Math.cos(angle) * speed;
+            const targetY = centerY + Math.sin(angle) * speed - 30; // Drift upward
+            
+            this.tweens.add({
+                targets: particle,
+                x: targetX,
+                y: targetY,
+                scale: 1.5,
+                alpha: 0,
+                duration: 800 + Math.random() * 400,
+                ease: 'Power2',
+                onComplete: () => particle.destroy()
+            });
+        }
+        
+        // Sparks - small, fast, bright
+        for (let i = 0; i < 15; i++) {
+            const angle = (Math.random() * Math.PI * 2);
+            const speed = Phaser.Math.Between(80, 180);
+            const spark = this.add.rectangle(centerX, centerY, 4, 4, 0xffff00, 0.9);
+            spark.setDepth(201);
+            
+            const targetX = centerX + Math.cos(angle) * speed;
+            const targetY = centerY + Math.sin(angle) * speed;
+            
+            this.tweens.add({
+                targets: spark,
+                x: targetX,
+                y: targetY,
+                rotation: Math.random() * Math.PI * 4,
+                scale: 0.1,
+                alpha: 0,
+                duration: 300 + Math.random() * 200,
+                ease: 'Power2',
+                onComplete: () => spark.destroy()
+            });
+        }
+        
+        // Debris chunks
+        for (let i = 0; i < 8; i++) {
+            const angle = (Math.random() * Math.PI * 2);
+            const speed = Phaser.Math.Between(60, 140);
+            const debris = this.add.rectangle(
+                centerX, centerY,
+                Phaser.Math.Between(6, 12),
+                Phaser.Math.Between(6, 12),
+                Phaser.Math.Between(0x333333, 0x666666),
+                0.8
+            );
+            debris.setDepth(196);
+            
+            const targetX = centerX + Math.cos(angle) * speed;
+            const targetY = centerY + Math.sin(angle) * speed;
+            
+            this.tweens.add({
+                targets: debris,
+                x: targetX,
+                y: targetY,
+                rotation: Math.random() * Math.PI * 6,
+                alpha: 0,
+                duration: 600 + Math.random() * 300,
+                ease: 'Power2',
+                onComplete: () => debris.destroy()
+            });
+        }
     }
 
     checkPartnerConnection() {
@@ -2323,7 +2502,7 @@ class GameScene extends Phaser.Scene {
 
         // Display team score in multiplayer, regular score otherwise
         const displayScore = this.isMultiplayer ? this.teamScore : this.score;
-        this.scoreText.setText(`${displayScore}`);
+        this.animateScoreChange(displayScore);
 
         // Update carrying display
         if (this.carryIconGroup) {
@@ -2908,6 +3087,11 @@ class GameScene extends Phaser.Scene {
                         // Haptic feedback for save (gentle pulse)
                         if (navigator.vibrate) navigator.vibrate(30);
                         
+                        // Create splash effect if saved at lake
+                        if (inLake) {
+                            this.createSplashEffect(newt.x, newt.y);
+                        }
+                        
                         this.createSuccessEffect(newt.x, newt.y);
                         this.checkAchievements();
                         this.updateDifficulty();
@@ -2986,13 +3170,120 @@ class GameScene extends Phaser.Scene {
             onComplete: () => ring.destroy()
         });
 
-        // Particle burst
-        for (let i = 0; i < 12; i++) {
-            const star = this.add.star(x, y, 5, 4, 8, 0x00ff88);
-            star.setAlpha(0.9);
+        // Sparkle particle burst
+        for (let i = 0; i < 15; i++) {
+            const color = Phaser.Math.RND.pick([0x00ff88, 0xffffff, 0xccff00]);
+            const star = this.add.star(x, y, 5, 2, 6, color);
+            star.setAlpha(1);
+            star.setDepth(101);
+            
+            const angle = Math.random() * Math.PI * 2;
+            const dist = Phaser.Math.Between(30, 70);
+            
             this.tweens.add({
-                targets: star, x: x + Phaser.Math.Between(-50, 50), y: y - Phaser.Math.Between(30, 80),
-                rotation: 2, alpha: 0, scale: 0.4, duration: 600 + Math.random() * 400, onComplete: () => star.destroy()
+                targets: star,
+                x: x + Math.cos(angle) * dist,
+                y: y + Math.sin(angle) * dist - 20,
+                rotation: Math.random() * Math.PI * 2,
+                alpha: 0,
+                scale: 0.1,
+                duration: 500 + Math.random() * 500,
+                ease: 'Cubic.easeOut',
+                onUpdate: () => {
+                    // Flicker effect
+                    if (Math.random() > 0.8) star.setAlpha(0.2);
+                    else star.setAlpha(1);
+                },
+                onComplete: () => star.destroy()
+            });
+        }
+    }
+
+    createSplashEffect(x, y) {
+        // Water splash effect when newt reaches the lake
+        const splashColor = 0x44aadd;
+        const waterColor = 0x88ccff;
+        
+        // Create expanding ripple rings
+        for (let i = 0; i < 3; i++) {
+            const ring = this.add.ellipse(x, y, 20, 10, splashColor, 0.6 - i * 0.15);
+            ring.setDepth(50);
+            this.tweens.add({
+                targets: ring,
+                scaleX: 4 + i,
+                scaleY: 2 + i * 0.5,
+                alpha: 0,
+                duration: 800 + i * 200,
+                delay: i * 100,
+                ease: 'Power2',
+                onComplete: () => ring.destroy()
+            });
+        }
+        
+        // Water droplets shooting upward
+        for (let i = 0; i < 15; i++) {
+            const angle = -Math.PI / 2 + (Math.random() - 0.5) * Math.PI; // Upward arc
+            const speed = Phaser.Math.Between(80, 150);
+            const droplet = this.add.circle(x, y, Phaser.Math.Between(3, 6), waterColor, 0.8);
+            droplet.setDepth(51);
+            
+            const targetX = x + Math.cos(angle) * speed;
+            const targetY = y + Math.sin(angle) * speed;
+            
+            this.tweens.add({
+                targets: droplet,
+                x: targetX,
+                y: targetY,
+                alpha: 0,
+                scale: 0.5,
+                duration: 600 + Math.random() * 200,
+                ease: 'Power2',
+                onComplete: () => droplet.destroy()
+            });
+        }
+        
+        // Splash crown effect (water shooting up in a circle)
+        const crownCount = 8;
+        for (let i = 0; i < crownCount; i++) {
+            const angle = (i / crownCount) * Math.PI; // Semi-circle upward
+            const distance = Phaser.Math.Between(30, 60);
+            const droplet = this.add.circle(x, y, Phaser.Math.Between(4, 8), 0xffffff, 0.9);
+            droplet.setDepth(52);
+            
+            const targetX = x + Math.cos(angle) * distance;
+            const targetY = y - Math.sin(angle) * distance * 0.5; // Flattened arc
+            
+            this.tweens.add({
+                targets: droplet,
+                x: targetX,
+                y: targetY,
+                alpha: 0,
+                scale: 0.3,
+                duration: 500,
+                ease: 'Power2',
+                onComplete: () => droplet.destroy()
+            });
+        }
+        
+        // Small bubbles rising
+        for (let i = 0; i < 6; i++) {
+            const bubble = this.add.circle(
+                x + Phaser.Math.Between(-20, 20),
+                y,
+                Phaser.Math.Between(2, 5),
+                0xaaddff,
+                0.5
+            );
+            bubble.setDepth(49);
+            
+            this.tweens.add({
+                targets: bubble,
+                y: y - Phaser.Math.Between(30, 60),
+                x: bubble.x + Phaser.Math.Between(-10, 10),
+                alpha: 0,
+                duration: 1000 + Math.random() * 500,
+                ease: 'Sine.easeOut',
+                onComplete: () => bubble.destroy()
             });
         }
     }
@@ -3239,6 +3530,67 @@ class GameScene extends Phaser.Scene {
             alpha: 0,
             duration: 1200,
             onComplete: () => text.destroy()
+        });
+    }
+
+    animateScoreChange(targetScore) {
+        // Kill existing score tween if any
+        if (this.scoreTween) {
+            this.scoreTween.stop();
+        }
+        
+        // Determine if score increased or decreased
+        const scoreDiff = targetScore - this.displayedScore;
+        const duration = Math.min(800, Math.abs(scoreDiff) * 5); // Cap at 800ms
+        
+        // Create a tween object to animate the score
+        this.scoreTween = this.tweens.add({
+            targets: this,
+            displayedScore: targetScore,
+            duration: duration,
+            ease: 'Power2',
+            onUpdate: () => {
+                this.scoreText.setText(`${Math.round(this.displayedScore)}`);
+            },
+            onComplete: () => {
+                this.scoreText.setText(`${targetScore}`);
+                this.scoreTween = null;
+                
+                // Pulse effect on score change completion
+                this.tweens.add({
+                    targets: this.scoreText,
+                    scaleX: 1.2,
+                    scaleY: 1.2,
+                    duration: 100,
+                    yoyo: true,
+                    ease: 'Back.easeOut'
+                });
+                
+                // Flash the score background
+                if (this.scoreBg) {
+                    this.scoreBg.clear();
+                    this.scoreBg.fillStyle(scoreDiff >= 0 ? 0x00ff00 : 0xff0000, 0.5);
+                    const padding = this.isCompact ? 12 : 20;
+                    const scoreWidth = this.isCompact ? 98 : 120;
+                    const scoreHeight = this.isCompact ? 40 : 50;
+                    const scoreX = this.scale.width - scoreWidth - padding;
+                    const scoreY = padding - 6;
+                    this.scoreBg.fillRoundedRect(scoreX, scoreY, scoreWidth, scoreHeight, 10);
+                    this.scoreBg.lineStyle(2, scoreDiff >= 0 ? 0x00ff00 : 0xff0000, 1);
+                    this.scoreBg.strokeRoundedRect(scoreX, scoreY, scoreWidth, scoreHeight, 10);
+                    
+                    // Fade back to normal
+                    this.time.delayedCall(200, () => {
+                        if (this.scoreBg) {
+                            this.scoreBg.clear();
+                            this.scoreBg.fillStyle(0x000000, 0.7);
+                            this.scoreBg.fillRoundedRect(scoreX, scoreY, scoreWidth, scoreHeight, 10);
+                            this.scoreBg.lineStyle(2, 0xffcc00, 0.8);
+                            this.scoreBg.strokeRoundedRect(scoreX, scoreY, scoreWidth, scoreHeight, 10);
+                        }
+                    });
+                }
+            }
         });
     }
 
@@ -3570,12 +3922,12 @@ class CharacterSelectScene extends Phaser.Scene {
 
         // Character preview area - responsive positioning
         const charY = height * (isMobile ? 0.42 : 0.45);
-        const charSpacing = isMobile ? 70 : (isCompact ? 100 : 140);
+        const charSpacing = isMobile ? 85 : (isCompact ? 120 : 165);
         const charScale = isMobile ? 1.5 : (isCompact ? 1.8 : 2.2);
-        const boxWidth = isMobile ? 90 : (isCompact ? 110 : 130);
-        const boxHeight = isMobile ? 120 : (isCompact ? 140 : 170);
+        const boxWidth = isMobile ? 120 : (isCompact ? 145 : 180);
+        const boxHeight = isMobile ? 150 : (isCompact ? 175 : 210);
 
-        // Male character preview
+        // Male character preview with animation
         const maleX = width / 2 - charSpacing;
         const maleContainer = this.add.container(maleX, charY);
         const maleGraphics = this.add.graphics();
@@ -3583,14 +3935,28 @@ class CharacterSelectScene extends Phaser.Scene {
         maleContainer.add(maleGraphics);
         maleContainer.setScale(charScale);
 
-        // Male selection box
+        // Male idle animation (gentle bounce)
+        this.tweens.add({
+            targets: maleContainer,
+            y: charY - 5,
+            duration: 800,
+            yoyo: true,
+            repeat: -1,
+            ease: 'Sine.easeInOut'
+        });
+
+        // Male selection box with glow effect
         const maleBox = this.add.rectangle(maleX, charY, boxWidth, boxHeight, 0x000000, 0.3)
             .setStrokeStyle(3, 0x00ffff, 1)
             .setInteractive({ useHandCursor: true });
 
+        // Male glow effect (hidden initially)
+        const maleGlow = this.add.ellipse(maleX, charY, boxWidth + 20, boxHeight + 20, 0x00ffff, 0);
+        maleGlow.setDepth(-1);
+
         // Male label
         const labelSize = isMobile ? '14px' : (isCompact ? '16px' : '20px');
-        const labelOffset = isMobile ? 70 : (isCompact ? 85 : 105);
+        const labelOffset = isMobile ? 85 : (isCompact ? 100 : 125);
         this.add.text(maleX, charY + labelOffset, 'VOLUNTEER A', {
             fontFamily: 'Fredoka, sans-serif',
             fontSize: labelSize,
@@ -3599,9 +3965,9 @@ class CharacterSelectScene extends Phaser.Scene {
             strokeThickness: 2
         }).setOrigin(0.5);
 
-        // Male stats
+        // Male stats with animated bars
         const statsSize = isMobile ? '11px' : (isCompact ? '12px' : '14px');
-        const statsOffset = isMobile ? 88 : (isCompact ? 105 : 128);
+        const statsOffset = isMobile ? 105 : (isCompact ? 125 : 155);
         const statsStyle = {
             fontFamily: 'Outfit, sans-serif',
             fontSize: statsSize,
@@ -3643,7 +4009,16 @@ class CharacterSelectScene extends Phaser.Scene {
         drawStatBadge(maleIcon, maleIconX, maleIconY, maleBadgeSize, 0x6de6ff);
         drawBoltIcon(maleIcon, maleIconX, maleIconY, maleBadgeSize * 0.7, 0x6de6ff);
 
-        // Female character preview
+        // Male stat bars
+        const maleStatBarsY = charY + statsOffset + (isMobile ? 22 : 28);
+        const barWidth = isMobile ? 80 : 100;
+        const barHeight = isMobile ? 8 : 10;
+        const barSpacing = isMobile ? 18 : 22;
+        
+        this.createStatBar(maleX - barWidth/2, maleStatBarsY, barWidth, barHeight, 0.9, 0x00ffff, 'SPEED');
+        this.createStatBar(maleX - barWidth/2, maleStatBarsY + barSpacing, barWidth, barHeight, 0.5, 0x00ffff, 'CARRY');
+
+        // Female character preview with animation
         const femaleX = width / 2 + charSpacing;
         const femaleContainer = this.add.container(femaleX, charY);
         const femaleGraphics = this.add.graphics();
@@ -3651,10 +4026,25 @@ class CharacterSelectScene extends Phaser.Scene {
         femaleContainer.add(femaleGraphics);
         femaleContainer.setScale(charScale);
 
-        // Female selection box
+        // Female idle animation (gentle sway)
+        this.tweens.add({
+            targets: femaleContainer,
+            y: charY - 3,
+            x: femaleX + 3,
+            duration: 1000,
+            yoyo: true,
+            repeat: -1,
+            ease: 'Sine.easeInOut'
+        });
+
+        // Female selection box with glow effect
         const femaleBox = this.add.rectangle(femaleX, charY, boxWidth, boxHeight, 0x000000, 0.3)
             .setStrokeStyle(3, 0xff00ff, 1)
             .setInteractive({ useHandCursor: true });
+
+        // Female glow effect (hidden initially)
+        const femaleGlow = this.add.ellipse(femaleX, charY, boxWidth + 20, boxHeight + 20, 0xff00ff, 0);
+        femaleGlow.setDepth(-1);
 
         // Female label
         this.add.text(femaleX, charY + labelOffset, 'VOLUNTEER B', {
@@ -3677,7 +4067,11 @@ class CharacterSelectScene extends Phaser.Scene {
         drawStatBadge(femaleIcon, femaleIconX, femaleIconY, femaleBadgeSize, 0xffa1d4, 0x1a0b1b);
         drawHeartIcon(femaleIcon, femaleIconX, femaleIconY, femaleBadgeSize * 0.75, 0xffa1d4);
 
-        // Selection indicator
+        // Female stat bars
+        this.createStatBar(femaleX - barWidth/2, maleStatBarsY, barWidth, barHeight, 0.6, 0xff00ff, 'SPEED');
+        this.createStatBar(femaleX - barWidth/2, maleStatBarsY + barSpacing, barWidth, barHeight, 1.0, 0xff00ff, 'CARRY');
+
+        // Selection indicator with glow animation
         const selectIndicator = this.add.graphics();
         const updateSelection = (selected) => {
             selectIndicator.clear();
@@ -3690,24 +4084,75 @@ class CharacterSelectScene extends Phaser.Scene {
             // Update box styles
             maleBox.setStrokeStyle(selected === 'male' ? 4 : 2, 0x00ffff, selected === 'male' ? 1 : 0.5);
             femaleBox.setStrokeStyle(selected === 'female' ? 4 : 2, 0xff00ff, selected === 'female' ? 1 : 0.5);
+            
+            // Update glow effects
+            maleGlow.setFillStyle(0x00ffff, selected === 'male' ? 0.3 : 0);
+            femaleGlow.setFillStyle(0xff00ff, selected === 'female' ? 0.3 : 0);
+            
+            // Pulse animation for selected glow
+            if (selected === 'male') {
+                this.tweens.add({
+                    targets: maleGlow,
+                    alpha: { from: 0.3, to: 0.5 },
+                    scaleX: { from: 1, to: 1.05 },
+                    scaleY: { from: 1, to: 1.05 },
+                    duration: 800,
+                    yoyo: true,
+                    repeat: -1,
+                    ease: 'Sine.easeInOut'
+                });
+                this.tweens.killTweensOf(femaleGlow);
+                femaleGlow.setScale(1);
+            } else {
+                this.tweens.add({
+                    targets: femaleGlow,
+                    alpha: { from: 0.3, to: 0.5 },
+                    scaleX: { from: 1, to: 1.05 },
+                    scaleY: { from: 1, to: 1.05 },
+                    duration: 800,
+                    yoyo: true,
+                    repeat: -1,
+                    ease: 'Sine.easeInOut'
+                });
+                this.tweens.killTweensOf(maleGlow);
+                maleGlow.setScale(1);
+            }
         };
 
         // Initial selection
         updateSelection(selectedCharacter);
 
-        // Click handlers with visual feedback
+        // Click handlers with visual feedback and character animation
         maleBox.on('pointerdown', () => {
             selectedCharacter = 'male';
             updateSelection('male');
-            maleContainer.setScale(charScale * 1.05);
-            this.time.delayedCall(100, () => maleContainer.setScale(charScale));
+            // Bounce animation on selection
+            this.tweens.add({
+                targets: maleContainer,
+                scaleX: charScale * 1.15,
+                scaleY: charScale * 1.15,
+                duration: 100,
+                yoyo: true,
+                ease: 'Back.easeOut'
+            });
+            // Particle burst effect
+            this.createSelectionParticles(maleX, charY, 0x00ffff);
         });
 
         femaleBox.on('pointerdown', () => {
             selectedCharacter = 'female';
             updateSelection('female');
-            femaleContainer.setScale(charScale * 1.05);
-            this.time.delayedCall(100, () => femaleContainer.setScale(charScale));
+            // Bounce animation on selection
+            this.tweens.add({
+                targets: femaleContainer,
+                scaleX: charScale * 1.15,
+                scaleY: charScale * 1.15,
+                duration: 100,
+                yoyo: true,
+                ease: 'Back.easeOut'
+            });
+            // Particle burst effect
+            this.createSelectionParticles(femaleX, charY, 0xff00ff);
         });
 
         // Tap instruction for mobile
@@ -3762,6 +4207,68 @@ class CharacterSelectScene extends Phaser.Scene {
         });
 
         this.cameras.main.fadeIn(300);
+    }
+
+    createStatBar(x, y, width, height, fillPercent, color, label) {
+        // Background bar with a slight outer glow/stroke for depth
+        const bgBar = this.add.graphics();
+        bgBar.fillStyle(0x000000, 0.6);
+        bgBar.fillRoundedRect(x, y, width, height, height / 2);
+        bgBar.lineStyle(2, color, 0.2);
+        bgBar.strokeRoundedRect(x - 1, y - 1, width + 2, height + 2, (height + 2) / 2);
+
+        // Fill bar with animation and a brighter gradient-like look
+        const fillBar = this.add.graphics();
+        const fillWidth = width * fillPercent;
+        
+        // Animate fill
+        this.tweens.add({
+            targets: { progress: 0 },
+            progress: 1,
+            duration: 800,
+            ease: 'Cubic.easeOut',
+            onUpdate: (tween, target) => {
+                fillBar.clear();
+                // Main fill
+                fillBar.fillStyle(color, 0.9);
+                fillBar.fillRoundedRect(x, y, fillWidth * target.progress, height, height / 2);
+                
+                // Brighter top highlight for 3D effect
+                fillBar.fillStyle(0xffffff, 0.3);
+                fillBar.fillRoundedRect(x + 2, y + 1, Math.max(0, (fillWidth * target.progress) - 4), height / 2.5, height / 5);
+            }
+        });
+
+        // Label - larger, brighter, and better font weight
+        this.add.text(x + width / 2, y - 4, label, {
+            fontFamily: 'Fredoka, sans-serif',
+            fontSize: '11px',
+            color: '#ffffff',
+            fontWeight: '600',
+            stroke: '#000000',
+            strokeThickness: 2
+        }).setOrigin(0.5, 1).setAlpha(0.9);
+
+        return { bgBar, fillBar };
+    }
+
+    createSelectionParticles(x, y, color) {
+        for (let i = 0; i < 15; i++) {
+            const angle = (i / 15) * Math.PI * 2;
+            const distance = Phaser.Math.Between(30, 60);
+            const particle = this.add.circle(x, y, Phaser.Math.Between(3, 6), color, 0.8);
+            
+            this.tweens.add({
+                targets: particle,
+                x: x + Math.cos(angle) * distance,
+                y: y + Math.sin(angle) * distance,
+                alpha: 0,
+                scale: 0.3,
+                duration: 400 + Math.random() * 200,
+                ease: 'Power2',
+                onComplete: () => particle.destroy()
+            });
+        }
     }
 
     drawMaleCharacter(g) {
