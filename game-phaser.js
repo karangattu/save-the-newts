@@ -224,20 +224,28 @@ async function initAudioSharing() {
     }
 
     try {
-        // Get local audio stream
-        localAudioStream = await navigator.mediaDevices.getUserMedia({ 
-            audio: { 
-                echoCancellation: true, 
-                noiseSuppression: true,
-                autoGainControl: true,
-                sampleRate: 48000
-            }, 
-            video: false 
-        });
-        
-        console.log('Microphone access granted');
+        // Reuse existing stream if possible to avoid multiple permission prompts
+        if (!localAudioStream || !localAudioStream.active) {
+            console.log('Requesting microphone access...');
+            localAudioStream = await navigator.mediaDevices.getUserMedia({ 
+                audio: { 
+                    echoCancellation: true, 
+                    noiseSuppression: true,
+                    autoGainControl: true,
+                    sampleRate: 48000
+                }, 
+                video: false 
+            });
+            console.log('Microphone access granted');
+        } else {
+            console.log('Reusing existing microphone stream');
+        }
         
         // Create peer connection
+        // Close existing one if it exists to avoid leaks
+        if (audioPeerConnection) {
+            audioPeerConnection.close();
+        }
         audioPeerConnection = new RTCPeerConnection(WEBRTC_CONFIG);
         
         // Add local stream tracks to peer connection
@@ -1537,11 +1545,28 @@ class GameScene extends Phaser.Scene {
         this.createHUD();
         this.createControls();
 
-        this.scale.on('resize', () => {
+        // Track dimensions for resize logic
+        this.lastWidth = this.scale.width;
+        this.lastHeight = this.scale.height;
+
+        this.scale.on('resize', (gameSize) => {
             // Don't restart during game over to preserve the name input form
-            if (!this.gameOver) {
-                this.scene.restart();
+            if (this.gameOver) return;
+
+            // In multiplayer, browser bars (like the microphone permission bar) can trigger 
+            // resize events. Restarting the scene breaks the real-time sync.
+            // We ignore small height changes usually caused by browser UI elements.
+            const heightDiff = Math.abs(gameSize.height - this.lastHeight);
+            const widthDiff = Math.abs(gameSize.width - this.lastWidth);
+            
+            if (this.isMultiplayer && heightDiff < 120 && widthDiff < 20) {
+                console.log('Ignoring small resize (likely browser UI change) during multiplayer');
+                return;
             }
+
+            this.lastWidth = gameSize.width;
+            this.lastHeight = gameSize.height;
+            this.scene.restart();
         });
 
         // Only host spawns cars and newts in multiplayer
@@ -1985,6 +2010,12 @@ class GameScene extends Phaser.Scene {
     setupMultiplayerSync() {
         if (!supabaseClient || !roomCode) return;
         
+        // Cleanup old channel if exists (e.g. on scene restart)
+        if (multiplayerChannel) {
+            console.log('Cleaning up old channel before restart');
+            supabaseClient.removeChannel(multiplayerChannel);
+        }
+
         // Create broadcast channel for real-time sync
         multiplayerChannel = supabaseClient.channel(`game-${roomCode}`, {
             config: {
@@ -2643,7 +2674,8 @@ class GameScene extends Phaser.Scene {
         if (this.gameOver || this.partnerDisconnected) return;
         
         const timeSinceUpdate = Date.now() - lastRemoteUpdate;
-        if (timeSinceUpdate > 10000) { // 10 seconds timeout
+        // Increased timeout to 30s to allow for browser mic prompts and scene restarts
+        if (timeSinceUpdate > 30000) { 
             this.handlePartnerDisconnect();
         }
     }
