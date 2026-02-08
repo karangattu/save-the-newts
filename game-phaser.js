@@ -74,6 +74,13 @@ let audioConnectionTimeoutId = null;
 const MAX_ICE_QUEUE = 50;
 const AUDIO_CONNECTION_TIMEOUT = 15000; // 15 seconds
 let globalClickListenerAdded = false;
+let audioRetryCount = 0;
+const MAX_AUDIO_RETRIES = 5;
+const BASE_RETRY_DELAY = 1000;
+let audioRetryTimeoutId = null;
+let audioQualityMonitorInterval = null;
+let connectionQuality = 'unknown'; // unknown, excellent, good, fair, poor
+let isReconnecting = false;
 
 // Generate unique player ID
 function generatePlayerId() {
@@ -231,15 +238,46 @@ function cleanupMultiplayerState() {
 }
 
 // ===== AUDIO SHARING FUNCTIONS =====
+// Detect browser and platform
+const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+const isSafari = /Safari/.test(navigator.userAgent) && !/Chrome/.test(navigator.userAgent);
+const isIOSSafari = isIOS && isSafari;
+const isFirefox = /Firefox/.test(navigator.userAgent);
+const isChrome = /Chrome/.test(navigator.userAgent) && !isSafari;
+
 const WEBRTC_CONFIG = {
     iceServers: [
+        // STUN servers for NAT discovery
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' },
         { urls: 'stun:stun2.l.google.com:19302' },
-        { urls: 'stun:stun3.l.google.com:19302' },
-        { urls: 'stun:stun4.l.google.com:19302' }
-    ]
+        // Public TURN servers as fallback for symmetric NAT
+        { 
+            urls: 'turn:openrelay.metered.ca:80',
+            username: 'openrelayproject',
+            credential: 'openrelayproject'
+        },
+        { 
+            urls: 'turn:openrelay.metered.ca:443',
+            username: 'openrelayproject',
+            credential: 'openrelayproject'
+        }
+    ],
+    iceTransportPolicy: 'all', // Try all connection methods
+    bundlePolicy: 'max-bundle', // Optimize bandwidth
+    rtcpMuxPolicy: 'require' // Multiplex RTP/RTCP for efficiency
 };
+
+// Audio monitoring state
+let audioLevelCheckInterval = null;
+let lastAudioLevel = 0;
+let silenceDetectionCount = 0;
+const SILENCE_THRESHOLD = 0.01; // Audio level threshold
+const MAX_SILENCE_CHECKS = 10; // 10 seconds of silence triggers warning
+
+function calculateBackoffDelay(retryCount) {
+    return BASE_RETRY_DELAY * Math.pow(2, retryCount);
+}
 
 async function initAudioSharing() {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -251,37 +289,84 @@ async function initAudioSharing() {
     try {
         // Reuse existing stream if possible to avoid multiple permission prompts
         if (!localAudioStream || !localAudioStream.active) {
-            console.log('Requesting microphone access...');
+            console.log('Requesting microphone access (attempt', audioRetryCount + 1, ')...');
             try {
-                localAudioStream = await navigator.mediaDevices.getUserMedia({ 
-                    audio: { 
-                        echoCancellation: true, 
-                        noiseSuppression: true,
-                        autoGainControl: true,
-                        sampleRate: 48000
-                    }, 
-                    video: false 
-                });
+                // Browser-specific audio constraints
+                let audioConstraints;
+                if (isIOSSafari) {
+                    // iOS Safari has limited constraint support
+                    audioConstraints = { audio: true, video: false };
+                    console.log('Using basic audio constraints for iOS Safari');
+                } else if (isFirefox) {
+                    // Firefox prefers these settings
+                    audioConstraints = {
+                        audio: {
+                            echoCancellation: true,
+                            noiseSuppression: true,
+                            autoGainControl: true
+                        },
+                        video: false
+                    };
+                } else {
+                    // Chrome and others
+                    audioConstraints = {
+                        audio: {
+                            echoCancellation: true,
+                            noiseSuppression: true,
+                            autoGainControl: true,
+                            sampleRate: 48000
+                        },
+                        video: false
+                    };
+                }
+                
+                localAudioStream = await navigator.mediaDevices.getUserMedia(audioConstraints);
                 console.log('Microphone access granted');
+                audioRetryCount = 0; // Reset on success
             } catch (permError) {
                 // Handle specific permission errors
                 if (permError.name === 'NotAllowedError') {
                     console.warn('User denied microphone permission');
-                    showAudioError('Microphone access denied');
+                    showAudioError('Microphone access denied. Check browser permissions.');
+                    audioRetryCount = 0; // Don't retry if user explicitly denied
+                    return false;
                 } else if (permError.name === 'NotFoundError') {
                     console.warn('No microphone found');
-                    showAudioError('No microphone device found');
+                    showAudioError('No microphone device found on this device.');
+                    audioRetryCount = 0;
+                    return false;
                 } else if (permError.name === 'NotSupportedError') {
                     console.warn('getUserMedia not supported');
-                    showAudioError('Audio not supported on this device');
+                    showAudioError('Audio not supported on this browser.');
+                    audioRetryCount = 0;
+                    return false;
+                } else if (permError.name === 'AbortError' || permError.name === 'NotReadableError') {
+                    // Temporary errors - can retry
+                    console.warn('Microphone access interrupted:', permError);
+                    if (audioRetryCount < MAX_AUDIO_RETRIES) {
+                        const delayMs = calculateBackoffDelay(audioRetryCount);
+                        console.log(`Retrying audio init in ${delayMs}ms (${audioRetryCount + 1}/${MAX_AUDIO_RETRIES})`);
+                        audioRetryCount++;
+                        showAudioError(`Audio interrupted. Retrying (${audioRetryCount}/${MAX_AUDIO_RETRIES})...`);
+                        
+                        audioRetryTimeoutId = setTimeout(() => {
+                            initAudioSharing();
+                        }, delayMs);
+                        return false;
+                    } else {
+                        showAudioError('Audio initialization failed after multiple attempts.');
+                        audioRetryCount = 0;
+                        return false;
+                    }
                 } else {
                     console.error('Microphone error:', permError);
-                    showAudioError('Microphone access error: ' + permError.message);
+                    showAudioError('Microphone error: ' + permError.message);
+                    return false;
                 }
-                return false;
             }
         } else {
             console.log('Reusing existing microphone stream');
+            audioRetryCount = 0;
         }
         
         // Create peer connection
@@ -316,25 +401,50 @@ async function initAudioSharing() {
             remoteAudio.id = 'remote-audio';
             remoteAudio.srcObject = remoteAudioStream;
             remoteAudio.autoplay = true;
-            remoteAudio.playsInline = true; // For mobile/safari
-            remoteAudio.volume = 1.0; // Max volume
+            remoteAudio.playsInline = true;
+            remoteAudio.volume = 1.0;
+            
+            // iOS Safari specific attributes
+            if (isIOSSafari) {
+                remoteAudio.setAttribute('webkit-playsinline', 'true');
+                remoteAudio.setAttribute('playsinline', 'true');
+            }
+            
             document.body.appendChild(remoteAudio);
+            console.log('Remote audio element created');
             
-            // Log for debugging
-            console.log('Remote audio element created and playing');
+            // Browser-specific playback handling
+            const playAudio = () => {
+                remoteAudio.play().then(() => {
+                    console.log('Remote audio started successfully');
+                    // Start monitoring audio levels
+                    startAudioLevelMonitoring(remoteAudioStream);
+                }).catch(err => console.error('Play failed:', err));
+            };
             
-            // Try to play explicitly (handles some browser restrictions better)
-            remoteAudio.play().catch(e => {
-                console.warn('Autoplay prevented. User interaction required:', e);
-                // We'll retry on next click
-                const retryPlay = () => {
-                    remoteAudio.play().then(() => {
-                        console.log('Remote audio started after click');
-                        window.removeEventListener('click', retryPlay);
-                    }).catch(err => console.error('Play retry failed:', err));
+            if (isIOSSafari) {
+                // iOS Safari needs delay and user interaction
+                setTimeout(() => {
+                    playAudio();
+                }, 500);
+                
+                const iosHandler = () => {
+                    playAudio();
+                    document.removeEventListener('touchend', iosHandler);
+                    document.removeEventListener('click', iosHandler);
                 };
-                window.addEventListener('click', retryPlay);
-            });
+                document.addEventListener('touchend', iosHandler);
+                document.addEventListener('click', iosHandler);
+            } else {
+                // Desktop browsers
+                playAudio();
+                
+                const retryHandler = () => {
+                    playAudio();
+                    window.removeEventListener('click', retryHandler);
+                };
+                window.addEventListener('click', retryHandler);
+            }
         };
         
         // Handle ICE candidates
@@ -351,41 +461,118 @@ async function initAudioSharing() {
             }
         };
         
-        // Handle connection state changes
+        // Handle connection state changes with reconnection logic
         audioPeerConnection.onconnectionstatechange = () => {
-            console.log('Audio connection state:', audioPeerConnection.connectionState);
+            const state = audioPeerConnection.connectionState;
+            console.log('Audio connection state:', state);
             
-            if (audioPeerConnection.connectionState === 'connected') {
-                // Connection successful, clear timeout
+            if (state === 'connected') {
+                audioRetryCount = 0; // Reset retry count
+                isReconnecting = false;
+                connectionQuality = 'good';
+                
                 if (audioConnectionTimeoutId) {
                     clearTimeout(audioConnectionTimeoutId);
                     audioConnectionTimeoutId = null;
                 }
+                
                 // Validate audio tracks
                 validateAudioConnection();
-            } else if (audioPeerConnection.connectionState === 'failed' || 
-                       audioPeerConnection.connectionState === 'closed') {
-                // Clean up on failure
+                
+                // Start quality monitoring
+                startConnectionQualityMonitoring();
+                
+                console.log('Audio connection established successfully');
+            } else if (state === 'failed') {
+                // Connection failed - attempt reconnection
+                connectionQuality = 'poor';
+                
+                if (!isReconnecting && audioRetryCount < MAX_AUDIO_RETRIES) {
+                    isReconnecting = true;
+                    const delayMs = calculateBackoffDelay(audioRetryCount);
+                    console.error(`Audio connection failed. Reconnecting in ${delayMs}ms (${audioRetryCount + 1}/${MAX_AUDIO_RETRIES})`);
+                    audioRetryCount++;
+                    showAudioError(`Connection lost. Reconnecting (${audioRetryCount}/${MAX_AUDIO_RETRIES})...`);
+                    
+                    audioRetryTimeoutId = setTimeout(async () => {
+                        stopAudioSharing();
+                        const success = await initAudioSharing();
+                        if (success && multiplayerChannel) {
+                            // Re-initiate signaling
+                            if (isHost) {
+                                setTimeout(() => createAudioOffer(), 1000);
+                            } else {
+                                multiplayerChannel.send({
+                                    type: 'broadcast',
+                                    event: 'audio_request',
+                                    payload: { playerId: playerId }
+                                });
+                            }
+                        }
+                        isReconnecting = false;
+                    }, delayMs);
+                } else if (audioRetryCount >= MAX_AUDIO_RETRIES) {
+                    console.error('Audio connection failed after maximum retries');
+                    showAudioError('Audio connection lost. Cannot reconnect.');
+                    audioRetryCount = 0;
+                    isReconnecting = false;
+                }
+            } else if (state === 'disconnected') {
+                connectionQuality = 'fair';
+                console.warn('Audio connection disconnected');
+                // Give it a moment to reconnect on its own
+                setTimeout(() => {
+                    if (audioPeerConnection && audioPeerConnection.connectionState === 'disconnected') {
+                        console.log('Connection still disconnected, triggering reconnection');
+                        audioPeerConnection.dispatchEvent(new Event('connectionstatechange'));
+                    }
+                }, 3000);
+            } else if (state === 'closed') {
                 if (audioConnectionTimeoutId) {
                     clearTimeout(audioConnectionTimeoutId);
                 }
+                stopConnectionQualityMonitoring();
+                stopAudioLevelMonitoring();
             }
             
             updateAudioStatusIndicator();
         };
         
+        // Handle negotiation needed (for track changes)
+        audioPeerConnection.onnegotiationneeded = async () => {
+            if (!isHost) return; // Only host initiates renegotiation
+            console.log('Renegotiation needed');
+            try {
+                await createAudioOffer();
+            } catch (error) {
+                console.error('Renegotiation failed:', error);
+            }
+        };
+        
         isAudioEnabled = true;
         setupGlobalAudioResumeListener();
 
-        // Set up connection timeout
+        // Set up connection timeout with retry logic
         audioConnectionStartTime = Date.now();
         audioConnectionTimeoutId = setTimeout(() => {
             if (audioPeerConnection && audioPeerConnection.connectionState === 'connecting') {
                 console.error('Audio connection timeout after ' + AUDIO_CONNECTION_TIMEOUT + 'ms');
-                showAudioError('Audio connection timeout');
-                stopAudioSharing();
-                isAudioEnabled = false;
-                updateAudioStatusIndicator();
+                
+                if (audioRetryCount < MAX_AUDIO_RETRIES) {
+                    const delayMs = calculateBackoffDelay(audioRetryCount);
+                    audioRetryCount++;
+                    showAudioError(`Connection timeout. Retrying (${audioRetryCount}/${MAX_AUDIO_RETRIES})...`);
+                    
+                    audioRetryTimeoutId = setTimeout(() => {
+                        stopAudioSharing();
+                        initAudioSharing();
+                    }, delayMs);
+                } else {
+                    showAudioError('Connection timeout after multiple attempts.');
+                    stopAudioSharing();
+                    isAudioEnabled = false;
+                    audioRetryCount = 0;
+                }
             }
         }, AUDIO_CONNECTION_TIMEOUT);
 
@@ -533,11 +720,20 @@ async function processIceCandidatesQueue() {
 }
 
 function stopAudioSharing() {
-    // Clear connection timeout
+    // Clear all timeouts
+    if (audioRetryTimeoutId) {
+        clearTimeout(audioRetryTimeoutId);
+        audioRetryTimeoutId = null;
+    }
+    
     if (audioConnectionTimeoutId) {
         clearTimeout(audioConnectionTimeoutId);
         audioConnectionTimeoutId = null;
     }
+    
+    // Stop monitoring
+    stopConnectionQualityMonitoring();
+    stopAudioLevelMonitoring();
     
     // Stop local stream
     if (localAudioStream) {
@@ -551,6 +747,7 @@ function stopAudioSharing() {
         audioPeerConnection.ontrack = null;
         audioPeerConnection.onicecandidate = null;
         audioPeerConnection.onconnectionstatechange = null;
+        audioPeerConnection.onnegotiationneeded = null;
         audioPeerConnection.close();
         audioPeerConnection = null;
     }
@@ -567,6 +764,8 @@ function stopAudioSharing() {
     audioSignalingQueue = [];
     audioIceCandidatesQueue = [];
     audioConnectionStartTime = null;
+    connectionQuality = 'unknown';
+    isReconnecting = false;
 
     isAudioEnabled = false;
     isMuted = false;
@@ -645,6 +844,109 @@ function startAudioStatsMonitoring() {
             clearInterval(statsInterval);
         }
     }, 5000);
+}
+
+function startConnectionQualityMonitoring() {
+    if (audioQualityMonitorInterval) return;
+    
+    audioQualityMonitorInterval = setInterval(async () => {
+        if (!audioPeerConnection) {
+            stopConnectionQualityMonitoring();
+            return;
+        }
+        
+        try {
+            const stats = await audioPeerConnection.getStats();
+            let packetsLost = 0;
+            let packetsReceived = 0;
+            let jitter = 0;
+            
+            stats.forEach(report => {
+                if (report.type === 'inbound-rtp' && report.mediaType === 'audio') {
+                    packetsLost = report.packetsLost || 0;
+                    packetsReceived = report.packetsReceived || 0;
+                    jitter = report.jitter || 0;
+                }
+            });
+            
+            // Calculate packet loss percentage
+            const totalPackets = packetsReceived + packetsLost;
+            const lossRate = totalPackets > 0 ? (packetsLost / totalPackets) * 100 : 0;
+            
+            // Determine quality
+            if (lossRate < 1 && jitter < 0.03) {
+                connectionQuality = 'excellent';
+            } else if (lossRate < 3 && jitter < 0.05) {
+                connectionQuality = 'good';
+            } else if (lossRate < 5 && jitter < 0.1) {
+                connectionQuality = 'fair';
+            } else {
+                connectionQuality = 'poor';
+                if (lossRate > 10) {
+                    console.warn('Poor audio quality detected:', lossRate.toFixed(1), '% packet loss');
+                }
+            }
+            
+            updateAudioStatusIndicator();
+        } catch (error) {
+            console.warn('Error monitoring connection quality:', error);
+        }
+    }, 2000); // Check every 2 seconds
+}
+
+function stopConnectionQualityMonitoring() {
+    if (audioQualityMonitorInterval) {
+        clearInterval(audioQualityMonitorInterval);
+        audioQualityMonitorInterval = null;
+    }
+}
+
+function startAudioLevelMonitoring(stream) {
+    if (audioLevelCheckInterval || !stream) return;
+    
+    try {
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        const analyser = audioContext.createAnalyser();
+        const microphone = audioContext.createMediaStreamSource(stream);
+        const dataArray = new Uint8Array(analyser.frequencyBinCount);
+        
+        microphone.connect(analyser);
+        analyser.fftSize = 256;
+        
+        audioLevelCheckInterval = setInterval(() => {
+            analyser.getByteFrequencyData(dataArray);
+            
+            // Calculate average audio level
+            const average = dataArray.reduce((a, b) => a + b) / dataArray.length;
+            const normalizedLevel = average / 255;
+            
+            lastAudioLevel = normalizedLevel;
+            
+            // Detect prolonged silence
+            if (normalizedLevel < SILENCE_THRESHOLD) {
+                silenceDetectionCount++;
+                if (silenceDetectionCount > MAX_SILENCE_CHECKS) {
+                    console.warn('No audio detected for', MAX_SILENCE_CHECKS, 'seconds');
+                    showAudioError('No audio detected. Check if partner is muted.');
+                    silenceDetectionCount = 0; // Reset to avoid spam
+                }
+            } else {
+                silenceDetectionCount = 0; // Reset when audio detected
+            }
+        }, 1000); // Check every second
+        
+    } catch (error) {
+        console.warn('Could not start audio level monitoring:', error);
+    }
+}
+
+function stopAudioLevelMonitoring() {
+    if (audioLevelCheckInterval) {
+        clearInterval(audioLevelCheckInterval);
+        audioLevelCheckInterval = null;
+    }
+    lastAudioLevel = 0;
+    silenceDetectionCount = 0;
 }
 
 // Character-specific stats
