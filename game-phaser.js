@@ -2611,6 +2611,10 @@ class GameScene extends Phaser.Scene {
     }
 
     createRemotePlayer() {
+        console.log('Creating remote player...');
+        console.log('Remote character:', remoteCharacter);
+        console.log('Is host:', isHost);
+        
         const { width } = this.scale;
         // Remote player starts on opposite side
         const startX = isHost ? width / 2 + 60 : width / 2 - 60;
@@ -2618,6 +2622,8 @@ class GameScene extends Phaser.Scene {
         this.remotePlayer = this.add.container(startX, this.botSafe + 60);
         this.remotePlayer.setDepth(49); // Slightly below local player
         this.remotePlayer.setScale(this.layoutScale);
+        // Start semi-transparent until we receive first update
+        this.remotePlayer.setAlpha(0.5);
         
         const g = this.add.graphics();
         
@@ -2635,6 +2641,8 @@ class GameScene extends Phaser.Scene {
         const remoteStats = CHARACTER_STATS[remoteCharacter] || CHARACTER_STATS['male'];
         this.remotePlayer.carryCapacity = remoteStats.carryCapacity;
         this.remotePlayer.carried = [];
+        
+        console.log('✓ Remote player created at position:', startX, this.botSafe + 60);
         
         // Add P2 label above remote player
         const label = this.add.text(0, -55, 'P2', {
@@ -2678,6 +2686,12 @@ class GameScene extends Phaser.Scene {
         // Listen for remote player updates
         multiplayerChannel.on('broadcast', { event: 'player_update' }, (payload) => {
             if (payload.payload.playerId !== playerId) {
+                // Log only occasionally to avoid spam (every 20th update = once per second at 20Hz)
+                if (!this._updateCounter) this._updateCounter = 0;
+                this._updateCounter++;
+                if (this._updateCounter % 20 === 0) {
+                    console.log('← Received player_update from:', payload.payload.playerId.substring(0, 8) + '...');
+                }
                 this.handleRemotePlayerUpdate(payload.payload);
             }
         });
@@ -2768,10 +2782,56 @@ class GameScene extends Phaser.Scene {
             }
         });
 
+        // Listen for player ready announcements
+        multiplayerChannel.on('broadcast', { event: 'player_ready' }, (payload) => {
+            if (payload.payload.playerId !== playerId) {
+                console.log('Partner is ready:', payload.payload.playerId);
+                console.log('Partner character:', payload.payload.character);
+                
+                // Update remote character if we didn't know it yet
+                if (!remoteCharacter && payload.payload.character) {
+                    remoteCharacter = payload.payload.character;
+                    console.log('Updated remoteCharacter from ready announcement:', remoteCharacter);
+                    
+                    // Recreate remote player with correct character
+                    if (this.remotePlayer) {
+                        this.remotePlayer.destroy();
+                    }
+                    this.createRemotePlayer();
+                }
+                
+                // Make remote player visible
+                if (this.remotePlayer) {
+                    this.remotePlayer.setAlpha(1.0);
+                    console.log('Remote player made visible');
+                }
+            }
+        });
+
         multiplayerChannel.subscribe((status) => {
             console.log('Multiplayer channel status:', status);
             if (status === 'SUBSCRIBED') {
-                // Start broadcasting position
+                console.log('✓ Subscribed to multiplayer channel');
+                console.log('Player ID:', playerId);
+                console.log('Selected character:', selectedCharacter);
+                console.log('Remote character:', remoteCharacter);
+                
+                // Announce ourselves to the other player
+                multiplayerChannel.send({
+                    type: 'broadcast',
+                    event: 'player_ready',
+                    payload: {
+                        playerId: playerId,
+                        character: selectedCharacter,
+                        isHost: isHost
+                    }
+                });
+                console.log('→ Sent player_ready announcement');
+                
+                // Immediately broadcast initial position
+                this.broadcastPlayerState();
+                
+                // Start broadcasting position continuously
                 this.broadcastTimer = this.time.addEvent({
                     delay: 50, // 20Hz broadcast rate
                     callback: this.broadcastPlayerState,
@@ -2793,6 +2853,11 @@ class GameScene extends Phaser.Scene {
 
     broadcastPlayerState() {
         if (!multiplayerChannel || this.gameOver) return;
+        
+        if (!this.player) {
+            console.warn('Cannot broadcast - player object missing');
+            return;
+        }
         
         const w = this.scale.width;
         const h = this.scale.height;
@@ -2866,7 +2931,16 @@ class GameScene extends Phaser.Scene {
     }
 
     handleRemotePlayerUpdate(data) {
-        if (!this.remotePlayer || this.gameOver) return;
+        if (!this.remotePlayer || this.gameOver) {
+            console.warn('Cannot update remote player - player object missing or game over');
+            return;
+        }
+        
+        // Make remote player fully visible on first update
+        if (this.remotePlayer.alpha < 1) {
+            console.log('First remote player update received - making fully visible');
+            this.remotePlayer.setAlpha(1.0);
+        }
         
         lastRemoteUpdate = Date.now();
         
