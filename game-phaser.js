@@ -770,21 +770,6 @@ async function handleAudioIceCandidate(data) {
         console.error('✗ Error adding ICE candidate:', error);
     }
 }
-    
-    // Candidates can only be added AFTER setRemoteDescription
-    if (audioPeerConnection.remoteDescription && audioPeerConnection.remoteDescription.type) {
-        try {
-            await audioPeerConnection.addIceCandidate(data.candidate);
-        } catch (error) {
-            console.error('Error adding ICE candidate:', error);
-        }
-    } else {
-        console.log('Queuing ICE candidate - remote description not set');
-        if (audioIceCandidatesQueue.length < MAX_ICE_QUEUE) {
-            audioIceCandidatesQueue.push(data.candidate);
-        }
-    }
-}
 
 function processAudioSignalingQueue() {
     console.log('Processing audio signaling queue:', audioSignalingQueue.length);
