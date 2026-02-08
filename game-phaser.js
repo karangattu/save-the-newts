@@ -69,6 +69,11 @@ let isAudioEnabled = false;
 let isMuted = false;
 let audioSignalingQueue = [];
 let audioIceCandidatesQueue = [];
+let audioConnectionStartTime = null;
+let audioConnectionTimeoutId = null;
+const MAX_ICE_QUEUE = 50;
+const AUDIO_CONNECTION_TIMEOUT = 15000; // 15 seconds
+let globalClickListenerAdded = false;
 
 // Generate unique player ID
 function generatePlayerId() {
@@ -81,13 +86,23 @@ function generateRoomCode() {
 }
 
 // Global click handler to help unlock audio on restricted browsers
-window.addEventListener('click', () => {
-    // Attempt to resume any suspended audio elements or audio context
-    const remoteAudio = document.getElementById('remote-audio');
-    if (remoteAudio && remoteAudio.paused) {
-        remoteAudio.play().catch(() => {});
+function setupGlobalAudioResumeListener() {
+    if (!globalClickListenerAdded) {
+        const handler = () => {
+            const remoteAudio = document.getElementById('remote-audio');
+            if (remoteAudio && remoteAudio.paused) {
+                remoteAudio.play().catch(() => {});
+            }
+        };
+        window.addEventListener('click', handler);
+        globalClickListenerAdded = true;
     }
-}, { once: false });
+}
+
+function cleanupGlobalAudioResumeListener() {
+    // Note: Cannot remove if added with anonymous function in original code
+    // This can be improved by storing reference
+}
 
 // Room management functions
 async function createRoom(hostCharacter) {
@@ -229,6 +244,7 @@ const WEBRTC_CONFIG = {
 async function initAudioSharing() {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         console.warn('WebRTC not supported in this browser');
+        showAudioError('WebRTC not supported in this browser');
         return false;
     }
 
@@ -236,16 +252,34 @@ async function initAudioSharing() {
         // Reuse existing stream if possible to avoid multiple permission prompts
         if (!localAudioStream || !localAudioStream.active) {
             console.log('Requesting microphone access...');
-            localAudioStream = await navigator.mediaDevices.getUserMedia({ 
-                audio: { 
-                    echoCancellation: true, 
-                    noiseSuppression: true,
-                    autoGainControl: true,
-                    sampleRate: 48000
-                }, 
-                video: false 
-            });
-            console.log('Microphone access granted');
+            try {
+                localAudioStream = await navigator.mediaDevices.getUserMedia({ 
+                    audio: { 
+                        echoCancellation: true, 
+                        noiseSuppression: true,
+                        autoGainControl: true,
+                        sampleRate: 48000
+                    }, 
+                    video: false 
+                });
+                console.log('Microphone access granted');
+            } catch (permError) {
+                // Handle specific permission errors
+                if (permError.name === 'NotAllowedError') {
+                    console.warn('User denied microphone permission');
+                    showAudioError('Microphone access denied');
+                } else if (permError.name === 'NotFoundError') {
+                    console.warn('No microphone found');
+                    showAudioError('No microphone device found');
+                } else if (permError.name === 'NotSupportedError') {
+                    console.warn('getUserMedia not supported');
+                    showAudioError('Audio not supported on this device');
+                } else {
+                    console.error('Microphone error:', permError);
+                    showAudioError('Microphone access error: ' + permError.message);
+                }
+                return false;
+            }
         } else {
             console.log('Reusing existing microphone stream');
         }
@@ -320,10 +354,40 @@ async function initAudioSharing() {
         // Handle connection state changes
         audioPeerConnection.onconnectionstatechange = () => {
             console.log('Audio connection state:', audioPeerConnection.connectionState);
+            
+            if (audioPeerConnection.connectionState === 'connected') {
+                // Connection successful, clear timeout
+                if (audioConnectionTimeoutId) {
+                    clearTimeout(audioConnectionTimeoutId);
+                    audioConnectionTimeoutId = null;
+                }
+                // Validate audio tracks
+                validateAudioConnection();
+            } else if (audioPeerConnection.connectionState === 'failed' || 
+                       audioPeerConnection.connectionState === 'closed') {
+                // Clean up on failure
+                if (audioConnectionTimeoutId) {
+                    clearTimeout(audioConnectionTimeoutId);
+                }
+            }
+            
             updateAudioStatusIndicator();
         };
         
         isAudioEnabled = true;
+        setupGlobalAudioResumeListener();
+
+        // Set up connection timeout
+        audioConnectionStartTime = Date.now();
+        audioConnectionTimeoutId = setTimeout(() => {
+            if (audioPeerConnection && audioPeerConnection.connectionState === 'connecting') {
+                console.error('Audio connection timeout after ' + AUDIO_CONNECTION_TIMEOUT + 'ms');
+                showAudioError('Audio connection timeout');
+                stopAudioSharing();
+                isAudioEnabled = false;
+                updateAudioStatusIndicator();
+            }
+        }, AUDIO_CONNECTION_TIMEOUT);
 
         // Process any queued signaling messages
         processAudioSignalingQueue();
@@ -370,7 +434,7 @@ async function handleAudioOffer(data) {
     }
     
     try {
-        await audioPeerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
+        await audioPeerConnection.setRemoteDescription(data.offer);
         const answer = await audioPeerConnection.createAnswer({
             offerToReceiveAudio: true,
             offerToReceiveVideo: false
@@ -404,7 +468,7 @@ async function handleAudioAnswer(data) {
     }
     
     try {
-        await audioPeerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
+        await audioPeerConnection.setRemoteDescription(data.answer);
         console.log('Audio answer received and set');
         
         // Now that remote description is set, process any queued ICE candidates
@@ -417,20 +481,29 @@ async function handleAudioAnswer(data) {
 async function handleAudioIceCandidate(data) {
     if (!audioPeerConnection) {
         console.log('Queuing ICE candidate - peer connection not ready');
-        audioIceCandidatesQueue.push(data.candidate);
+        // Respect queue size limit
+        if (audioIceCandidatesQueue.length < MAX_ICE_QUEUE) {
+            audioIceCandidatesQueue.push(data.candidate);
+        } else {
+            console.warn('ICE candidate queue full, dropping oldest');
+            audioIceCandidatesQueue.shift();
+            audioIceCandidatesQueue.push(data.candidate);
+        }
         return;
     }
     
     // Candidates can only be added AFTER setRemoteDescription
     if (audioPeerConnection.remoteDescription && audioPeerConnection.remoteDescription.type) {
         try {
-            await audioPeerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
+            await audioPeerConnection.addIceCandidate(data.candidate);
         } catch (error) {
             console.error('Error adding ICE candidate:', error);
         }
     } else {
         console.log('Queuing ICE candidate - remote description not set');
-        audioIceCandidatesQueue.push(data.candidate);
+        if (audioIceCandidatesQueue.length < MAX_ICE_QUEUE) {
+            audioIceCandidatesQueue.push(data.candidate);
+        }
     }
 }
 
@@ -447,11 +520,12 @@ function processAudioSignalingQueue() {
 }
 
 async function processIceCandidatesQueue() {
+    if (!audioPeerConnection) return;
     console.log('Processing ICE candidates queue:', audioIceCandidatesQueue.length);
     while (audioIceCandidatesQueue.length > 0) {
         const candidate = audioIceCandidatesQueue.shift();
         try {
-            await audioPeerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+            await audioPeerConnection.addIceCandidate(candidate);
         } catch (error) {
             console.error('Error processing queued ICE candidate:', error);
         }
@@ -459,6 +533,12 @@ async function processIceCandidatesQueue() {
 }
 
 function stopAudioSharing() {
+    // Clear connection timeout
+    if (audioConnectionTimeoutId) {
+        clearTimeout(audioConnectionTimeoutId);
+        audioConnectionTimeoutId = null;
+    }
+    
     // Stop local stream
     if (localAudioStream) {
         localAudioStream.getTracks().forEach(track => track.stop());
@@ -467,19 +547,26 @@ function stopAudioSharing() {
     
     // Close peer connection
     if (audioPeerConnection) {
+        // Remove event handlers to prevent leaks
+        audioPeerConnection.ontrack = null;
+        audioPeerConnection.onicecandidate = null;
+        audioPeerConnection.onconnectionstatechange = null;
         audioPeerConnection.close();
         audioPeerConnection = null;
     }
     
-    // Remove remote audio element
+    // Remove remote audio element safely
     const remoteAudio = document.getElementById('remote-audio');
     if (remoteAudio) {
+        remoteAudio.srcObject = null;
+        remoteAudio.pause();
         remoteAudio.remove();
     }
     
     // Clear queues
     audioSignalingQueue = [];
     audioIceCandidatesQueue = [];
+    audioConnectionStartTime = null;
 
     isAudioEnabled = false;
     isMuted = false;
@@ -506,6 +593,58 @@ function updateAudioStatusIndicator() {
         } 
     });
     window.dispatchEvent(event);
+}
+
+function validateAudioConnection() {
+    if (!audioPeerConnection) return false;
+    
+    // Check for actual audio tracks
+    const receivers = audioPeerConnection.getReceivers();
+    const audioTracks = receivers.filter(r => r.track && r.track.kind === 'audio');
+    
+    if (audioTracks.length === 0) {
+        console.warn('No audio tracks received from peer');
+        return false;
+    }
+    
+    // Check if tracks are enabled
+    const activeTracks = audioTracks.filter(t => t.track.enabled);
+    console.log('Active audio tracks:', activeTracks.length);
+    return activeTracks.length > 0;
+}
+
+function showAudioError(message) {
+    console.error('Audio Error:', message);
+    // Dispatch event for UI to show error
+    const event = new CustomEvent('audioError', { detail: { message } });
+    window.dispatchEvent(event);
+}
+
+function startAudioStatsMonitoring() {
+    if (!audioPeerConnection) return;
+    
+    const statsInterval = setInterval(async () => {
+        if (!audioPeerConnection) {
+            clearInterval(statsInterval);
+            return;
+        }
+        
+        try {
+            const stats = await audioPeerConnection.getStats();
+            stats.forEach(report => {
+                if (report.type === 'inbound-rtp' && report.mediaType === 'audio') {
+                    if (report.bytesReceived > 0) {
+                        console.log('Audio RTP - Bytes received:', report.bytesReceived, 
+                                  'Packets lost:', report.packetsLost || 0,
+                                  'Jitter:', (report.jitter || 0).toFixed(4));
+                    }
+                }
+            });
+        } catch (error) {
+            console.warn('Error getting audio stats:', error);
+            clearInterval(statsInterval);
+        }
+    }, 5000);
 }
 
 // Character-specific stats
@@ -747,14 +886,16 @@ class SplashScene extends Phaser.Scene {
         this.add.rectangle(0, 0, width, height, 0x000000).setOrigin(0);
 
         // --- POSTER ---
-        const poster = this.add.image(width / 2, height / 2, 'poster');
-        const scale = Math.min(width / poster.width, height / poster.height);
-        poster.setScale(isCompact ? scale * 0.92 : scale);
-        poster.setAlpha(0);
+        if (this.textures.exists('poster')) {
+            const poster = this.add.image(width / 2, height / 2, 'poster');
+            const scale = Math.min(width / poster.width, height / poster.height);
+            poster.setScale(isCompact ? scale * 0.92 : scale);
+            poster.setAlpha(0);
 
-        this.tweens.add({
-            targets: poster, alpha: 1, duration: 800, ease: 'Power2'
-        });
+            this.tweens.add({
+                targets: poster, alpha: 1, duration: 800, ease: 'Power2'
+            });
+        }
 
         // --- TUTORIAL VIDEO OVERLAY (Hidden initially) ---
         // Create HTML video element for the tutorial
@@ -837,10 +978,13 @@ class SplashScene extends Phaser.Scene {
         }).setOrigin(0.5).setDepth(20);
 
         getLeaderboard().then(scores => {
-            if (this.scene.isActive('SplashScene')) {
-                const topScore = scores.length > 0 ? scores[0].score : 0;
+            // Check if scene and highScoreText still exist to avoid console errors or crashes
+            if (this.scene && this.scene.isActive('SplashScene') && this.highScoreText && this.highScoreText.active) {
+                const topScore = scores && scores.length > 0 ? scores[0].score : 0;
                 this.highScoreText.setText(`BEAT THE CURRENT HIGH SCORE: ${topScore}`);
             }
+        }).catch(err => {
+            console.warn('Leaderboard fetch failed (expected if local or offline):', err);
         });
 
         // --- AUDIO ---
@@ -1822,8 +1966,12 @@ class GameScene extends Phaser.Scene {
         // Newt crossing signs - diagonally opposite (top-left and bottom-right at road edges)
         const signSize = this.isCompact ? 40 : 50;
         const signOffset = this.isCompact ? 34 : 45;
-        this.add.image(signOffset, this.topSafe - topTextOffset, 'newtXing').setDisplaySize(signSize, signSize);
-        this.add.image(width - signOffset, this.botSafe - topTextOffset, 'newtXing').setDisplaySize(signSize, signSize);
+        
+        // Safety check for texture before creating images
+        if (this.textures.exists('newtXing')) {
+            this.add.image(signOffset, this.topSafe - topTextOffset, 'newtXing').setDisplaySize(signSize, signSize);
+            this.add.image(width - signOffset, this.botSafe - topTextOffset, 'newtXing').setDisplaySize(signSize, signSize);
+        }
     }
 
     createCrossingSign(x, y) {
@@ -1894,6 +2042,9 @@ class GameScene extends Phaser.Scene {
         
         if (audioInitialized) {
             console.log('Audio initialized, checking for partner...');
+            
+            // Start monitoring audio quality
+            startAudioStatsMonitoring();
             
             // If we are the guest, send a request to the host to start signaling
             // If the host is already in the channel, they will reply with an offer
@@ -2403,15 +2554,17 @@ class GameScene extends Phaser.Scene {
                 currentNewts.delete(nData.id);
             } else if (!nData.isCarried) {
                 // Create new newt on guest
-                const newt = this.add.image(localX, localY, 'newt');
-                newt.setDisplaySize(GAME_CONFIG.NEWT_SIZE, GAME_CONFIG.NEWT_SIZE);
-                newt.setDepth(25);
-                newt.dir = nData.dir || 1;
-                newt.dest = nData.dest;
-                newt.isCarried = false;
-                newt.newtId = nData.id;
-                newt.rotation = newt.dir === 1 ? Math.PI / 2 : -Math.PI / 2;
-                this.newts.add(newt);
+                if (this.textures.exists('newt')) {
+                    const newt = this.add.image(localX, localY, 'newt');
+                    newt.setDisplaySize(GAME_CONFIG.NEWT_SIZE, GAME_CONFIG.NEWT_SIZE);
+                    newt.setDepth(25);
+                    newt.dir = nData.dir || 1;
+                    newt.dest = nData.dest;
+                    newt.isCarried = false;
+                    newt.newtId = nData.id;
+                    newt.rotation = newt.dir === 1 ? Math.PI / 2 : -Math.PI / 2;
+                    this.newts.add(newt);
+                }
             }
         });
         
@@ -3631,15 +3784,18 @@ class GameScene extends Phaser.Scene {
         const fromTop = Math.random() < 0.5;
         const x = Phaser.Math.Between(60, this.scale.width - 60);
         const y = fromTop ? this.topSafe - 25 : this.botSafe + 25;
-        const newt = this.add.image(x, y, 'newt');
-        newt.setDisplaySize(GAME_CONFIG.NEWT_SIZE, GAME_CONFIG.NEWT_SIZE);
-        newt.setDepth(25);
-        newt.dir = fromTop ? 1 : -1;
-        newt.dest = fromTop ? 'LAKE' : 'FOREST';
-        newt.isCarried = false;
-        newt.newtId = 'newt_' + Date.now() + '_' + Math.random().toString(36).substring(2, 8);
-        newt.rotation = newt.dir === 1 ? Math.PI / 2 : -Math.PI / 2;
-        this.newts.add(newt);
+        
+        if (this.textures.exists('newt')) {
+            const newt = this.add.image(x, y, 'newt');
+            newt.setDisplaySize(GAME_CONFIG.NEWT_SIZE, GAME_CONFIG.NEWT_SIZE);
+            newt.setDepth(25);
+            newt.dir = fromTop ? 1 : -1;
+            newt.dest = fromTop ? 'LAKE' : 'FOREST';
+            newt.isCarried = false;
+            newt.newtId = 'newt_' + Date.now() + '_' + Math.random().toString(36).substring(2, 8);
+            newt.rotation = newt.dir === 1 ? Math.PI / 2 : -Math.PI / 2;
+            this.newts.add(newt);
+        }
         // Note: Newts are synced via game_state broadcast, no need for individual spawn events
     }
 
@@ -5044,4 +5200,10 @@ const config = {
     type: Phaser.AUTO, backgroundColor: '#000000', scale: { mode: Phaser.Scale.RESIZE, parent: 'game-container' },
     dom: { createContainer: true }, scene: [SplashScene, ModeSelectScene, LobbyScene, CharacterSelectScene, GameScene]
 };
-window.addEventListener('load', () => new Phaser.Game(config));
+window.addEventListener('load', () => {
+    new Phaser.Game(config);
+    // Add global promise error handling to catch Supabase/WebRTC rogue errors
+    window.addEventListener('unhandledrejection', (event) => {
+        console.warn('Unhandled promise rejection:', event.reason);
+    });
+});
