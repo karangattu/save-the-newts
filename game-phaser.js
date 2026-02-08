@@ -250,6 +250,10 @@ async function initAudioSharing() {
             console.log('Remote audio stream received');
             remoteAudioStream = event.streams[0];
             
+            // Cleanup existing remote audio if any
+            const existingAudio = document.getElementById('remote-audio');
+            if (existingAudio) existingAudio.remove();
+
             // Create audio element for remote stream
             const remoteAudio = document.createElement('audio');
             remoteAudio.id = 'remote-audio';
@@ -257,6 +261,9 @@ async function initAudioSharing() {
             remoteAudio.autoplay = true;
             remoteAudio.volume = 0.8;
             document.body.appendChild(remoteAudio);
+            
+            // Try to play explicitly (handles some browser restrictions better)
+            remoteAudio.play().catch(e => console.warn('Autoplay blocked:', e));
         };
         
         // Handle ICE candidates
@@ -280,6 +287,10 @@ async function initAudioSharing() {
         };
         
         isAudioEnabled = true;
+
+        // Process any queued signaling messages
+        processAudioSignalingQueue();
+
         return true;
         
     } catch (error) {
@@ -310,7 +321,13 @@ async function createAudioOffer() {
 }
 
 async function handleAudioOffer(data) {
-    if (!audioPeerConnection || isHost) return;
+    if (!audioPeerConnection || isHost) {
+        if (!isHost) {
+            console.log('Queuing audio offer - peer connection not ready');
+            audioSignalingQueue.push({ type: 'offer', data });
+        }
+        return;
+    }
     
     try {
         await audioPeerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
@@ -326,29 +343,75 @@ async function handleAudioOffer(data) {
             }
         });
         console.log('Audio answer sent');
+        
+        // Now that remote description is set, process any queued ICE candidates
+        processIceCandidatesQueue();
     } catch (error) {
         console.error('Error handling audio offer:', error);
     }
 }
 
 async function handleAudioAnswer(data) {
-    if (!audioPeerConnection || !isHost) return;
+    if (!audioPeerConnection || !isHost) {
+        if (isHost) {
+            console.log('Queuing audio answer - peer connection not ready');
+            audioSignalingQueue.push({ type: 'answer', data });
+        }
+        return;
+    }
     
     try {
         await audioPeerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
         console.log('Audio answer received and set');
+        
+        // Now that remote description is set, process any queued ICE candidates
+        processIceCandidatesQueue();
     } catch (error) {
         console.error('Error handling audio answer:', error);
     }
 }
 
 async function handleAudioIceCandidate(data) {
-    if (!audioPeerConnection) return;
+    if (!audioPeerConnection) {
+        console.log('Queuing ICE candidate - peer connection not ready');
+        audioIceCandidatesQueue.push(data.candidate);
+        return;
+    }
     
-    try {
-        await audioPeerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
-    } catch (error) {
-        console.error('Error adding ICE candidate:', error);
+    // Candidates can only be added AFTER setRemoteDescription
+    if (audioPeerConnection.remoteDescription && audioPeerConnection.remoteDescription.type) {
+        try {
+            await audioPeerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
+        } catch (error) {
+            console.error('Error adding ICE candidate:', error);
+        }
+    } else {
+        console.log('Queuing ICE candidate - remote description not set');
+        audioIceCandidatesQueue.push(data.candidate);
+    }
+}
+
+function processAudioSignalingQueue() {
+    console.log('Processing audio signaling queue:', audioSignalingQueue.length);
+    while (audioSignalingQueue.length > 0) {
+        const item = audioSignalingQueue.shift();
+        if (item.type === 'offer') {
+            handleAudioOffer(item.data);
+        } else if (item.type === 'answer') {
+            handleAudioAnswer(item.data);
+        }
+    }
+}
+
+async function processIceCandidatesQueue() {
+    console.log('Processing ICE candidates queue:', audioIceCandidatesQueue.length);
+    while (audioIceCandidatesQueue.length > 0) {
+        const candidate = audioIceCandidatesQueue.shift();
+        try {
+            await audioPeerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+        } catch (error) {
+            console.error('Error processing queued ICE candidate:', error);
+        }
     }
 }
 
@@ -371,6 +434,10 @@ function stopAudioSharing() {
         remoteAudio.remove();
     }
     
+    // Clear queues
+    audioSignalingQueue = [];
+    audioIceCandidatesQueue = [];
+
     isAudioEnabled = false;
     isMuted = false;
 }
@@ -1771,25 +1838,23 @@ class GameScene extends Phaser.Scene {
         
         // Show tooltip on hover
         this.muteBtnBg.on('pointerover', () => {
-            this.muteBtnBg.setStrokeStyle(3, 0x00ffff, 1);
+            this.muteBtnBg.setAlpha(1);
             this.muteTooltip.setAlpha(1);
         });
         
         this.muteBtnBg.on('pointerout', () => {
-            this.muteBtnBg.setStrokeStyle(2, 0x00ccff, 0.8);
+            this.muteBtnBg.setAlpha(0.8);
             this.muteTooltip.setAlpha(0);
         });
         
         // Listen for audio status changes
         window.addEventListener('audioStatusChanged', (event) => {
-            if (event.detail.isEnabled) {
-                this.updateMuteIcon();
-            }
+            this.updateMuteIcon();
         });
     }
 
     updateMuteIcon() {
-        if (!this.muteIcon) return;
+        if (!this.muteIcon || !this.muteBtnBg) return;
         
         const { width } = this.scale;
         const padding = this.isCompact ? 12 : 20;
@@ -1799,12 +1864,34 @@ class GameScene extends Phaser.Scene {
         
         this.muteIcon.clear();
         
+        // Get connection state
+        const connState = audioPeerConnection?.connectionState || 'disconnected';
+        let borderColor = 0x00ccff; // Default cyan
+        let tooltipText = isMuted ? 'Unmute' : 'Mute';
+        
+        if (connState === 'connected') {
+            borderColor = 0x00ff88; // Neon green
+            tooltipText += ' (Connected)';
+        } else if (connState === 'connecting' || connState === 'new') {
+            borderColor = 0xffcc00; // Gold/Yellow
+            tooltipText += ' (Connecting...)';
+        } else if (connState === 'failed' || connState === 'closed') {
+            borderColor = 0xff3366; // Pink/Red
+            tooltipText += ' (Failed/Closed)';
+        } else if (connState === 'disconnected') {
+            borderColor = 0x888888; // Gray
+            tooltipText += ' (Disconnected)';
+        }
+
+        this.muteBtnBg.setStrokeStyle(2, borderColor, 0.8);
+        if (this.muteTooltip) this.muteTooltip.setText(tooltipText);
+        
         if (isMuted) {
             // Muted icon - microphone with slash
-            this.drawMutedIcon(this.muteIcon, muteBtnX, muteBtnY, this.isCompact ? 16 : 20, 0xff6666);
+            this.drawMutedIcon(this.muteIcon, muteBtnX, muteBtnY, this.isCompact ? 16 : 20, 0xff3366);
         } else {
             // Unmuted icon - microphone
-            this.drawMicIcon(this.muteIcon, muteBtnX, muteBtnY, this.isCompact ? 16 : 20, 0x00ccff);
+            this.drawMicIcon(this.muteIcon, muteBtnX, muteBtnY, this.isCompact ? 16 : 20, borderColor);
         }
     }
 
