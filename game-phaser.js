@@ -2128,8 +2128,8 @@ class GameScene extends Phaser.Scene {
             this.rainGraphics.setAlpha(0.8);
         }
 
-        // Rain ambient sound with fade-in
-        if (this.cache.audio.exists('rain_ambient')) {
+        // Rain ambient sound with fade-in (disabled in multiplayer to reduce audio clutter)
+        if (this.cache.audio.exists('rain_ambient') && !this.isMultiplayer) {
             this.rainSound = this.sound.add('rain_ambient', { loop: true, volume: 0 });
             this.rainSound.play();
             // Fade in over 2 seconds
