@@ -375,15 +375,25 @@ async function initAudioSharing() {
             audioPeerConnection.close();
         }
         audioPeerConnection = new RTCPeerConnection(WEBRTC_CONFIG);
+        console.log('✓ RTCPeerConnection created with config:', WEBRTC_CONFIG);
         
         // Add local stream tracks to peer connection
         localAudioStream.getTracks().forEach(track => {
-            audioPeerConnection.addTrack(track, localAudioStream);
+            const sender = audioPeerConnection.addTrack(track, localAudioStream);
+            console.log('✓ Added local audio track:', track.id, 'enabled:', track.enabled, 'muted:', track.muted);
         });
         
         // Handle incoming remote stream
         audioPeerConnection.ontrack = (event) => {
-            console.log('Remote audio stream received', event.streams);
+            console.log('════════════════════════════════════════');
+            console.log('🎵 Remote audio track received!');
+            console.log('Track ID:', event.track.id);
+            console.log('Track kind:', event.track.kind);
+            console.log('Track enabled:', event.track.enabled);
+            console.log('Track muted:', event.track.muted);
+            console.log('Track readyState:', event.track.readyState);
+            console.log('Streams count:', event.streams.length);
+            console.log('════════════════════════════════════════');
             
             // Prefer the stream from the event, otherwise create one if needed
             remoteAudioStream = event.streams[0] || new MediaStream([event.track]);
@@ -411,12 +421,20 @@ async function initAudioSharing() {
             }
             
             document.body.appendChild(remoteAudio);
-            console.log('Remote audio element created');
+            console.log('✓ Remote audio element created and appended to DOM');
+            console.log('Audio element properties:', {
+                id: remoteAudio.id,
+                autoplay: remoteAudio.autoplay,
+                volume: remoteAudio.volume,
+                muted: remoteAudio.muted,
+                paused: remoteAudio.paused
+            });
             
             // Browser-specific playback handling
             const playAudio = () => {
                 remoteAudio.play().then(() => {
-                    console.log('Remote audio started successfully');
+                    console.log('✓ Remote audio playback started successfully');
+                    console.log('Audio playing:', !remoteAudio.paused);
                     // Start monitoring audio levels
                     startAudioLevelMonitoring(remoteAudioStream);
                 }).catch(err => console.error('Play failed:', err));
@@ -449,15 +467,35 @@ async function initAudioSharing() {
         
         // Handle ICE candidates
         audioPeerConnection.onicecandidate = (event) => {
-            if (event.candidate && multiplayerChannel) {
-                multiplayerChannel.send({
-                    type: 'broadcast',
-                    event: 'audio_ice_candidate',
-                    payload: {
-                        playerId: playerId,
-                        candidate: event.candidate
-                    }
-                });
+            if (event.candidate) {
+                console.log('→ Sending ICE candidate:', event.candidate.type, event.candidate.candidate?.substring(0, 50) + '...');
+                if (multiplayerChannel) {
+                    multiplayerChannel.send({
+                        type: 'broadcast',
+                        event: 'audio_ice_candidate',
+                        payload: {
+                            playerId: playerId,
+                            candidate: event.candidate
+                        }
+                    });
+                } else {
+                    console.error('✗ Cannot send ICE candidate - multiplayerChannel is null');
+                }
+            } else {
+                console.log('ICE gathering completed');
+            }
+        };
+        
+        // Track ICE gathering state
+        audioPeerConnection.onicegatheringstatechange = () => {
+            console.log('ICE gathering state:', audioPeerConnection.iceGatheringState);
+        };
+        
+        // Track ICE connection state
+        audioPeerConnection.oniceconnectionstatechange = () => {
+            console.log('ICE connection state:', audioPeerConnection.iceConnectionState);
+            if (audioPeerConnection.iceConnectionState === 'failed') {
+                console.error('✗ ICE connection failed - possible firewall/NAT issue');
             }
         };
         
@@ -588,14 +626,30 @@ async function initAudioSharing() {
 }
 
 async function createAudioOffer() {
-    if (!audioPeerConnection || !isHost) return;
+    if (!audioPeerConnection) {
+        console.error('✗ Cannot create offer - audioPeerConnection is null');
+        return;
+    }
+    if (!isHost) {
+        console.warn('Skipping offer creation - only host should create offers');
+        return;
+    }
     
+    console.log('Creating audio offer...');
     try {
         const offer = await audioPeerConnection.createOffer({
             offerToReceiveAudio: true,
             offerToReceiveVideo: false
         });
+        console.log('✓ Offer created:', offer.type);
+        
         await audioPeerConnection.setLocalDescription(offer);
+        console.log('✓ Local description set (offer)');
+        
+        if (!multiplayerChannel) {
+            console.error('✗ Cannot send offer - multiplayerChannel is null');
+            return;
+        }
         
         multiplayerChannel.send({
             type: 'broadcast',
@@ -605,28 +659,43 @@ async function createAudioOffer() {
                 offer: offer
             }
         });
-        console.log('Audio offer sent');
+        console.log('→ Audio offer sent via broadcast');
     } catch (error) {
-        console.error('Error creating audio offer:', error);
+        console.error('✗ Error creating audio offer:', error);
     }
 }
 
 async function handleAudioOffer(data) {
-    if (!audioPeerConnection || isHost) {
-        if (!isHost) {
-            console.log('Queuing audio offer - peer connection not ready');
-            audioSignalingQueue.push({ type: 'offer', data });
-        }
+    console.log('← Received audio offer from:', data.playerId);
+    
+    if (isHost) {
+        console.warn('Ignoring offer - host should not receive offers');
+        return;
+    }
+    
+    if (!audioPeerConnection) {
+        console.log('Queuing audio offer - peer connection not ready yet');
+        audioSignalingQueue.push({ type: 'offer', data });
         return;
     }
     
     try {
         await audioPeerConnection.setRemoteDescription(data.offer);
+        console.log('✓ Remote description set (offer)');
+        
         const answer = await audioPeerConnection.createAnswer({
             offerToReceiveAudio: true,
             offerToReceiveVideo: false
         });
+        console.log('✓ Answer created:', answer.type);
+        
         await audioPeerConnection.setLocalDescription(answer);
+        console.log('✓ Local description set (answer)');
+        
+        if (!multiplayerChannel) {
+            console.error('✗ Cannot send answer - multiplayerChannel is null');
+            return;
+        }
         
         multiplayerChannel.send({
             type: 'broadcast',
@@ -636,48 +705,71 @@ async function handleAudioOffer(data) {
                 answer: answer
             }
         });
-        console.log('Audio answer sent');
+        console.log('→ Audio answer sent');
         
         // Now that remote description is set, process any queued ICE candidates
         processIceCandidatesQueue();
     } catch (error) {
-        console.error('Error handling audio offer:', error);
+        console.error('✗ Error handling audio offer:', error);
     }
 }
 
 async function handleAudioAnswer(data) {
-    if (!audioPeerConnection || !isHost) {
-        if (isHost) {
-            console.log('Queuing audio answer - peer connection not ready');
-            audioSignalingQueue.push({ type: 'answer', data });
-        }
+    console.log('← Received audio answer from:', data.playerId);
+    
+    if (!isHost) {
+        console.warn('Ignoring answer - guest should not receive answers');
+        return;
+    }
+    
+    if (!audioPeerConnection) {
+        console.log('Queuing audio answer - peer connection not ready yet');
+        audioSignalingQueue.push({ type: 'answer', data });
         return;
     }
     
     try {
         await audioPeerConnection.setRemoteDescription(data.answer);
-        console.log('Audio answer received and set');
+        console.log('✓ Remote description set (answer)');
         
         // Now that remote description is set, process any queued ICE candidates
         processIceCandidatesQueue();
     } catch (error) {
-        console.error('Error handling audio answer:', error);
+        console.error('✗ Error handling audio answer:', error);
     }
 }
 
 async function handleAudioIceCandidate(data) {
+    console.log('← Received ICE candidate from:', data.playerId);
+    
     if (!audioPeerConnection) {
         console.log('Queuing ICE candidate - peer connection not ready');
-        // Respect queue size limit
         if (audioIceCandidatesQueue.length < MAX_ICE_QUEUE) {
             audioIceCandidatesQueue.push(data.candidate);
         } else {
-            console.warn('ICE candidate queue full, dropping oldest');
+            console.warn('✗ ICE candidate queue full (' + MAX_ICE_QUEUE + '), dropping oldest');
             audioIceCandidatesQueue.shift();
             audioIceCandidatesQueue.push(data.candidate);
         }
         return;
     }
+    
+    const remoteDesc = audioPeerConnection.remoteDescription;
+    if (!remoteDesc) {
+        console.log('Queuing ICE candidate - remote description not set yet');
+        if (audioIceCandidatesQueue.length < MAX_ICE_QUEUE) {
+            audioIceCandidatesQueue.push(data.candidate);
+        }
+        return;
+    }
+    
+    try {
+        await audioPeerConnection.addIceCandidate(data.candidate);
+        console.log('✓ Added ICE candidate:', data.candidate.type);
+    } catch (error) {
+        console.error('✗ Error adding ICE candidate:', error);
+    }
+}
     
     // Candidates can only be added AFTER setRemoteDescription
     if (audioPeerConnection.remoteDescription && audioPeerConnection.remoteDescription.type) {
@@ -783,12 +875,28 @@ function toggleMute() {
 }
 
 function updateAudioStatusIndicator() {
-    // This will be called by the game scene to update UI
+    // Log the current state for debugging
+    const state = audioPeerConnection?.connectionState || 'not-initialized';
+    const iceState = audioPeerConnection?.iceConnectionState || 'not-initialized';
+    
+    console.log('Audio Status Update:', {
+        connectionState: state,
+        iceConnectionState: iceState,
+        isEnabled: isAudioEnabled,
+        isMuted: isMuted,
+        hasLocalStream: !!localAudioStream,
+        hasRemoteStream: !!remoteAudioStream,
+        quality: connectionQuality
+    });
+    
+    // Dispatch event for UI updates
     const event = new CustomEvent('audioStatusChanged', { 
         detail: { 
             isEnabled: isAudioEnabled, 
             isMuted: isMuted,
-            connectionState: audioPeerConnection?.connectionState || 'disconnected'
+            connectionState: state,
+            iceConnectionState: iceState,
+            quality: connectionQuality
         } 
     });
     window.dispatchEvent(event);
@@ -2340,13 +2448,21 @@ class GameScene extends Phaser.Scene {
     }
 
     async initMultiplayerAudio() {
-        console.log('Initializing multiplayer audio...');
+        console.log('═══════════════════════════════════════');
+        console.log('🎤 Initializing multiplayer audio...');
+        console.log('Role:', isHost ? 'HOST' : 'GUEST');
+        console.log('Player ID:', playerId);
+        console.log('Channel ready:', !!multiplayerChannel);
+        console.log('═══════════════════════════════════════');
+        
+        // Wait a bit for channel to be fully ready
+        await new Promise(resolve => setTimeout(resolve, 500));
         
         // Initialize WebRTC audio
         const audioInitialized = await initAudioSharing();
         
         if (audioInitialized) {
-            console.log('Audio initialized, checking for partner...');
+            console.log('✓ Audio hardware initialized');
             
             // Start monitoring audio quality
             startAudioStatsMonitoring();
@@ -2354,16 +2470,17 @@ class GameScene extends Phaser.Scene {
             // If we are the guest, send a request to the host to start signaling
             // If the host is already in the channel, they will reply with an offer
             if (!isHost && multiplayerChannel) {
-                console.log('Guest sending audio request...');
+                console.log('→ Guest sending audio request to host...');
                 multiplayerChannel.send({
                     type: 'broadcast',
                     event: 'audio_request',
                     payload: { playerId: playerId }
                 });
             } else if (isHost) {
-                // Host still waits a bit just in case guest is already there
+                // Host waits for guest's request, but also sends offer proactively
+                console.log('Host waiting 2s before sending initial offer...');
                 this.time.delayedCall(2000, () => {
-                    console.log('Host sending initial audio offer...');
+                    console.log('→ Host sending initial audio offer...');
                     createAudioOffer();
                 });
             }
@@ -2371,7 +2488,11 @@ class GameScene extends Phaser.Scene {
             // Add mute button to HUD
             this.createMuteButton();
         } else {
-            console.warn('Failed to initialize audio - microphone permission may be denied');
+            console.error('✗ Failed to initialize audio');
+            console.log('Troubleshooting:');
+            console.log('  1. Check if microphone permission is granted');
+            console.log('  2. Ensure no other app is using the microphone');
+            console.log('  3. Try refreshing the page');
         }
     }
 
