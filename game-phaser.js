@@ -2025,6 +2025,9 @@ class GameScene extends Phaser.Scene {
         this.runStartTime = this.time.now;
         this.displayedScore = 0;
 
+        // Detect mobile device (not just compact screen)
+        this.isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+        
         // Multiplayer state
         this.isMultiplayer = gameMode === 'multi';
         this.teamScore = 0;
@@ -3518,7 +3521,9 @@ class GameScene extends Phaser.Scene {
 
     createHUD() {
         const padding = this.isCompact ? 12 : 20;
-        const style = { fontFamily: 'Fredoka, sans-serif', fontSize: this.isCompact ? '16px' : '20px', color: '#ffffff', stroke: '#000', strokeThickness: this.isCompact ? 2 : 3 };
+        // More aggressive font scaling for mobile multiplayer
+        const baseFontSize = this.isMobileDevice && this.isMultiplayer ? '14px' : (this.isCompact ? '16px' : '20px');
+        const style = { fontFamily: 'Fredoka, sans-serif', fontSize: baseFontSize, color: '#ffffff', stroke: '#000', strokeThickness: this.isCompact ? 2 : 3 };
 
         this.livesIconGroup = this.add.group();
 
@@ -3533,9 +3538,11 @@ class GameScene extends Phaser.Scene {
         this.scoreBg.lineStyle(2, 0xffcc00, 0.8);
         this.scoreBg.strokeRoundedRect(scoreX, scoreY, scoreWidth, scoreHeight, 10);
 
+        // Reduce score size on mobile multiplayer to save space
+        const scoreFontSize = this.isMobileDevice && this.isMultiplayer ? '22px' : (this.isCompact ? '26px' : '35px');
         this.scoreText = this.add.text(this.scale.width - padding - 6, padding + (this.isCompact ? 12 : 18), '', {
             fontFamily: 'Fredoka, sans-serif',
-            fontSize: this.isCompact ? '26px' : '35px',  // Increased by 75%
+            fontSize: scoreFontSize,
             color: '#ffcc00',
             stroke: '#000000',
             strokeThickness: this.isCompact ? 3 : 4,
@@ -3561,17 +3568,19 @@ class GameScene extends Phaser.Scene {
         // Stats panel with semi-transparent dark background
         this.statsBg = this.add.graphics().setDepth(199);
         this.statsBg.fillStyle(0x000000, 0.75);
-        const statsWidth = this.isCompact ? 170 : 200;
-        const statsHeight = this.isCompact ? 38 : 45;
+        // Make stats panel smaller on mobile
+        const statsWidth = this.isMobileDevice ? 110 : (this.isCompact ? 170 : 200);
+        const statsHeight = this.isMobileDevice ? 32 : (this.isCompact ? 38 : 45);
         const statsX = padding - 2;
         const statsY = this.scale.height - statsHeight - padding + 4;
         this.statsBg.fillRoundedRect(statsX, statsY, statsWidth, statsHeight, 10);
         this.statsBg.lineStyle(2, 0x00ffff, 0.5);
         this.statsBg.strokeRoundedRect(statsX, statsY, statsWidth, statsHeight, 10);
 
+        const statsFontSize = this.isMobileDevice ? '16px' : (this.isCompact ? '18px' : '22px');
         this.statsText = this.add.text(padding + 2, this.scale.height - padding - 2, '', {
             fontFamily: 'Fredoka, sans-serif',
-            fontSize: this.isCompact ? '18px' : '22px',
+            fontSize: statsFontSize,
             color: '#ffffff',
             stroke: '#000000',
             strokeThickness: this.isCompact ? 2 : 3
@@ -3579,13 +3588,46 @@ class GameScene extends Phaser.Scene {
 
         // Room code display for multiplayer (top-left corner below hearts)
         if (this.isMultiplayer && roomCode) {
+            const roomFontSize = this.isMobileDevice ? '10px' : (this.isCompact ? '12px' : '14px');
             this.roomCodeText = this.add.text(padding, this.isCompact ? 50 : 60, `ROOM: ${roomCode}`, {
                 fontFamily: 'Outfit, sans-serif',
-                fontSize: this.isCompact ? '12px' : '14px',
+                fontSize: roomFontSize,
                 color: '#00ccff',
                 stroke: '#000000',
-                strokeThickness: 2
+                strokeThickness: 2,
+                alpha: 1.0
             }).setOrigin(0, 0).setDepth(200);
+            
+            // Auto-hide room code on mobile after 5 seconds to reduce clutter
+            if (this.isMobileDevice) {
+                this.time.delayedCall(5000, () => {
+                    if (this.roomCodeText) {
+                        this.tweens.add({
+                            targets: this.roomCodeText,
+                            alpha: 0.15,
+                            duration: 500,
+                            ease: 'Power2'
+                        });
+                    }
+                });
+                
+                // Show on tap
+                this.roomCodeText.setInteractive();
+                this.roomCodeText.on('pointerdown', () => {
+                    if (this.roomCodeText) {
+                        this.roomCodeText.setAlpha(1.0);
+                        this.time.delayedCall(3000, () => {
+                            if (this.roomCodeText) {
+                                this.tweens.add({
+                                    targets: this.roomCodeText,
+                                    alpha: 0.15,
+                                    duration: 500
+                                });
+                            }
+                        });
+                    }
+                });
+            }
         }
 
         this.updateHUD();
@@ -3624,7 +3666,13 @@ class GameScene extends Phaser.Scene {
             const p1Max = this.player.carryCapacity;
             const p2Count = this.remoteCarriedCount || 0;
             const p2Max = this.remotePlayer ? this.remotePlayer.carryCapacity : 1;
-            this.carryText.setText(`P1: newts x ${p1Count} | P2: newts x ${p2Count}`);
+            
+            // Shorter format for mobile to reduce clutter
+            if (this.isMobileDevice) {
+                this.carryText.setText(`P1: ${p1Count} | P2: ${p2Count}`);
+            } else {
+                this.carryText.setText(`P1: newts x ${p1Count} | P2: newts x ${p2Count}`);
+            }
         } else {
             const c = this.player.carried.length;
             const maxCapacity = this.player.carryCapacity;
@@ -3649,7 +3697,12 @@ class GameScene extends Phaser.Scene {
             this.carryBg.strokeRoundedRect(bgX, bgY, bgWidth, bgHeight, bgHeight / 2);
         }
 
-        this.statsText.setText(`SAVED: ${this.saved} | LOST: ${this.lost}`);
+        // Shorter stats format for mobile
+        if (this.isMobileDevice) {
+            this.statsText.setText(`✓${this.saved} | ✗${this.lost}`);
+        } else {
+            this.statsText.setText(`SAVED: ${this.saved} | LOST: ${this.lost}`);
+        }
         
         // Update room code display in multiplayer
         if (this.isMultiplayer && this.roomCodeText) {
