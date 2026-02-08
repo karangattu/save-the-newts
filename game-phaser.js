@@ -1300,7 +1300,53 @@ class LobbyScene extends Phaser.Scene {
             letterSpacing: 8
         }).setOrigin(0.5);
 
-        this.menuContainer.add([codeBox, codeText]);
+        // Copy button
+        const copyLabel = this.add.text(width / 2, height * 0.42, 'CLICK TO COPY', {
+            fontFamily: 'Outfit, sans-serif',
+            fontSize: '10px',
+            color: '#00ccff',
+            backgroundColor: '#000000',
+            padding: { left: 8, right: 8, top: 4, bottom: 4 }
+        }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+
+        this.menuContainer.add([codeBox, codeText, copyLabel]);
+
+        const copyToClipboard = () => {
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(roomCode).then(() => {
+                    copyLabel.setText('COPIED!');
+                    copyLabel.setColor('#ffffff');
+                    copyLabel.setBackgroundColor('#008800');
+                    this.time.delayedCall(2000, () => {
+                        if (copyLabel.active) {
+                            copyLabel.setText('CLICK TO COPY');
+                            copyLabel.setColor('#00ccff');
+                            copyLabel.setBackgroundColor('#000000');
+                        }
+                    });
+                });
+            } else {
+                // Fallback for older browsers
+                const textArea = document.createElement("textarea");
+                textArea.value = roomCode;
+                document.body.appendChild(textArea);
+                textArea.select();
+                try {
+                    document.execCommand('copy');
+                    copyLabel.setText('COPIED!');
+                } catch (err) {
+                    console.error('Fallback copy failed', err);
+                }
+                document.body.removeChild(textArea);
+            }
+        };
+
+        codeBox.setInteractive({ useHandCursor: true });
+        codeText.setInteractive({ useHandCursor: true });
+        
+        codeBox.on('pointerdown', copyToClipboard);
+        codeText.on('pointerdown', copyToClipboard);
+        copyLabel.on('pointerdown', copyToClipboard);
 
         // Waiting message with animation
         const waitingText = this.add.text(width / 2, height * 0.50, 'Waiting for player to join...', {
