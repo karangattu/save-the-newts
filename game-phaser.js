@@ -80,6 +80,15 @@ function generateRoomCode() {
     return Math.floor(1000 + Math.random() * 9000).toString();
 }
 
+// Global click handler to help unlock audio on restricted browsers
+window.addEventListener('click', () => {
+    // Attempt to resume any suspended audio elements or audio context
+    const remoteAudio = document.getElementById('remote-audio');
+    if (remoteAudio && remoteAudio.paused) {
+        remoteAudio.play().catch(() => {});
+    }
+}, { once: false });
+
 // Room management functions
 async function createRoom(hostCharacter) {
     if (!supabaseClient) return null;
@@ -255,23 +264,43 @@ async function initAudioSharing() {
         
         // Handle incoming remote stream
         audioPeerConnection.ontrack = (event) => {
-            console.log('Remote audio stream received');
-            remoteAudioStream = event.streams[0];
+            console.log('Remote audio stream received', event.streams);
+            
+            // Prefer the stream from the event, otherwise create one if needed
+            remoteAudioStream = event.streams[0] || new MediaStream([event.track]);
             
             // Cleanup existing remote audio if any
             const existingAudio = document.getElementById('remote-audio');
-            if (existingAudio) existingAudio.remove();
+            if (existingAudio) {
+                console.log('Replacing existing remote audio element');
+                existingAudio.srcObject = null;
+                existingAudio.remove();
+            }
 
             // Create audio element for remote stream
             const remoteAudio = document.createElement('audio');
             remoteAudio.id = 'remote-audio';
             remoteAudio.srcObject = remoteAudioStream;
             remoteAudio.autoplay = true;
-            remoteAudio.volume = 0.8;
+            remoteAudio.playsInline = true; // For mobile/safari
+            remoteAudio.volume = 1.0; // Max volume
             document.body.appendChild(remoteAudio);
             
+            // Log for debugging
+            console.log('Remote audio element created and playing');
+            
             // Try to play explicitly (handles some browser restrictions better)
-            remoteAudio.play().catch(e => console.warn('Autoplay blocked:', e));
+            remoteAudio.play().catch(e => {
+                console.warn('Autoplay prevented. User interaction required:', e);
+                // We'll retry on next click
+                const retryPlay = () => {
+                    remoteAudio.play().then(() => {
+                        console.log('Remote audio started after click');
+                        window.removeEventListener('click', retryPlay);
+                    }).catch(err => console.error('Play retry failed:', err));
+                };
+                window.addEventListener('click', retryPlay);
+            });
         };
         
         // Handle ICE candidates
@@ -311,7 +340,10 @@ async function createAudioOffer() {
     if (!audioPeerConnection || !isHost) return;
     
     try {
-        const offer = await audioPeerConnection.createOffer();
+        const offer = await audioPeerConnection.createOffer({
+            offerToReceiveAudio: true,
+            offerToReceiveVideo: false
+        });
         await audioPeerConnection.setLocalDescription(offer);
         
         multiplayerChannel.send({
@@ -339,7 +371,10 @@ async function handleAudioOffer(data) {
     
     try {
         await audioPeerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
-        const answer = await audioPeerConnection.createAnswer();
+        const answer = await audioPeerConnection.createAnswer({
+            offerToReceiveAudio: true,
+            offerToReceiveVideo: false
+        });
         await audioPeerConnection.setLocalDescription(answer);
         
         multiplayerChannel.send({
@@ -1812,15 +1847,24 @@ class GameScene extends Phaser.Scene {
         const audioInitialized = await initAudioSharing();
         
         if (audioInitialized) {
-            console.log('Audio initialized, waiting for channel subscription...');
+            console.log('Audio initialized, checking for partner...');
             
-            // Wait a moment for channel to be fully subscribed, then create offer if host
-            this.time.delayedCall(2000, () => {
-                if (isHost) {
-                    console.log('Host creating audio offer...');
+            // If we are the guest, send a request to the host to start signaling
+            // If the host is already in the channel, they will reply with an offer
+            if (!isHost && multiplayerChannel) {
+                console.log('Guest sending audio request...');
+                multiplayerChannel.send({
+                    type: 'broadcast',
+                    event: 'audio_request',
+                    payload: { playerId: playerId }
+                });
+            } else if (isHost) {
+                // Host still waits a bit just in case guest is already there
+                this.time.delayedCall(2000, () => {
+                    console.log('Host sending initial audio offer...');
                     createAudioOffer();
-                }
-            });
+                });
+            }
             
             // Add mute button to HUD
             this.createMuteButton();
@@ -2091,6 +2135,13 @@ class GameScene extends Phaser.Scene {
         });
 
         // Audio sharing signaling
+        multiplayerChannel.on('broadcast', { event: 'audio_request' }, (payload) => {
+            if (isHost && payload.payload.playerId !== playerId) {
+                console.log('Received audio request from guest, creating offer...');
+                createAudioOffer();
+            }
+        });
+
         multiplayerChannel.on('broadcast', { event: 'audio_offer' }, (payload) => {
             if (payload.payload.playerId !== playerId) {
                 handleAudioOffer(payload.payload);
