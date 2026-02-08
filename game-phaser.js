@@ -61,6 +61,15 @@ let remoteCharacter = null;
 let multiplayerChannel = null;
 let lastRemoteUpdate = 0;
 
+// ===== AUDIO SHARING STATE =====
+let audioPeerConnection = null;
+let localAudioStream = null;
+let remoteAudioStream = null;
+let isAudioEnabled = false;
+let isMuted = false;
+let audioSignalingQueue = [];
+let audioIceCandidatesQueue = [];
+
 // Generate unique player ID
 function generatePlayerId() {
     return 'player_' + Math.random().toString(36).substring(2, 15);
@@ -185,6 +194,8 @@ function cleanupMultiplayerState() {
         supabaseClient.removeChannel(multiplayerChannel);
         multiplayerChannel = null;
     }
+    // Cleanup audio
+    stopAudioSharing();
     gameMode = 'single';
     isHost = false;
     roomCode = null;
@@ -193,6 +204,198 @@ function cleanupMultiplayerState() {
     remotePlayerId = null;
     remoteCharacter = null;
     lastRemoteUpdate = 0;
+}
+
+// ===== AUDIO SHARING FUNCTIONS =====
+const WEBRTC_CONFIG = {
+    iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' },
+        { urls: 'stun:stun2.l.google.com:19302' },
+        { urls: 'stun:stun3.l.google.com:19302' },
+        { urls: 'stun:stun4.l.google.com:19302' }
+    ]
+};
+
+async function initAudioSharing() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        console.warn('WebRTC not supported in this browser');
+        return false;
+    }
+
+    try {
+        // Get local audio stream
+        localAudioStream = await navigator.mediaDevices.getUserMedia({ 
+            audio: { 
+                echoCancellation: true, 
+                noiseSuppression: true,
+                autoGainControl: true,
+                sampleRate: 48000
+            }, 
+            video: false 
+        });
+        
+        console.log('Microphone access granted');
+        
+        // Create peer connection
+        audioPeerConnection = new RTCPeerConnection(WEBRTC_CONFIG);
+        
+        // Add local stream tracks to peer connection
+        localAudioStream.getTracks().forEach(track => {
+            audioPeerConnection.addTrack(track, localAudioStream);
+        });
+        
+        // Handle incoming remote stream
+        audioPeerConnection.ontrack = (event) => {
+            console.log('Remote audio stream received');
+            remoteAudioStream = event.streams[0];
+            
+            // Create audio element for remote stream
+            const remoteAudio = document.createElement('audio');
+            remoteAudio.id = 'remote-audio';
+            remoteAudio.srcObject = remoteAudioStream;
+            remoteAudio.autoplay = true;
+            remoteAudio.volume = 0.8;
+            document.body.appendChild(remoteAudio);
+        };
+        
+        // Handle ICE candidates
+        audioPeerConnection.onicecandidate = (event) => {
+            if (event.candidate && multiplayerChannel) {
+                multiplayerChannel.send({
+                    type: 'broadcast',
+                    event: 'audio_ice_candidate',
+                    payload: {
+                        playerId: playerId,
+                        candidate: event.candidate
+                    }
+                });
+            }
+        };
+        
+        // Handle connection state changes
+        audioPeerConnection.onconnectionstatechange = () => {
+            console.log('Audio connection state:', audioPeerConnection.connectionState);
+            updateAudioStatusIndicator();
+        };
+        
+        isAudioEnabled = true;
+        return true;
+        
+    } catch (error) {
+        console.error('Error initializing audio sharing:', error);
+        return false;
+    }
+}
+
+async function createAudioOffer() {
+    if (!audioPeerConnection || !isHost) return;
+    
+    try {
+        const offer = await audioPeerConnection.createOffer();
+        await audioPeerConnection.setLocalDescription(offer);
+        
+        multiplayerChannel.send({
+            type: 'broadcast',
+            event: 'audio_offer',
+            payload: {
+                playerId: playerId,
+                offer: offer
+            }
+        });
+        console.log('Audio offer sent');
+    } catch (error) {
+        console.error('Error creating audio offer:', error);
+    }
+}
+
+async function handleAudioOffer(data) {
+    if (!audioPeerConnection || isHost) return;
+    
+    try {
+        await audioPeerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
+        const answer = await audioPeerConnection.createAnswer();
+        await audioPeerConnection.setLocalDescription(answer);
+        
+        multiplayerChannel.send({
+            type: 'broadcast',
+            event: 'audio_answer',
+            payload: {
+                playerId: playerId,
+                answer: answer
+            }
+        });
+        console.log('Audio answer sent');
+    } catch (error) {
+        console.error('Error handling audio offer:', error);
+    }
+}
+
+async function handleAudioAnswer(data) {
+    if (!audioPeerConnection || !isHost) return;
+    
+    try {
+        await audioPeerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
+        console.log('Audio answer received and set');
+    } catch (error) {
+        console.error('Error handling audio answer:', error);
+    }
+}
+
+async function handleAudioIceCandidate(data) {
+    if (!audioPeerConnection) return;
+    
+    try {
+        await audioPeerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
+    } catch (error) {
+        console.error('Error adding ICE candidate:', error);
+    }
+}
+
+function stopAudioSharing() {
+    // Stop local stream
+    if (localAudioStream) {
+        localAudioStream.getTracks().forEach(track => track.stop());
+        localAudioStream = null;
+    }
+    
+    // Close peer connection
+    if (audioPeerConnection) {
+        audioPeerConnection.close();
+        audioPeerConnection = null;
+    }
+    
+    // Remove remote audio element
+    const remoteAudio = document.getElementById('remote-audio');
+    if (remoteAudio) {
+        remoteAudio.remove();
+    }
+    
+    isAudioEnabled = false;
+    isMuted = false;
+}
+
+function toggleMute() {
+    if (!localAudioStream) return;
+    
+    isMuted = !isMuted;
+    localAudioStream.getAudioTracks().forEach(track => {
+        track.enabled = !isMuted;
+    });
+    
+    console.log(isMuted ? 'Microphone muted' : 'Microphone unmuted');
+}
+
+function updateAudioStatusIndicator() {
+    // This will be called by the game scene to update UI
+    const event = new CustomEvent('audioStatusChanged', { 
+        detail: { 
+            isEnabled: isAudioEnabled, 
+            isMuted: isMuted,
+            connectionState: audioPeerConnection?.connectionState || 'disconnected'
+        } 
+    });
+    window.dispatchEvent(event);
 }
 
 // Character-specific stats
@@ -1260,6 +1463,8 @@ class GameScene extends Phaser.Scene {
         if (this.isMultiplayer) {
             this.createRemotePlayer();
             this.setupMultiplayerSync();
+            // Initialize audio sharing for multiplayer
+            this.initMultiplayerAudio();
         }
         
         this.createHUD();
@@ -1508,6 +1713,139 @@ class GameScene extends Phaser.Scene {
         this.walkTime = 0;
     }
 
+    async initMultiplayerAudio() {
+        console.log('Initializing multiplayer audio...');
+        
+        // Initialize WebRTC audio
+        const audioInitialized = await initAudioSharing();
+        
+        if (audioInitialized) {
+            console.log('Audio initialized, waiting for channel subscription...');
+            
+            // Wait a moment for channel to be fully subscribed, then create offer if host
+            this.time.delayedCall(2000, () => {
+                if (isHost) {
+                    console.log('Host creating audio offer...');
+                    createAudioOffer();
+                }
+            });
+            
+            // Add mute button to HUD
+            this.createMuteButton();
+        } else {
+            console.warn('Failed to initialize audio - microphone permission may be denied');
+        }
+    }
+
+    createMuteButton() {
+        const { width } = this.scale;
+        const padding = this.isCompact ? 12 : 20;
+        
+        // Create mute button in top-right area, below score
+        const muteBtnSize = this.isCompact ? 32 : 40;
+        const muteBtnX = width - padding - muteBtnSize / 2;
+        const muteBtnY = padding + (this.isCompact ? 50 : 65);
+        
+        // Button background
+        this.muteBtnBg = this.add.rectangle(muteBtnX, muteBtnY, muteBtnSize, muteBtnSize, 0x000000, 0.8)
+            .setStrokeStyle(2, 0x00ccff, 0.8)
+            .setInteractive({ useHandCursor: true })
+            .setDepth(200);
+        
+        // Mute icon (using graphics)
+        this.muteIcon = this.add.graphics().setDepth(201);
+        this.updateMuteIcon();
+        
+        // Click handler
+        this.muteBtnBg.on('pointerdown', () => {
+            toggleMute();
+            this.updateMuteIcon();
+        });
+        
+        // Tooltip text
+        this.muteTooltip = this.add.text(muteBtnX, muteBtnY + muteBtnSize / 2 + 10, 'Mute', {
+            fontFamily: 'Outfit, sans-serif',
+            fontSize: '10px',
+            color: '#ffffff'
+        }).setOrigin(0.5).setDepth(200).setAlpha(0);
+        
+        // Show tooltip on hover
+        this.muteBtnBg.on('pointerover', () => {
+            this.muteBtnBg.setStrokeStyle(3, 0x00ffff, 1);
+            this.muteTooltip.setAlpha(1);
+        });
+        
+        this.muteBtnBg.on('pointerout', () => {
+            this.muteBtnBg.setStrokeStyle(2, 0x00ccff, 0.8);
+            this.muteTooltip.setAlpha(0);
+        });
+        
+        // Listen for audio status changes
+        window.addEventListener('audioStatusChanged', (event) => {
+            if (event.detail.isEnabled) {
+                this.updateMuteIcon();
+            }
+        });
+    }
+
+    updateMuteIcon() {
+        if (!this.muteIcon) return;
+        
+        const { width } = this.scale;
+        const padding = this.isCompact ? 12 : 20;
+        const muteBtnSize = this.isCompact ? 32 : 40;
+        const muteBtnX = width - padding - muteBtnSize / 2;
+        const muteBtnY = padding + (this.isCompact ? 50 : 65);
+        
+        this.muteIcon.clear();
+        
+        if (isMuted) {
+            // Muted icon - microphone with slash
+            this.drawMutedIcon(this.muteIcon, muteBtnX, muteBtnY, this.isCompact ? 16 : 20, 0xff6666);
+        } else {
+            // Unmuted icon - microphone
+            this.drawMicIcon(this.muteIcon, muteBtnX, muteBtnY, this.isCompact ? 16 : 20, 0x00ccff);
+        }
+    }
+
+    drawMicIcon(g, x, y, size, color) {
+        // Microphone icon
+        const s = size / 2;
+        g.lineStyle(2, color);
+        
+        // Mic body (rounded rectangle)
+        g.strokeRoundedRect(x - s * 0.3, y - s * 0.5, s * 0.6, s * 0.8, s * 0.15);
+        
+        // Mic arc at bottom
+        g.beginPath();
+        g.arc(x, y + s * 0.3, s * 0.4, 0, Math.PI, false);
+        g.strokePath();
+        
+        // Stand
+        g.lineBetween(x, y + s * 0.7, x, y + s * 0.5);
+        
+        // Base
+        g.lineBetween(x - s * 0.3, y + s * 0.7, x + s * 0.3, y + s * 0.7);
+    }
+
+    drawMutedIcon(g, x, y, size, color) {
+        // Muted microphone icon
+        const s = size / 2;
+        g.lineStyle(2, color);
+        
+        // Mic body (rounded rectangle)
+        g.strokeRoundedRect(x - s * 0.3, y - s * 0.5, s * 0.6, s * 0.8, s * 0.15);
+        
+        // Mic arc at bottom
+        g.beginPath();
+        g.arc(x, y + s * 0.3, s * 0.4, 0, Math.PI, false);
+        g.strokePath();
+        
+        // Slash line
+        g.lineStyle(3, 0xff6666);
+        g.lineBetween(x - s * 0.5, y - s * 0.5, x + s * 0.5, y + s * 0.5);
+    }
+
     createRemotePlayer() {
         const { width } = this.scale;
         // Remote player starts on opposite side
@@ -1632,6 +1970,25 @@ class GameScene extends Phaser.Scene {
 
         multiplayerChannel.on('broadcast', { event: 'player_hit' }, (payload) => {
             this.handlePlayerHitOutcome(payload.payload);
+        });
+
+        // Audio sharing signaling
+        multiplayerChannel.on('broadcast', { event: 'audio_offer' }, (payload) => {
+            if (payload.payload.playerId !== playerId) {
+                handleAudioOffer(payload.payload);
+            }
+        });
+
+        multiplayerChannel.on('broadcast', { event: 'audio_answer' }, (payload) => {
+            if (payload.payload.playerId !== playerId) {
+                handleAudioAnswer(payload.payload);
+            }
+        });
+
+        multiplayerChannel.on('broadcast', { event: 'audio_ice_candidate' }, (payload) => {
+            if (payload.payload.playerId !== playerId) {
+                handleAudioIceCandidate(payload.payload);
+            }
         });
 
         multiplayerChannel.subscribe((status) => {
