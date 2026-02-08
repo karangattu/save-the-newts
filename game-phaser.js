@@ -222,11 +222,17 @@ async function deleteRoom() {
 
 function cleanupMultiplayerState() {
     if (multiplayerChannel) {
-        supabaseClient.removeChannel(multiplayerChannel);
+        try {
+            supabaseClient.removeChannel(multiplayerChannel);
+        } catch (e) {
+            console.warn('Error removing multiplayer channel:', e);
+        }
         multiplayerChannel = null;
     }
     // Cleanup audio
     stopAudioSharing();
+    // Clear active scene reference
+    window._activeGameScene = null;
     gameMode = 'single';
     isHost = false;
     roomCode = null;
@@ -1281,14 +1287,15 @@ class SplashScene extends Phaser.Scene {
         this.add.rectangle(0, 0, width, height, 0x000000).setOrigin(0);
 
         // --- POSTER ---
+        this.posterImage = null;
         if (this.textures.exists('poster')) {
-            const poster = this.add.image(width / 2, height / 2, 'poster');
-            const scale = Math.min(width / poster.width, height / poster.height);
-            poster.setScale(isCompact ? scale * 0.92 : scale);
-            poster.setAlpha(0);
+            this.posterImage = this.add.image(width / 2, height / 2, 'poster');
+            const scale = Math.min(width / this.posterImage.width, height / this.posterImage.height);
+            this.posterImage.setScale(isCompact ? scale * 0.92 : scale);
+            this.posterImage.setAlpha(0);
 
             this.tweens.add({
-                targets: poster, alpha: 1, duration: 800, ease: 'Power2'
+                targets: this.posterImage, alpha: 1, duration: 800, ease: 'Power2'
             });
         }
 
@@ -1442,7 +1449,7 @@ class SplashScene extends Phaser.Scene {
                 promptText.setText('TAP TO PLAY');
                 tutorialVideo.style.opacity = '1';
                 tutorialVideo.play().catch(e => console.log('Video autoplay blocked:', e));
-                this.tweens.add({ targets: poster, alpha: 0.3, duration: 300 }); // Dim poster
+                if (this.posterImage) this.tweens.add({ targets: this.posterImage, alpha: 0.3, duration: 300 }); // Dim poster
             } else if (step === 1) {
                 // Go to Mode Selection
                 step = 2;
@@ -2132,6 +2139,9 @@ class GameScene extends Phaser.Scene {
         this.partnerDisconnected = false;
         this.lastHitIntentAt = 0;
         this.lastHitByPlayer = new Map();
+        
+        // Register this as the active game scene for multiplayer channel callbacks
+        window._activeGameScene = this;
 
         // Achievement tracking
         this.streak = 0;
@@ -2176,14 +2186,14 @@ class GameScene extends Phaser.Scene {
             // Don't restart during game over to preserve the name input form
             if (this.gameOver) return;
 
-            // In multiplayer, browser bars (like the microphone permission bar) can trigger 
-            // resize events. Restarting the scene breaks the real-time sync.
-            // We ignore small height changes usually caused by browser UI elements.
-            const heightDiff = Math.abs(gameSize.height - this.lastHeight);
-            const widthDiff = Math.abs(gameSize.width - this.lastWidth);
-            
-            if (this.isMultiplayer && heightDiff < 120 && widthDiff < 20) {
-                console.log('Ignoring small resize (likely browser UI change) during multiplayer');
+            // In multiplayer, NEVER restart the scene on resize.
+            // Resizes are typically caused by browser UI changes (mic permission bar, 
+            // address bar hiding on mobile, etc.) and restarting the scene destroys 
+            // the real-time channel, WebRTC audio, and all sync state.
+            if (this.isMultiplayer) {
+                console.log('Ignoring resize during multiplayer to preserve connection');
+                this.lastWidth = gameSize.width;
+                this.lastHeight = gameSize.height;
                 return;
             }
 
@@ -2438,10 +2448,35 @@ class GameScene extends Phaser.Scene {
         console.log('Role:', isHost ? 'HOST' : 'GUEST');
         console.log('Player ID:', playerId);
         console.log('Channel ready:', !!multiplayerChannel);
+        console.log('Existing audio connection:', audioPeerConnection?.connectionState || 'none');
         console.log('═══════════════════════════════════════');
+        
+        // If audio is already connected, just recreate the UI mute button (scene was restarted)
+        if (audioPeerConnection && 
+            (audioPeerConnection.connectionState === 'connected' || 
+             audioPeerConnection.connectionState === 'connecting')) {
+            console.log('✓ Audio already connected/connecting, skipping re-init. Just recreating mute button.');
+            this.createMuteButton();
+            return;
+        }
         
         // Wait a bit for channel to be fully ready
         await new Promise(resolve => setTimeout(resolve, 500));
+        
+        // Verify channel is actually subscribed before proceeding
+        if (!multiplayerChannel || multiplayerChannel.state !== 'joined') {
+            console.log('Channel not ready yet, waiting for subscription...');
+            // Wait up to 5 seconds for the channel to be ready
+            let waited = 0;
+            while ((!multiplayerChannel || multiplayerChannel.state !== 'joined') && waited < 5000) {
+                await new Promise(resolve => setTimeout(resolve, 500));
+                waited += 500;
+            }
+            if (!multiplayerChannel || multiplayerChannel.state !== 'joined') {
+                console.error('✗ Channel not ready after waiting. Cannot initialize audio.');
+                return;
+            }
+        }
         
         // Initialize WebRTC audio
         const audioInitialized = await initAudioSharing();
@@ -2485,6 +2520,16 @@ class GameScene extends Phaser.Scene {
         const { width } = this.scale;
         const padding = this.isCompact ? 12 : 20;
         
+        // Destroy existing mute button elements if they exist (scene restart)
+        if (this.muteBtnBg && this.muteBtnBg.active) this.muteBtnBg.destroy();
+        if (this.muteIcon && this.muteIcon.active) this.muteIcon.destroy();
+        if (this.muteTooltip && this.muteTooltip.active) this.muteTooltip.destroy();
+        
+        // Remove old event listener if it exists
+        if (this._audioStatusHandler) {
+            window.removeEventListener('audioStatusChanged', this._audioStatusHandler);
+        }
+        
         // Create mute button in top-right area, below score
         const muteBtnSize = this.isCompact ? 32 : 40;
         const muteBtnX = width - padding - muteBtnSize / 2;
@@ -2524,14 +2569,27 @@ class GameScene extends Phaser.Scene {
             this.muteTooltip.setAlpha(0);
         });
         
-        // Listen for audio status changes
-        window.addEventListener('audioStatusChanged', (event) => {
-            this.updateMuteIcon();
+        // Listen for audio status changes (store reference for cleanup)
+        this._audioStatusHandler = () => {
+            if (this.scene && this.scene.isActive()) {
+                this.updateMuteIcon();
+            }
+        };
+        window.addEventListener('audioStatusChanged', this._audioStatusHandler);
+        
+        // Remove listener when scene shuts down
+        this.events.once('shutdown', () => {
+            if (this._audioStatusHandler) {
+                window.removeEventListener('audioStatusChanged', this._audioStatusHandler);
+                this._audioStatusHandler = null;
+            }
         });
     }
 
     updateMuteIcon() {
         if (!this.muteIcon || !this.muteBtnBg) return;
+        // Guard against destroyed Phaser objects (scene was restarted)
+        if (!this.muteIcon.active || !this.muteBtnBg.active) return;
         
         const { width } = this.scale;
         const padding = this.isCompact ? 12 : 20;
@@ -2561,7 +2619,7 @@ class GameScene extends Phaser.Scene {
         }
 
         this.muteBtnBg.setStrokeStyle(2, borderColor, 0.8);
-        if (this.muteTooltip) this.muteTooltip.setText(tooltipText);
+        if (this.muteTooltip && this.muteTooltip.active) this.muteTooltip.setText(tooltipText);
         
         if (isMuted) {
             // Muted icon - microphone with slash
@@ -2622,8 +2680,8 @@ class GameScene extends Phaser.Scene {
         this.remotePlayer = this.add.container(startX, this.botSafe + 60);
         this.remotePlayer.setDepth(49); // Slightly below local player
         this.remotePlayer.setScale(this.layoutScale);
-        // Start semi-transparent until we receive first update
-        this.remotePlayer.setAlpha(0.5);
+        // Start fully visible — both players are confirmed by the time GameScene loads
+        this.remotePlayer.setAlpha(1.0);
         
         const g = this.add.graphics();
         
@@ -2670,90 +2728,147 @@ class GameScene extends Phaser.Scene {
     setupMultiplayerSync() {
         if (!supabaseClient || !roomCode) return;
         
-        // Cleanup old channel if exists (e.g. on scene restart)
+        // If channel already exists and is subscribed, reuse it (e.g. on scene restart)
+        if (multiplayerChannel && multiplayerChannel.state === 'joined') {
+            console.log('Reusing existing multiplayer channel (already subscribed)');
+            // Re-announce ourselves and start broadcasting
+            multiplayerChannel.send({
+                type: 'broadcast',
+                event: 'player_ready',
+                payload: {
+                    playerId: playerId,
+                    character: selectedCharacter,
+                    isHost: isHost
+                }
+            });
+            // Immediately broadcast initial position
+            this.broadcastPlayerState();
+            
+            // Start broadcasting position continuously
+            this.broadcastTimer = this.time.addEvent({
+                delay: 50, // 20Hz broadcast rate
+                callback: this.broadcastPlayerState,
+                callbackScope: this,
+                loop: true
+            });
+            
+            // Start disconnect detection
+            lastRemoteUpdate = Date.now();
+            this.disconnectCheckTimer = this.time.addEvent({
+                delay: 1000,
+                callback: this.checkPartnerConnection,
+                callbackScope: this,
+                loop: true
+            });
+            return;
+        }
+        
+        // Cleanup old channel if exists and not in good state
         if (multiplayerChannel) {
-            console.log('Cleaning up old channel before restart');
-            supabaseClient.removeChannel(multiplayerChannel);
+            console.log('Cleaning up old channel (state:', multiplayerChannel.state, ')');
+            try {
+                supabaseClient.removeChannel(multiplayerChannel);
+            } catch (e) {
+                console.warn('Error removing old channel:', e);
+            }
+            multiplayerChannel = null;
         }
 
         // Create broadcast channel for real-time sync
+        // All event listeners use window._activeGameScene to always reference the current
+        // scene instance, even if the scene is restarted (channel persists across restarts).
         multiplayerChannel = supabaseClient.channel(`game-${roomCode}`, {
             config: {
                 broadcast: { self: false }
             }
         });
 
+        // Helper to get the active scene safely
+        const getScene = () => window._activeGameScene;
+
         // Listen for remote player updates
         multiplayerChannel.on('broadcast', { event: 'player_update' }, (payload) => {
+            const scene = getScene();
+            if (!scene) return;
             if (payload.payload.playerId !== playerId) {
-                // Log only occasionally to avoid spam (every 20th update = once per second at 20Hz)
-                if (!this._updateCounter) this._updateCounter = 0;
-                this._updateCounter++;
-                if (this._updateCounter % 20 === 0) {
-                    console.log('← Received player_update from:', payload.payload.playerId.substring(0, 8) + '...');
-                }
-                this.handleRemotePlayerUpdate(payload.payload);
+                scene.handleRemotePlayerUpdate(payload.payload);
             }
         });
 
         // Listen for game state updates (from host)
         multiplayerChannel.on('broadcast', { event: 'game_state' }, (payload) => {
+            const scene = getScene();
+            if (!scene) return;
             if (!isHost) {
-                this.handleGameStateUpdate(payload.payload);
+                scene.handleGameStateUpdate(payload.payload);
             }
         });
 
-        // Note: newt_spawn events removed - newts are synced via game_state broadcast
-
         // Listen for newt pickup events
         multiplayerChannel.on('broadcast', { event: 'newt_pickup' }, (payload) => {
+            const scene = getScene();
+            if (!scene) return;
             if (payload.payload.playerId !== playerId) {
-                this.handleRemoteNewtPickup(payload.payload);
+                scene.handleRemoteNewtPickup(payload.payload);
             }
         });
 
         // Listen for newt save events
         multiplayerChannel.on('broadcast', { event: 'newt_save' }, (payload) => {
+            const scene = getScene();
+            if (!scene) return;
             if (isHost || payload.payload.playerId !== playerId) {
-                this.handleNewtSave(payload.payload);
+                scene.handleNewtSave(payload.payload);
             }
         });
 
         // Listen for partner disconnect
         multiplayerChannel.on('broadcast', { event: 'player_disconnect' }, (payload) => {
+            const scene = getScene();
+            if (!scene) return;
             if (payload.payload.playerId !== playerId) {
-                this.handlePartnerDisconnect();
+                scene.handlePartnerDisconnect();
             }
         });
 
         // Listen for game over event (normal end of game)
         multiplayerChannel.on('broadcast', { event: 'game_over' }, (payload) => {
-            if (payload.payload.playerId !== playerId && !this.gameOver) {
-                this.handleRemoteGameOver(payload.payload);
+            const scene = getScene();
+            if (!scene) return;
+            if (payload.payload.playerId !== playerId && !scene.gameOver) {
+                scene.handleRemoteGameOver(payload.payload);
             }
         });
 
         // Listen for partner's name during game over screen
         multiplayerChannel.on('broadcast', { event: 'player_name' }, (payload) => {
+            const scene = getScene();
+            if (!scene) return;
             if (payload.payload.playerId !== playerId) {
-                this.handlePartnerName(payload.payload);
+                scene.handlePartnerName(payload.payload);
             }
         });
 
         // Listen for score submission confirmation
         multiplayerChannel.on('broadcast', { event: 'score_submitted' }, (payload) => {
-            this.handleScoreSubmitted(payload.payload);
+            const scene = getScene();
+            if (!scene) return;
+            scene.handleScoreSubmitted(payload.payload);
         });
 
         // Guest -> host hit intent, host -> guest hit outcome
         multiplayerChannel.on('broadcast', { event: 'player_hit_intent' }, (payload) => {
+            const scene = getScene();
+            if (!scene) return;
             if (isHost) {
-                this.handlePlayerHitIntent(payload.payload);
+                scene.handlePlayerHitIntent(payload.payload);
             }
         });
 
         multiplayerChannel.on('broadcast', { event: 'player_hit' }, (payload) => {
-            this.handlePlayerHitOutcome(payload.payload);
+            const scene = getScene();
+            if (!scene) return;
+            scene.handlePlayerHitOutcome(payload.payload);
         });
 
         // Audio sharing signaling
@@ -2784,6 +2899,8 @@ class GameScene extends Phaser.Scene {
 
         // Listen for player ready announcements
         multiplayerChannel.on('broadcast', { event: 'player_ready' }, (payload) => {
+            const scene = getScene();
+            if (!scene) return;
             if (payload.payload.playerId !== playerId) {
                 console.log('Partner is ready:', payload.payload.playerId);
                 console.log('Partner character:', payload.payload.character);
@@ -2794,27 +2911,30 @@ class GameScene extends Phaser.Scene {
                     console.log('Updated remoteCharacter from ready announcement:', remoteCharacter);
                     
                     // Recreate remote player with correct character
-                    if (this.remotePlayer) {
-                        this.remotePlayer.destroy();
+                    if (scene.remotePlayer) {
+                        scene.remotePlayer.destroy();
                     }
-                    this.createRemotePlayer();
+                    scene.createRemotePlayer();
                 }
                 
                 // Make remote player visible
-                if (this.remotePlayer) {
-                    this.remotePlayer.setAlpha(1.0);
+                if (scene.remotePlayer) {
+                    scene.remotePlayer.setAlpha(1.0);
                     console.log('Remote player made visible');
                 }
             }
         });
 
         multiplayerChannel.subscribe((status) => {
+            const scene = getScene();
             console.log('Multiplayer channel status:', status);
             if (status === 'SUBSCRIBED') {
                 console.log('✓ Subscribed to multiplayer channel');
                 console.log('Player ID:', playerId);
                 console.log('Selected character:', selectedCharacter);
                 console.log('Remote character:', remoteCharacter);
+                
+                if (!scene) return;
                 
                 // Announce ourselves to the other player
                 multiplayerChannel.send({
@@ -2829,22 +2949,22 @@ class GameScene extends Phaser.Scene {
                 console.log('→ Sent player_ready announcement');
                 
                 // Immediately broadcast initial position
-                this.broadcastPlayerState();
+                scene.broadcastPlayerState();
                 
                 // Start broadcasting position continuously
-                this.broadcastTimer = this.time.addEvent({
+                scene.broadcastTimer = scene.time.addEvent({
                     delay: 50, // 20Hz broadcast rate
-                    callback: this.broadcastPlayerState,
-                    callbackScope: this,
+                    callback: scene.broadcastPlayerState,
+                    callbackScope: scene,
                     loop: true
                 });
                 
                 // Start disconnect detection
                 lastRemoteUpdate = Date.now();
-                this.disconnectCheckTimer = this.time.addEvent({
+                scene.disconnectCheckTimer = scene.time.addEvent({
                     delay: 1000,
-                    callback: this.checkPartnerConnection,
-                    callbackScope: this,
+                    callback: scene.checkPartnerConnection,
+                    callbackScope: scene,
                     loop: true
                 });
             }
@@ -2951,14 +3071,10 @@ class GameScene extends Phaser.Scene {
         const targetX = data.xRatio * w;
         const targetY = data.yRatio * h;
         
-        // Smoothly interpolate to new position
-        this.tweens.add({
-            targets: this.remotePlayer,
-            x: targetX,
-            y: targetY,
-            duration: 50,
-            ease: 'Linear'
-        });
+        // Directly set position for smooth updates at 20Hz
+        // (Using tweens at this rate causes stacking and jitter)
+        this.remotePlayer.x = targetX;
+        this.remotePlayer.y = targetY;
         
         this.remotePlayer.scaleX = data.scaleX;
         
@@ -4978,6 +5094,10 @@ class GameScene extends Phaser.Scene {
                 this.rainSound.destroy();
             }
             if (this.isMultiplayer) {
+                // Clear active scene reference
+                if (window._activeGameScene === this) {
+                    window._activeGameScene = null;
+                }
                 cleanupMultiplayerState();
             }
         });
