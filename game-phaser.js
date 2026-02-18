@@ -1710,10 +1710,13 @@ class LobbyScene extends Phaser.Scene {
             this.inputEl.parentNode.removeChild(this.inputEl);
             this.inputEl = null;
         }
-        // If we created a room but didn't start, delete it
+        // Only delete the room if we were still waiting (not transitioning to game)
         if (isHost && roomId && this.lobbyState === 'waiting') {
             deleteRoom();
         }
+        // Reset transition guard for future use of this scene instance
+        this._transitioning = false;
+        this._transitioned = false;
     }
 
     createLobbyMenu() {
@@ -2081,6 +2084,13 @@ class LobbyScene extends Phaser.Scene {
     }
 
     startMultiplayerGame() {
+        // Guard against double-calls (Supabase realtime can fire duplicate events)
+        if (this._transitioning) return;
+        this._transitioning = true;
+
+        // Mark lobby as starting so cleanup() won't delete the room
+        this.lobbyState = 'starting';
+
         if (this.dotsTimer) this.dotsTimer.destroy();
         if (this.roomSubscription) {
             supabaseClient.removeChannel(this.roomSubscription);
@@ -2091,12 +2101,18 @@ class LobbyScene extends Phaser.Scene {
             this.inputEl = null;
         }
 
-        // Both players now go to character select (but their choice is already made)
-        // For simplicity, we'll skip character select in multiplayer and go straight to game
-        this.cameras.main.fadeOut(300, 0, 0, 0);
-        this.cameras.main.once('camerafadeoutcomplete', () => {
+        // Transition to game scene with fade, plus a safety timeout
+        // in case camerafadeoutcomplete never fires (prevents permanent black screen)
+        const doTransition = () => {
+            if (this._transitioned) return;
+            this._transitioned = true;
             this.scene.start('GameScene');
-        });
+        };
+
+        this.cameras.main.fadeOut(300, 0, 0, 0);
+        this.cameras.main.once('camerafadeoutcomplete', doTransition);
+        // Safety: if fade doesn't complete within 600ms, force the transition
+        this.time.delayedCall(600, doTransition);
     }
 }
 
@@ -2182,7 +2198,13 @@ class GameScene extends Phaser.Scene {
         this.lastWidth = this.scale.width;
         this.lastHeight = this.scale.height;
 
-        this.scale.on('resize', (gameSize) => {
+        // Remove any previously registered resize handler to prevent accumulation.
+        // this.scale is the shared Scale Manager; listeners on it persist across
+        // scene shutdowns, so we must clean up manually.
+        if (this._resizeHandler) {
+            this.scale.off('resize', this._resizeHandler);
+        }
+        this._resizeHandler = (gameSize) => {
             // Don't restart during game over to preserve the name input form
             if (this.gameOver) return;
 
@@ -2200,7 +2222,8 @@ class GameScene extends Phaser.Scene {
             this.lastWidth = gameSize.width;
             this.lastHeight = gameSize.height;
             this.scene.restart();
-        });
+        };
+        this.scale.on('resize', this._resizeHandler);
 
         // Only host spawns cars and newts in multiplayer
         if (!this.isMultiplayer || isHost) {
@@ -2214,6 +2237,10 @@ class GameScene extends Phaser.Scene {
             this.spawnNewt();
         }
 
+        // Ensure camera is in a clean state before fading in.
+        // Resets any stale fade/flash effects carried over from a scene restart.
+        this.cameras.main.fadeEffect.reset();
+        this.cameras.main.flashEffect.reset();
         this.cameras.main.fadeIn(300);
 
         // Rain effect
@@ -5092,6 +5119,11 @@ class GameScene extends Phaser.Scene {
             if (this.rainSound) {
                 this.rainSound.stop();
                 this.rainSound.destroy();
+            }
+            // Remove resize handler from shared Scale Manager to prevent leaks
+            if (this._resizeHandler) {
+                this.scale.off('resize', this._resizeHandler);
+                this._resizeHandler = null;
             }
             if (this.isMultiplayer) {
                 // Clear active scene reference
