@@ -64,6 +64,13 @@ let remoteCharacter = null;
 let multiplayerChannel = null;
 let lastRemoteUpdate = 0;
 
+// ===== VOICE CHAT STATE =====
+let peerConnection = null;
+let localStream = null;
+let remoteAudioEl = null;
+let voiceChatActive = false;
+let isMuted = false;
+
 // Generate unique player ID
 function generatePlayerId() {
     return 'player_' + Math.random().toString(36).substring(2, 15);
@@ -183,7 +190,26 @@ async function deleteRoom() {
     }
 }
 
+function cleanupVoiceChat() {
+    if (peerConnection) {
+        peerConnection.close();
+        peerConnection = null;
+    }
+    if (localStream) {
+        localStream.getTracks().forEach(track => track.stop());
+        localStream = null;
+    }
+    if (remoteAudioEl) {
+        remoteAudioEl.srcObject = null;
+        remoteAudioEl.remove();
+        remoteAudioEl = null;
+    }
+    voiceChatActive = false;
+    isMuted = false;
+}
+
 function cleanupMultiplayerState() {
+    cleanupVoiceChat();
     if (multiplayerChannel) {
         supabaseClient.removeChannel(multiplayerChannel);
         multiplayerChannel = null;
@@ -318,6 +344,34 @@ const Icons = {
         g.lineTo(x + s + 1, y - s - 1);
         g.lineTo(x + s - 4, y - s - 1);
         g.strokePath();
+    },
+
+    drawMic(g, x, y, size = 20, color = 0x00ff88, stroke = 2) {
+        const s = size / 2;
+        g.lineStyle(stroke, color);
+        // Mic body (capsule)
+        g.strokeRoundedRect(x - s * 0.25, y - s * 0.7, s * 0.5, s * 0.9, s * 0.25);
+        // Holder arc
+        g.beginPath();
+        g.arc(x, y + s * 0.05, s * 0.45, Math.PI, 0, false);
+        g.strokePath();
+        // Stand
+        g.lineBetween(x, y + s * 0.5, x, y + s * 0.8);
+        g.lineBetween(x - s * 0.3, y + s * 0.8, x + s * 0.3, y + s * 0.8);
+    },
+
+    drawMicOff(g, x, y, size = 20, color = 0xff4444, stroke = 2) {
+        const s = size / 2;
+        g.lineStyle(stroke, color);
+        g.strokeRoundedRect(x - s * 0.25, y - s * 0.7, s * 0.5, s * 0.9, s * 0.25);
+        g.beginPath();
+        g.arc(x, y + s * 0.05, s * 0.45, Math.PI, 0, false);
+        g.strokePath();
+        g.lineBetween(x, y + s * 0.5, x, y + s * 0.8);
+        g.lineBetween(x - s * 0.3, y + s * 0.8, x + s * 0.3, y + s * 0.8);
+        // Diagonal slash
+        g.lineStyle(stroke + 0.5, color);
+        g.lineBetween(x - s * 0.7, y - s * 0.9, x + s * 0.7, y + s * 0.9);
     }
 };
 
@@ -1694,6 +1748,25 @@ class GameScene extends Phaser.Scene {
             this.handlePlayerHitOutcome(payload.payload);
         });
 
+        // WebRTC voice chat signaling
+        multiplayerChannel.on('broadcast', { event: 'webrtc_offer' }, (payload) => {
+            if (payload.payload.playerId !== playerId) {
+                this.handleWebRTCOffer(payload.payload);
+            }
+        });
+
+        multiplayerChannel.on('broadcast', { event: 'webrtc_answer' }, (payload) => {
+            if (payload.payload.playerId !== playerId) {
+                this.handleWebRTCAnswer(payload.payload);
+            }
+        });
+
+        multiplayerChannel.on('broadcast', { event: 'webrtc_ice' }, (payload) => {
+            if (payload.payload.playerId !== playerId) {
+                this.handleWebRTCIce(payload.payload);
+            }
+        });
+
         multiplayerChannel.subscribe((status) => {
             console.log('Multiplayer channel status:', status);
             if (status === 'SUBSCRIBED') {
@@ -1716,6 +1789,9 @@ class GameScene extends Phaser.Scene {
                     callbackScope: this,
                     loop: true
                 });
+
+                // Start voice chat
+                this.setupVoiceChat();
             }
         });
     }
@@ -2218,6 +2294,245 @@ class GameScene extends Phaser.Scene {
         }
     }
 
+    // ===== VOICE CHAT METHODS =====
+
+    async setupVoiceChat() {
+        if (!this.isMultiplayer) return;
+        if (peerConnection) return; // Already connected (survives scene restart)
+
+        this._bufferedOffer = null;
+        this._bufferedIceCandidates = [];
+        this.voiceChatReady = false;
+
+        const rtcConfig = {
+            iceServers: [
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:stun1.l.google.com:19302' }
+            ]
+        };
+
+        try {
+            peerConnection = new RTCPeerConnection(rtcConfig);
+        } catch (err) {
+            console.warn('Voice chat: WebRTC not supported -', err.message);
+            this.voiceChatAvailable = false;
+            this.updateMicButton();
+            return;
+        }
+
+        peerConnection.ontrack = (event) => {
+            console.log('Voice chat: remote audio track received');
+            remoteAudioEl = document.createElement('audio');
+            remoteAudioEl.srcObject = event.streams[0];
+            remoteAudioEl.autoplay = true;
+            remoteAudioEl.style.display = 'none';
+            document.body.appendChild(remoteAudioEl);
+            voiceChatActive = true;
+            this.updateMicButton();
+        };
+
+        peerConnection.onicecandidate = (event) => {
+            if (event.candidate && multiplayerChannel) {
+                multiplayerChannel.send({
+                    type: 'broadcast',
+                    event: 'webrtc_ice',
+                    payload: { playerId: playerId, candidate: event.candidate.toJSON() }
+                });
+            }
+        };
+
+        peerConnection.oniceconnectionstatechange = () => {
+            if (!peerConnection) return;
+            const state = peerConnection.iceConnectionState;
+            console.log('Voice chat ICE state:', state);
+            if (state === 'connected' || state === 'completed') {
+                voiceChatActive = true;
+            } else if (state === 'failed' || state === 'disconnected' || state === 'closed') {
+                voiceChatActive = false;
+            }
+            this.updateMicButton();
+        };
+
+        // Request microphone
+        try {
+            localStream = await navigator.mediaDevices.getUserMedia({
+                audio: true, video: false
+            });
+        } catch (err) {
+            console.warn('Voice chat: mic unavailable -', err.message);
+            this.voiceChatAvailable = false;
+            peerConnection.close();
+            peerConnection = null;
+            this.updateMicButton();
+            return;
+        }
+
+        // Add local audio tracks
+        localStream.getTracks().forEach(track => {
+            peerConnection.addTrack(track, localStream);
+        });
+
+        this.voiceChatReady = true;
+        this.voiceChatAvailable = true;
+
+        // Host creates offer after a short delay to ensure guest has subscribed
+        if (isHost) {
+            this.time.delayedCall(1500, () => this.createAndSendOffer());
+        }
+
+        // Process any buffered signaling messages
+        if (this._bufferedOffer) {
+            await this.handleWebRTCOffer(this._bufferedOffer);
+            this._bufferedOffer = null;
+        }
+        for (const ice of this._bufferedIceCandidates) {
+            await this.handleWebRTCIce(ice);
+        }
+        this._bufferedIceCandidates = [];
+
+        this.updateMicButton();
+    }
+
+    async createAndSendOffer() {
+        if (!peerConnection || !multiplayerChannel) return;
+        try {
+            const offer = await peerConnection.createOffer();
+            await peerConnection.setLocalDescription(offer);
+            multiplayerChannel.send({
+                type: 'broadcast',
+                event: 'webrtc_offer',
+                payload: {
+                    playerId: playerId,
+                    sdp: peerConnection.localDescription.toJSON()
+                }
+            });
+            // Retry once if no answer received within 5 seconds
+            this._offerRetryTimer = this.time.delayedCall(5000, () => {
+                if (peerConnection &&
+                    peerConnection.signalingState === 'have-local-offer') {
+                    console.log('Voice chat: retrying offer');
+                    multiplayerChannel.send({
+                        type: 'broadcast',
+                        event: 'webrtc_offer',
+                        payload: {
+                            playerId: playerId,
+                            sdp: peerConnection.localDescription.toJSON()
+                        }
+                    });
+                }
+            });
+        } catch (err) {
+            console.error('Voice chat: offer failed -', err);
+        }
+    }
+
+    async handleWebRTCOffer(data) {
+        if (!peerConnection || !this.voiceChatReady) {
+            this._bufferedOffer = data;
+            return;
+        }
+        if (isHost) return; // Only guest handles offers
+
+        try {
+            await peerConnection.setRemoteDescription(
+                new RTCSessionDescription(data.sdp)
+            );
+            const answer = await peerConnection.createAnswer();
+            await peerConnection.setLocalDescription(answer);
+            multiplayerChannel.send({
+                type: 'broadcast',
+                event: 'webrtc_answer',
+                payload: {
+                    playerId: playerId,
+                    sdp: peerConnection.localDescription.toJSON()
+                }
+            });
+
+            // Process any ICE candidates that arrived before remote description was set
+            for (const ice of this._bufferedIceCandidates) {
+                await peerConnection.addIceCandidate(new RTCIceCandidate(ice.candidate));
+            }
+            this._bufferedIceCandidates = [];
+        } catch (err) {
+            console.error('Voice chat: answer failed -', err);
+        }
+    }
+
+    async handleWebRTCAnswer(data) {
+        if (!peerConnection || !isHost) return;
+        try {
+            await peerConnection.setRemoteDescription(
+                new RTCSessionDescription(data.sdp)
+            );
+            // Cancel retry timer
+            if (this._offerRetryTimer) {
+                this._offerRetryTimer.destroy();
+                this._offerRetryTimer = null;
+            }
+        } catch (err) {
+            console.error('Voice chat: set answer failed -', err);
+        }
+    }
+
+    async handleWebRTCIce(data) {
+        if (!peerConnection) {
+            if (!this._bufferedIceCandidates) this._bufferedIceCandidates = [];
+            this._bufferedIceCandidates.push(data);
+            return;
+        }
+        // ICE candidates can only be added after remote description is set
+        if (!peerConnection.remoteDescription) {
+            if (!this._bufferedIceCandidates) this._bufferedIceCandidates = [];
+            this._bufferedIceCandidates.push(data);
+            return;
+        }
+        try {
+            await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
+        } catch (err) {
+            console.error('Voice chat: ICE candidate failed -', err);
+        }
+    }
+
+    toggleMute() {
+        if (!localStream || !this.voiceChatAvailable) return;
+        isMuted = !isMuted;
+        localStream.getAudioTracks().forEach(track => {
+            track.enabled = !isMuted;
+        });
+        this.updateMicButton();
+    }
+
+    updateMicButton() {
+        if (!this.micBtnGraphics) return;
+        this.micBtnGraphics.clear();
+
+        const x = this.micBtnX;
+        const y = this.micBtnY;
+        const size = this.isCompact ? 16 : 20;
+        const btnRadius = this.isCompact ? 18 : 22;
+
+        if (!this.voiceChatAvailable) {
+            // Unavailable: dark gray circle, gray mic-off icon
+            this.micBtnGraphics.fillStyle(0x333333, 0.7);
+            this.micBtnGraphics.fillCircle(x, y, btnRadius);
+            Icons.drawMicOff(this.micBtnGraphics, x, y, size, 0x666666);
+        } else if (isMuted) {
+            // Muted: dark red circle, red border, red mic-off icon
+            this.micBtnGraphics.fillStyle(0x442222, 0.8);
+            this.micBtnGraphics.fillCircle(x, y, btnRadius);
+            this.micBtnGraphics.lineStyle(2, 0xff4444, 0.8);
+            this.micBtnGraphics.strokeCircle(x, y, btnRadius);
+            Icons.drawMicOff(this.micBtnGraphics, x, y, size, 0xff4444);
+        } else {
+            // Active: dark green circle, green border, green mic icon
+            this.micBtnGraphics.fillStyle(0x224422, 0.8);
+            this.micBtnGraphics.fillCircle(x, y, btnRadius);
+            this.micBtnGraphics.lineStyle(2, 0x00ff88, 0.8);
+            this.micBtnGraphics.strokeCircle(x, y, btnRadius);
+            Icons.drawMic(this.micBtnGraphics, x, y, size, 0x00ff88);
+        }
+    }
+
     drawMalePlayer(g, isPlayer2 = false) {
         // Shadow
         g.fillStyle(0x000000, 0.4); g.fillEllipse(0, 28, 35, 12);
@@ -2440,6 +2755,27 @@ class GameScene extends Phaser.Scene {
                 stroke: '#000000',
                 strokeThickness: 2
             }).setOrigin(0, 0).setDepth(200);
+        }
+
+        // Voice chat mic button (multiplayer only)
+        if (this.isMultiplayer) {
+            this.voiceChatAvailable = false; // Updated by setupVoiceChat
+            const btnRadius = this.isCompact ? 18 : 22;
+            this.micBtnX = this.scale.width - padding - btnRadius;
+            this.micBtnY = this.isCompact ? 56 : 68;
+
+            this.micBtnGraphics = this.add.graphics().setDepth(200);
+
+            // Invisible interactive hit area
+            this.micHitArea = this.add.circle(
+                this.micBtnX, this.micBtnY, btnRadius + 4, 0x000000, 0
+            ).setDepth(201).setInteractive({ useHandCursor: true });
+
+            this.micHitArea.on('pointerdown', () => {
+                this.toggleMute();
+            });
+
+            this.updateMicButton();
         }
 
         this.updateHUD();
@@ -3389,6 +3725,7 @@ class GameScene extends Phaser.Scene {
             this.broadcastGameOver();
             if (this.broadcastTimer) this.broadcastTimer.destroy();
             if (this.disconnectCheckTimer) this.disconnectCheckTimer.destroy();
+            if (this._offerRetryTimer) { this._offerRetryTimer.destroy(); this._offerRetryTimer = null; }
             await updateRoomStatus('finished');
         }
 
