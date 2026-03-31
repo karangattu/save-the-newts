@@ -93,22 +93,26 @@ function generateRoomCode() {
 }
 
 // Global click handler to help unlock audio on restricted browsers
+let _globalAudioResumeHandler = null;
 function setupGlobalAudioResumeListener() {
     if (!globalClickListenerAdded) {
-        const handler = () => {
+        _globalAudioResumeHandler = () => {
             const remoteAudio = document.getElementById('remote-audio');
             if (remoteAudio && remoteAudio.paused) {
                 remoteAudio.play().catch(() => {});
             }
         };
-        window.addEventListener('click', handler);
+        window.addEventListener('click', _globalAudioResumeHandler);
         globalClickListenerAdded = true;
     }
 }
 
 function cleanupGlobalAudioResumeListener() {
-    // Note: Cannot remove if added with anonymous function in original code
-    // This can be improved by storing reference
+    if (_globalAudioResumeHandler) {
+        window.removeEventListener('click', _globalAudioResumeHandler);
+        _globalAudioResumeHandler = null;
+        globalClickListenerAdded = false;
+    }
 }
 
 // Room management functions
@@ -231,6 +235,7 @@ function cleanupMultiplayerState() {
     }
     // Cleanup audio
     stopAudioSharing();
+    cleanupGlobalAudioResumeListener();
     // Clear active scene reference
     window._activeGameScene = null;
     gameMode = 'single';
@@ -276,6 +281,8 @@ const WEBRTC_CONFIG = {
 
 // Audio monitoring state
 let audioLevelCheckInterval = null;
+let audioLevelContext = null;
+let audioStatsInterval = null;
 let lastAudioLevel = 0;
 let silenceDetectionCount = 0;
 const SILENCE_THRESHOLD = 0.01; // Audio level threshold
@@ -564,11 +571,33 @@ async function initAudioSharing() {
             } else if (state === 'disconnected') {
                 connectionQuality = 'fair';
                 console.warn('Audio connection disconnected');
-                // Give it a moment to reconnect on its own
+                // Give it a moment to reconnect on its own, then trigger the failed path
                 setTimeout(() => {
                     if (audioPeerConnection && audioPeerConnection.connectionState === 'disconnected') {
-                        console.log('Connection still disconnected, triggering reconnection');
-                        audioPeerConnection.dispatchEvent(new Event('connectionstatechange'));
+                        console.log('Connection still disconnected after 3s, treating as failed');
+                        // Trigger reconnect via the failed-state logic instead of re-dispatching
+                        if (!isReconnecting && audioRetryCount < MAX_AUDIO_RETRIES) {
+                            isReconnecting = true;
+                            const delayMs = calculateBackoffDelay(audioRetryCount);
+                            audioRetryCount++;
+                            showAudioError(`Connection lost. Reconnecting (${audioRetryCount}/${MAX_AUDIO_RETRIES})...`);
+                            audioRetryTimeoutId = setTimeout(async () => {
+                                stopAudioSharing();
+                                const success = await initAudioSharing();
+                                if (success && multiplayerChannel) {
+                                    if (isHost) {
+                                        setTimeout(() => createAudioOffer(), 1000);
+                                    } else {
+                                        multiplayerChannel.send({
+                                            type: 'broadcast',
+                                            event: 'audio_request',
+                                            payload: { playerId: playerId }
+                                        });
+                                    }
+                                }
+                                isReconnecting = false;
+                            }, delayMs);
+                        }
                     }
                 }, 3000);
             } else if (state === 'closed') {
@@ -818,6 +847,9 @@ function stopAudioSharing() {
     stopConnectionQualityMonitoring();
     stopAudioLevelMonitoring();
     
+    // Stop audio stats monitoring
+    stopAudioStatsMonitoring();
+    
     // Stop local stream
     if (localAudioStream) {
         localAudioStream.getTracks().forEach(track => track.stop());
@@ -920,10 +952,12 @@ function showAudioError(message) {
 
 function startAudioStatsMonitoring() {
     if (!audioPeerConnection) return;
+    // Clear any existing stats monitor to prevent leaks
+    stopAudioStatsMonitoring();
     
-    const statsInterval = setInterval(async () => {
+    audioStatsInterval = setInterval(async () => {
         if (!audioPeerConnection) {
-            clearInterval(statsInterval);
+            stopAudioStatsMonitoring();
             return;
         }
         
@@ -940,9 +974,16 @@ function startAudioStatsMonitoring() {
             });
         } catch (error) {
             console.warn('Error getting audio stats:', error);
-            clearInterval(statsInterval);
+            stopAudioStatsMonitoring();
         }
     }, 5000);
+}
+
+function stopAudioStatsMonitoring() {
+    if (audioStatsInterval) {
+        clearInterval(audioStatsInterval);
+        audioStatsInterval = null;
+    }
 }
 
 function startConnectionQualityMonitoring() {
@@ -1004,9 +1045,13 @@ function startAudioLevelMonitoring(stream) {
     if (audioLevelCheckInterval || !stream) return;
     
     try {
-        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        const analyser = audioContext.createAnalyser();
-        const microphone = audioContext.createMediaStreamSource(stream);
+        // Close previous AudioContext if any to prevent leaks
+        if (audioLevelContext) {
+            audioLevelContext.close().catch(() => {});
+        }
+        audioLevelContext = new (window.AudioContext || window.webkitAudioContext)();
+        const analyser = audioLevelContext.createAnalyser();
+        const microphone = audioLevelContext.createMediaStreamSource(stream);
         const dataArray = new Uint8Array(analyser.frequencyBinCount);
         
         microphone.connect(analyser);
@@ -1043,6 +1088,10 @@ function stopAudioLevelMonitoring() {
     if (audioLevelCheckInterval) {
         clearInterval(audioLevelCheckInterval);
         audioLevelCheckInterval = null;
+    }
+    if (audioLevelContext) {
+        audioLevelContext.close().catch(() => {});
+        audioLevelContext = null;
     }
     lastAudioLevel = 0;
     silenceDetectionCount = 0;
@@ -2155,6 +2204,8 @@ class GameScene extends Phaser.Scene {
         this.partnerDisconnected = false;
         this.lastHitIntentAt = 0;
         this.lastHitByPlayer = new Map();
+        this.gameStateSeq = 0;
+        this.lastReceivedSeq = -1;
         
         // Register this as the active game scene for multiplayer channel callbacks
         window._activeGameScene = this;
@@ -3060,7 +3111,9 @@ class GameScene extends Phaser.Scene {
             h: c.h
         }));
 
+        this.gameStateSeq++;
         const payload = {
+            seq: this.gameStateSeq,
             teamScore: this.teamScore,
             lives: this.lives,
             saved: this.saved,
@@ -3123,6 +3176,11 @@ class GameScene extends Phaser.Scene {
     handleGameStateUpdate(data) {
         if (isHost || this.gameOver) return;
         
+        // Drop out-of-order messages
+        if (data.seq !== undefined && data.seq <= this.lastReceivedSeq) return;
+        if (data.seq !== undefined) this.lastReceivedSeq = data.seq;
+        
+        // Host is the authoritative source for all game state on the guest
         this.teamScore = data.teamScore;
         this.lives = data.lives;
         this.saved = data.saved;
@@ -3289,6 +3347,13 @@ class GameScene extends Phaser.Scene {
         // Find the newt and mark it as carried by remote
         const newt = this.newts.getChildren().find(n => n.newtId === data.newtId);
         if (newt && !newt.isCarried) {
+            // If the local player also picked this up in the same frame, resolve conflict:
+            // the newt stays with whoever claimed it first. Since remote already claimed it,
+            // remove from local player's carried list if present.
+            const localIdx = this.player.carried.indexOf(newt);
+            if (localIdx !== -1) {
+                this.player.carried.splice(localIdx, 1);
+            }
             newt.isCarried = true;
             newt.carriedBy = data.playerId; // Use actual playerId for proper sync
             if (this.remotePlayer) {
@@ -4530,6 +4595,10 @@ class GameScene extends Phaser.Scene {
             if (!newt.isCarried && !newt.carriedBy && this.player.carried.length < this.player.carryCapacity) {
                 const dist = Phaser.Math.Distance.Between(this.player.x, this.player.y, newt.x, newt.y);
                 if (dist < 50) {
+                    // In multiplayer, check remote player hasn't already claimed this newt
+                    if (this.isMultiplayer && this.remotePlayer && this.remotePlayer.carried) {
+                        if (this.remotePlayer.carried.some(n => n && n.newtId === newt.newtId)) return;
+                    }
                     newt.isCarried = true;
                     newt.carriedBy = playerId || 'local'; // Use playerId for multiplayer sync
                     this.player.carried.push(newt);
@@ -4557,15 +4626,21 @@ class GameScene extends Phaser.Scene {
                 this.player.carried.forEach(newt => {
                     const correct = (newt.dest === 'FOREST' && inForest) || (newt.dest === 'LAKE' && inLake);
                     if (correct) {
-                        this.saved++;
                         this.streak++;
                         if (this.streak > this.maxStreak) this.maxStreak = this.streak;
                         
-                        // Use teamScore in multiplayer, score in single player
                         if (this.isMultiplayer) {
-                            this.teamScore += 100;
+                            // In multiplayer, only the host tracks authoritative score.
+                            // Guest increments are visual only and will be overwritten by host state.
+                            if (isHost) {
+                                this.teamScore += 100;
+                                this.saved++;
+                            }
+                            // Guest: don't increment teamScore/saved locally — host state overwrites it.
+                            // This prevents the flicker/rollback when host broadcasts game_state.
                         } else {
                             this.score += 100;
+                            this.saved++;
                         }
                         
                         if (this.cache.audio.exists('sfx_saved')) this.sound.play('sfx_saved', { volume: 0.6 });
@@ -4615,7 +4690,11 @@ class GameScene extends Phaser.Scene {
         this.lost++;
         this.streak = 0; // Reset streak when newt is lost
         this.achievements.perfectStart = false;
-        this.score = Math.max(0, this.score - 10); // Deduct 10 points
+        if (this.isMultiplayer) {
+            this.teamScore = Math.max(0, this.teamScore - 10);
+        } else {
+            this.score = Math.max(0, this.score - 10);
+        }
         this.showFloatingText(newt.x, newt.y, '-10', '#ff0000', true);
         if (this.cache.audio.exists('sfx_hit')) this.sound.play('sfx_hit', { volume: 0.7 });
         
@@ -5378,7 +5457,26 @@ class GameScene extends Phaser.Scene {
     }
 
     async refreshLeaderboard() {
-        this.scene.restart(); // Simple refresh for now to clear graphics
+        // In multiplayer, never restart the scene — it destroys the channel, WebRTC audio, and all sync state.
+        // Instead, re-fetch and redraw the leaderboard in-place.
+        if (this.isMultiplayer) {
+            // Just re-draw the leaderboard section
+            const { width } = this.scale;
+            const startY = this.leaderboardY;
+            const scores = await getLeaderboard();
+            // Remove old leaderboard entries (they're just loose text children)
+            // We can't easily target them, so just overlay fresh ones
+            if (scores.length > 0) {
+                scores.forEach((s, i) => {
+                    const medal = i === 0 ? '1st' : i === 1 ? '2nd' : i === 2 ? '3rd' : `${i + 1}th`;
+                    this.add.text(width / 2, startY + 35 + (i * 22), `${medal}  ${s.player_name} - ${s.score}`, {
+                        fontFamily: 'Outfit, sans-serif', fontSize: '15px', color: '#ffffff'
+                    }).setOrigin(0.5).setDepth(303);
+                });
+            }
+            return;
+        }
+        this.scene.restart();
     }
 }
 
