@@ -50,6 +50,9 @@ async function getLeaderboard() {
 // ===== SELECTED CHARACTER =====
 let selectedCharacter = 'male'; // 'male' or 'female'
 
+// ===== PLAYER NAME (collected before gameplay) =====
+let playerName = '';
+
 // ===== MULTIPLAYER STATE =====
 let gameMode = 'single'; // 'single' or 'multi'
 let isHost = false;
@@ -61,26 +64,12 @@ let remoteCharacter = null;
 let multiplayerChannel = null;
 let lastRemoteUpdate = 0;
 
-// ===== AUDIO SHARING STATE =====
-let audioPeerConnection = null;
-let localAudioStream = null;
-let remoteAudioStream = null;
-let isAudioEnabled = false;
+// ===== VOICE CHAT STATE =====
+let peerConnection = null;
+let localStream = null;
+let remoteAudioEl = null;
+let voiceChatActive = false;
 let isMuted = false;
-let audioSignalingQueue = [];
-let audioIceCandidatesQueue = [];
-let audioConnectionStartTime = null;
-let audioConnectionTimeoutId = null;
-const MAX_ICE_QUEUE = 50;
-const AUDIO_CONNECTION_TIMEOUT = 15000; // 15 seconds
-let globalClickListenerAdded = false;
-let audioRetryCount = 0;
-const MAX_AUDIO_RETRIES = 5;
-const BASE_RETRY_DELAY = 1000;
-let audioRetryTimeoutId = null;
-let audioQualityMonitorInterval = null;
-let connectionQuality = 'unknown'; // unknown, excellent, good, fair, poor
-let isReconnecting = false;
 
 // Generate unique player ID
 function generatePlayerId() {
@@ -92,28 +81,6 @@ function generateRoomCode() {
     return Math.floor(1000 + Math.random() * 9000).toString();
 }
 
-// Global click handler to help unlock audio on restricted browsers
-let _globalAudioResumeHandler = null;
-function setupGlobalAudioResumeListener() {
-    if (!globalClickListenerAdded) {
-        _globalAudioResumeHandler = () => {
-            const remoteAudio = document.getElementById('remote-audio');
-            if (remoteAudio && remoteAudio.paused) {
-                remoteAudio.play().catch(() => {});
-            }
-        };
-        window.addEventListener('click', _globalAudioResumeHandler);
-        globalClickListenerAdded = true;
-    }
-}
-
-function cleanupGlobalAudioResumeListener() {
-    if (_globalAudioResumeHandler) {
-        window.removeEventListener('click', _globalAudioResumeHandler);
-        _globalAudioResumeHandler = null;
-        globalClickListenerAdded = false;
-    }
-}
 
 // Room management functions
 async function createRoom(hostCharacter) {
@@ -224,20 +191,30 @@ async function deleteRoom() {
     }
 }
 
+function cleanupVoiceChat() {
+    if (peerConnection) {
+        peerConnection.close();
+        peerConnection = null;
+    }
+    if (localStream) {
+        localStream.getTracks().forEach(track => track.stop());
+        localStream = null;
+    }
+    if (remoteAudioEl) {
+        remoteAudioEl.srcObject = null;
+        remoteAudioEl.remove();
+        remoteAudioEl = null;
+    }
+    voiceChatActive = false;
+    isMuted = false;
+}
+
 function cleanupMultiplayerState() {
+    cleanupVoiceChat();
     if (multiplayerChannel) {
-        try {
-            supabaseClient.removeChannel(multiplayerChannel);
-        } catch (e) {
-            console.warn('Error removing multiplayer channel:', e);
-        }
+        supabaseClient.removeChannel(multiplayerChannel);
         multiplayerChannel = null;
     }
-    // Cleanup audio
-    stopAudioSharing();
-    cleanupGlobalAudioResumeListener();
-    // Clear active scene reference
-    window._activeGameScene = null;
     gameMode = 'single';
     isHost = false;
     roomCode = null;
@@ -248,854 +225,6 @@ function cleanupMultiplayerState() {
     lastRemoteUpdate = 0;
 }
 
-// ===== AUDIO SHARING FUNCTIONS =====
-// Detect browser and platform
-const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
-const isSafari = /Safari/.test(navigator.userAgent) && !/Chrome/.test(navigator.userAgent);
-const isIOSSafari = isIOS && isSafari;
-const isFirefox = /Firefox/.test(navigator.userAgent);
-const isChrome = /Chrome/.test(navigator.userAgent) && !isSafari;
-
-const WEBRTC_CONFIG = {
-    iceServers: [
-        // STUN servers for NAT discovery
-        { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' },
-        { urls: 'stun:stun2.l.google.com:19302' },
-        // Public TURN servers as fallback for symmetric NAT
-        { 
-            urls: 'turn:openrelay.metered.ca:80',
-            username: 'openrelayproject',
-            credential: 'openrelayproject'
-        },
-        { 
-            urls: 'turn:openrelay.metered.ca:443',
-            username: 'openrelayproject',
-            credential: 'openrelayproject'
-        }
-    ],
-    iceTransportPolicy: 'all', // Try all connection methods
-    bundlePolicy: 'max-bundle', // Optimize bandwidth
-    rtcpMuxPolicy: 'require' // Multiplex RTP/RTCP for efficiency
-};
-
-// Audio monitoring state
-let audioLevelCheckInterval = null;
-let audioLevelContext = null;
-let audioStatsInterval = null;
-let lastAudioLevel = 0;
-let silenceDetectionCount = 0;
-const SILENCE_THRESHOLD = 0.01; // Audio level threshold
-const MAX_SILENCE_CHECKS = 10; // 10 seconds of silence triggers warning
-
-function calculateBackoffDelay(retryCount) {
-    return BASE_RETRY_DELAY * Math.pow(2, retryCount);
-}
-
-async function initAudioSharing() {
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        console.warn('WebRTC not supported in this browser');
-        showAudioError('WebRTC not supported in this browser');
-        return false;
-    }
-
-    try {
-        // Reuse existing stream if possible to avoid multiple permission prompts
-        if (!localAudioStream || !localAudioStream.active) {
-            console.log('Requesting microphone access (attempt', audioRetryCount + 1, ')...');
-            try {
-                // Browser-specific audio constraints
-                let audioConstraints;
-                if (isIOSSafari) {
-                    // iOS Safari has limited constraint support
-                    audioConstraints = { audio: true, video: false };
-                    console.log('Using basic audio constraints for iOS Safari');
-                } else if (isFirefox) {
-                    // Firefox prefers these settings
-                    audioConstraints = {
-                        audio: {
-                            echoCancellation: true,
-                            noiseSuppression: true,
-                            autoGainControl: true
-                        },
-                        video: false
-                    };
-                } else {
-                    // Chrome and others
-                    audioConstraints = {
-                        audio: {
-                            echoCancellation: true,
-                            noiseSuppression: true,
-                            autoGainControl: true,
-                            sampleRate: 48000
-                        },
-                        video: false
-                    };
-                }
-                
-                localAudioStream = await navigator.mediaDevices.getUserMedia(audioConstraints);
-                console.log('Microphone access granted');
-                audioRetryCount = 0; // Reset on success
-            } catch (permError) {
-                // Handle specific permission errors
-                if (permError.name === 'NotAllowedError') {
-                    console.warn('User denied microphone permission');
-                    showAudioError('Microphone access denied. Check browser permissions.');
-                    audioRetryCount = 0; // Don't retry if user explicitly denied
-                    return false;
-                } else if (permError.name === 'NotFoundError') {
-                    console.warn('No microphone found');
-                    showAudioError('No microphone device found on this device.');
-                    audioRetryCount = 0;
-                    return false;
-                } else if (permError.name === 'NotSupportedError') {
-                    console.warn('getUserMedia not supported');
-                    showAudioError('Audio not supported on this browser.');
-                    audioRetryCount = 0;
-                    return false;
-                } else if (permError.name === 'AbortError' || permError.name === 'NotReadableError') {
-                    // Temporary errors - can retry
-                    console.warn('Microphone access interrupted:', permError);
-                    if (audioRetryCount < MAX_AUDIO_RETRIES) {
-                        const delayMs = calculateBackoffDelay(audioRetryCount);
-                        console.log(`Retrying audio init in ${delayMs}ms (${audioRetryCount + 1}/${MAX_AUDIO_RETRIES})`);
-                        audioRetryCount++;
-                        showAudioError(`Audio interrupted. Retrying (${audioRetryCount}/${MAX_AUDIO_RETRIES})...`);
-                        
-                        audioRetryTimeoutId = setTimeout(() => {
-                            initAudioSharing();
-                        }, delayMs);
-                        return false;
-                    } else {
-                        showAudioError('Audio initialization failed after multiple attempts.');
-                        audioRetryCount = 0;
-                        return false;
-                    }
-                } else {
-                    console.error('Microphone error:', permError);
-                    showAudioError('Microphone error: ' + permError.message);
-                    return false;
-                }
-            }
-        } else {
-            console.log('Reusing existing microphone stream');
-            audioRetryCount = 0;
-        }
-        
-        // Create peer connection
-        // Close existing one if it exists to avoid leaks
-        if (audioPeerConnection) {
-            audioPeerConnection.close();
-        }
-        audioPeerConnection = new RTCPeerConnection(WEBRTC_CONFIG);
-        console.log('✓ RTCPeerConnection created with config:', WEBRTC_CONFIG);
-        
-        // Add local stream tracks to peer connection
-        localAudioStream.getTracks().forEach(track => {
-            const sender = audioPeerConnection.addTrack(track, localAudioStream);
-            console.log('✓ Added local audio track:', track.id, 'enabled:', track.enabled, 'muted:', track.muted);
-        });
-        
-        // Handle incoming remote stream
-        audioPeerConnection.ontrack = (event) => {
-            console.log('════════════════════════════════════════');
-            console.log('🎵 Remote audio track received!');
-            console.log('Track ID:', event.track.id);
-            console.log('Track kind:', event.track.kind);
-            console.log('Track enabled:', event.track.enabled);
-            console.log('Track muted:', event.track.muted);
-            console.log('Track readyState:', event.track.readyState);
-            console.log('Streams count:', event.streams.length);
-            console.log('════════════════════════════════════════');
-            
-            // Prefer the stream from the event, otherwise create one if needed
-            remoteAudioStream = event.streams[0] || new MediaStream([event.track]);
-            
-            // Cleanup existing remote audio if any
-            const existingAudio = document.getElementById('remote-audio');
-            if (existingAudio) {
-                console.log('Replacing existing remote audio element');
-                existingAudio.srcObject = null;
-                existingAudio.remove();
-            }
-
-            // Create audio element for remote stream
-            const remoteAudio = document.createElement('audio');
-            remoteAudio.id = 'remote-audio';
-            remoteAudio.srcObject = remoteAudioStream;
-            remoteAudio.autoplay = true;
-            remoteAudio.playsInline = true;
-            remoteAudio.volume = 1.0;
-            
-            // iOS Safari specific attributes
-            if (isIOSSafari) {
-                remoteAudio.setAttribute('webkit-playsinline', 'true');
-                remoteAudio.setAttribute('playsinline', 'true');
-            }
-            
-            document.body.appendChild(remoteAudio);
-            console.log('✓ Remote audio element created and appended to DOM');
-            console.log('Audio element properties:', {
-                id: remoteAudio.id,
-                autoplay: remoteAudio.autoplay,
-                volume: remoteAudio.volume,
-                muted: remoteAudio.muted,
-                paused: remoteAudio.paused
-            });
-            
-            // Browser-specific playback handling
-            const playAudio = () => {
-                remoteAudio.play().then(() => {
-                    console.log('✓ Remote audio playback started successfully');
-                    console.log('Audio playing:', !remoteAudio.paused);
-                    // Start monitoring audio levels
-                    startAudioLevelMonitoring(remoteAudioStream);
-                }).catch(err => console.error('Play failed:', err));
-            };
-            
-            if (isIOSSafari) {
-                // iOS Safari needs delay and user interaction
-                setTimeout(() => {
-                    playAudio();
-                }, 500);
-                
-                const iosHandler = () => {
-                    playAudio();
-                    document.removeEventListener('touchend', iosHandler);
-                    document.removeEventListener('click', iosHandler);
-                };
-                document.addEventListener('touchend', iosHandler);
-                document.addEventListener('click', iosHandler);
-            } else {
-                // Desktop browsers
-                playAudio();
-                
-                const retryHandler = () => {
-                    playAudio();
-                    window.removeEventListener('click', retryHandler);
-                };
-                window.addEventListener('click', retryHandler);
-            }
-        };
-        
-        // Handle ICE candidates
-        audioPeerConnection.onicecandidate = (event) => {
-            if (event.candidate) {
-                console.log('→ Sending ICE candidate:', event.candidate.type, event.candidate.candidate?.substring(0, 50) + '...');
-                if (multiplayerChannel) {
-                    multiplayerChannel.send({
-                        type: 'broadcast',
-                        event: 'audio_ice_candidate',
-                        payload: {
-                            playerId: playerId,
-                            candidate: event.candidate
-                        }
-                    });
-                } else {
-                    console.error('✗ Cannot send ICE candidate - multiplayerChannel is null');
-                }
-            } else {
-                console.log('ICE gathering completed');
-            }
-        };
-        
-        // Track ICE gathering state
-        audioPeerConnection.onicegatheringstatechange = () => {
-            console.log('ICE gathering state:', audioPeerConnection.iceGatheringState);
-        };
-        
-        // Track ICE connection state
-        audioPeerConnection.oniceconnectionstatechange = () => {
-            console.log('ICE connection state:', audioPeerConnection.iceConnectionState);
-            if (audioPeerConnection.iceConnectionState === 'failed') {
-                console.error('✗ ICE connection failed - possible firewall/NAT issue');
-            }
-        };
-        
-        // Handle connection state changes with reconnection logic
-        audioPeerConnection.onconnectionstatechange = () => {
-            const state = audioPeerConnection.connectionState;
-            console.log('Audio connection state:', state);
-            
-            if (state === 'connected') {
-                audioRetryCount = 0; // Reset retry count
-                isReconnecting = false;
-                connectionQuality = 'good';
-                
-                if (audioConnectionTimeoutId) {
-                    clearTimeout(audioConnectionTimeoutId);
-                    audioConnectionTimeoutId = null;
-                }
-                
-                // Validate audio tracks
-                validateAudioConnection();
-                
-                // Start quality monitoring
-                startConnectionQualityMonitoring();
-                
-                console.log('Audio connection established successfully');
-            } else if (state === 'failed') {
-                // Connection failed - attempt reconnection
-                connectionQuality = 'poor';
-                
-                if (!isReconnecting && audioRetryCount < MAX_AUDIO_RETRIES) {
-                    isReconnecting = true;
-                    const delayMs = calculateBackoffDelay(audioRetryCount);
-                    console.error(`Audio connection failed. Reconnecting in ${delayMs}ms (${audioRetryCount + 1}/${MAX_AUDIO_RETRIES})`);
-                    audioRetryCount++;
-                    showAudioError(`Connection lost. Reconnecting (${audioRetryCount}/${MAX_AUDIO_RETRIES})...`);
-                    
-                    audioRetryTimeoutId = setTimeout(async () => {
-                        stopAudioSharing();
-                        const success = await initAudioSharing();
-                        if (success && multiplayerChannel) {
-                            // Re-initiate signaling
-                            if (isHost) {
-                                setTimeout(() => createAudioOffer(), 1000);
-                            } else {
-                                multiplayerChannel.send({
-                                    type: 'broadcast',
-                                    event: 'audio_request',
-                                    payload: { playerId: playerId }
-                                });
-                            }
-                        }
-                        isReconnecting = false;
-                    }, delayMs);
-                } else if (audioRetryCount >= MAX_AUDIO_RETRIES) {
-                    console.error('Audio connection failed after maximum retries');
-                    showAudioError('Audio connection lost. Cannot reconnect.');
-                    audioRetryCount = 0;
-                    isReconnecting = false;
-                }
-            } else if (state === 'disconnected') {
-                connectionQuality = 'fair';
-                console.warn('Audio connection disconnected');
-                // Give it a moment to reconnect on its own, then trigger the failed path
-                setTimeout(() => {
-                    if (audioPeerConnection && audioPeerConnection.connectionState === 'disconnected') {
-                        console.log('Connection still disconnected after 3s, treating as failed');
-                        // Trigger reconnect via the failed-state logic instead of re-dispatching
-                        if (!isReconnecting && audioRetryCount < MAX_AUDIO_RETRIES) {
-                            isReconnecting = true;
-                            const delayMs = calculateBackoffDelay(audioRetryCount);
-                            audioRetryCount++;
-                            showAudioError(`Connection lost. Reconnecting (${audioRetryCount}/${MAX_AUDIO_RETRIES})...`);
-                            audioRetryTimeoutId = setTimeout(async () => {
-                                stopAudioSharing();
-                                const success = await initAudioSharing();
-                                if (success && multiplayerChannel) {
-                                    if (isHost) {
-                                        setTimeout(() => createAudioOffer(), 1000);
-                                    } else {
-                                        multiplayerChannel.send({
-                                            type: 'broadcast',
-                                            event: 'audio_request',
-                                            payload: { playerId: playerId }
-                                        });
-                                    }
-                                }
-                                isReconnecting = false;
-                            }, delayMs);
-                        }
-                    }
-                }, 3000);
-            } else if (state === 'closed') {
-                if (audioConnectionTimeoutId) {
-                    clearTimeout(audioConnectionTimeoutId);
-                }
-                stopConnectionQualityMonitoring();
-                stopAudioLevelMonitoring();
-            }
-            
-            updateAudioStatusIndicator();
-        };
-        
-        // Handle negotiation needed (for track changes)
-        audioPeerConnection.onnegotiationneeded = async () => {
-            if (!isHost) return; // Only host initiates renegotiation
-            console.log('Renegotiation needed');
-            try {
-                await createAudioOffer();
-            } catch (error) {
-                console.error('Renegotiation failed:', error);
-            }
-        };
-        
-        isAudioEnabled = true;
-        setupGlobalAudioResumeListener();
-
-        // Set up connection timeout with retry logic
-        audioConnectionStartTime = Date.now();
-        audioConnectionTimeoutId = setTimeout(() => {
-            if (audioPeerConnection && audioPeerConnection.connectionState === 'connecting') {
-                console.error('Audio connection timeout after ' + AUDIO_CONNECTION_TIMEOUT + 'ms');
-                
-                if (audioRetryCount < MAX_AUDIO_RETRIES) {
-                    const delayMs = calculateBackoffDelay(audioRetryCount);
-                    audioRetryCount++;
-                    showAudioError(`Connection timeout. Retrying (${audioRetryCount}/${MAX_AUDIO_RETRIES})...`);
-                    
-                    audioRetryTimeoutId = setTimeout(() => {
-                        stopAudioSharing();
-                        initAudioSharing();
-                    }, delayMs);
-                } else {
-                    showAudioError('Connection timeout after multiple attempts.');
-                    stopAudioSharing();
-                    isAudioEnabled = false;
-                    audioRetryCount = 0;
-                }
-            }
-        }, AUDIO_CONNECTION_TIMEOUT);
-
-        // Process any queued signaling messages
-        processAudioSignalingQueue();
-
-        return true;
-        
-    } catch (error) {
-        console.error('Error initializing audio sharing:', error);
-        return false;
-    }
-}
-
-async function createAudioOffer() {
-    if (!audioPeerConnection) {
-        console.error('✗ Cannot create offer - audioPeerConnection is null');
-        return;
-    }
-    if (!isHost) {
-        console.warn('Skipping offer creation - only host should create offers');
-        return;
-    }
-    
-    console.log('Creating audio offer...');
-    try {
-        const offer = await audioPeerConnection.createOffer({
-            offerToReceiveAudio: true,
-            offerToReceiveVideo: false
-        });
-        console.log('✓ Offer created:', offer.type);
-        
-        await audioPeerConnection.setLocalDescription(offer);
-        console.log('✓ Local description set (offer)');
-        
-        if (!multiplayerChannel) {
-            console.error('✗ Cannot send offer - multiplayerChannel is null');
-            return;
-        }
-        
-        multiplayerChannel.send({
-            type: 'broadcast',
-            event: 'audio_offer',
-            payload: {
-                playerId: playerId,
-                offer: offer
-            }
-        });
-        console.log('→ Audio offer sent via broadcast');
-    } catch (error) {
-        console.error('✗ Error creating audio offer:', error);
-    }
-}
-
-async function handleAudioOffer(data) {
-    console.log('← Received audio offer from:', data.playerId);
-    
-    if (isHost) {
-        console.warn('Ignoring offer - host should not receive offers');
-        return;
-    }
-    
-    if (!audioPeerConnection) {
-        console.log('Queuing audio offer - peer connection not ready yet');
-        audioSignalingQueue.push({ type: 'offer', data });
-        return;
-    }
-    
-    try {
-        await audioPeerConnection.setRemoteDescription(data.offer);
-        console.log('✓ Remote description set (offer)');
-        
-        const answer = await audioPeerConnection.createAnswer({
-            offerToReceiveAudio: true,
-            offerToReceiveVideo: false
-        });
-        console.log('✓ Answer created:', answer.type);
-        
-        await audioPeerConnection.setLocalDescription(answer);
-        console.log('✓ Local description set (answer)');
-        
-        if (!multiplayerChannel) {
-            console.error('✗ Cannot send answer - multiplayerChannel is null');
-            return;
-        }
-        
-        multiplayerChannel.send({
-            type: 'broadcast',
-            event: 'audio_answer',
-            payload: {
-                playerId: playerId,
-                answer: answer
-            }
-        });
-        console.log('→ Audio answer sent');
-        
-        // Now that remote description is set, process any queued ICE candidates
-        processIceCandidatesQueue();
-    } catch (error) {
-        console.error('✗ Error handling audio offer:', error);
-    }
-}
-
-async function handleAudioAnswer(data) {
-    console.log('← Received audio answer from:', data.playerId);
-    
-    if (!isHost) {
-        console.warn('Ignoring answer - guest should not receive answers');
-        return;
-    }
-    
-    if (!audioPeerConnection) {
-        console.log('Queuing audio answer - peer connection not ready yet');
-        audioSignalingQueue.push({ type: 'answer', data });
-        return;
-    }
-    
-    try {
-        await audioPeerConnection.setRemoteDescription(data.answer);
-        console.log('✓ Remote description set (answer)');
-        
-        // Now that remote description is set, process any queued ICE candidates
-        processIceCandidatesQueue();
-    } catch (error) {
-        console.error('✗ Error handling audio answer:', error);
-    }
-}
-
-async function handleAudioIceCandidate(data) {
-    console.log('← Received ICE candidate from:', data.playerId);
-    
-    if (!audioPeerConnection) {
-        console.log('Queuing ICE candidate - peer connection not ready');
-        if (audioIceCandidatesQueue.length < MAX_ICE_QUEUE) {
-            audioIceCandidatesQueue.push(data.candidate);
-        } else {
-            console.warn('✗ ICE candidate queue full (' + MAX_ICE_QUEUE + '), dropping oldest');
-            audioIceCandidatesQueue.shift();
-            audioIceCandidatesQueue.push(data.candidate);
-        }
-        return;
-    }
-    
-    const remoteDesc = audioPeerConnection.remoteDescription;
-    if (!remoteDesc) {
-        console.log('Queuing ICE candidate - remote description not set yet');
-        if (audioIceCandidatesQueue.length < MAX_ICE_QUEUE) {
-            audioIceCandidatesQueue.push(data.candidate);
-        }
-        return;
-    }
-    
-    try {
-        await audioPeerConnection.addIceCandidate(data.candidate);
-        console.log('✓ Added ICE candidate:', data.candidate.type);
-    } catch (error) {
-        console.error('✗ Error adding ICE candidate:', error);
-    }
-}
-
-function processAudioSignalingQueue() {
-    console.log('Processing audio signaling queue:', audioSignalingQueue.length);
-    while (audioSignalingQueue.length > 0) {
-        const item = audioSignalingQueue.shift();
-        if (item.type === 'offer') {
-            handleAudioOffer(item.data);
-        } else if (item.type === 'answer') {
-            handleAudioAnswer(item.data);
-        }
-    }
-}
-
-async function processIceCandidatesQueue() {
-    if (!audioPeerConnection) return;
-    console.log('Processing ICE candidates queue:', audioIceCandidatesQueue.length);
-    while (audioIceCandidatesQueue.length > 0) {
-        const candidate = audioIceCandidatesQueue.shift();
-        try {
-            await audioPeerConnection.addIceCandidate(candidate);
-        } catch (error) {
-            console.error('Error processing queued ICE candidate:', error);
-        }
-    }
-}
-
-function stopAudioSharing() {
-    // Clear all timeouts
-    if (audioRetryTimeoutId) {
-        clearTimeout(audioRetryTimeoutId);
-        audioRetryTimeoutId = null;
-    }
-    
-    if (audioConnectionTimeoutId) {
-        clearTimeout(audioConnectionTimeoutId);
-        audioConnectionTimeoutId = null;
-    }
-    
-    // Stop monitoring
-    stopConnectionQualityMonitoring();
-    stopAudioLevelMonitoring();
-    
-    // Stop audio stats monitoring
-    stopAudioStatsMonitoring();
-    
-    // Stop local stream
-    if (localAudioStream) {
-        localAudioStream.getTracks().forEach(track => track.stop());
-        localAudioStream = null;
-    }
-    
-    // Close peer connection
-    if (audioPeerConnection) {
-        // Remove event handlers to prevent leaks
-        audioPeerConnection.ontrack = null;
-        audioPeerConnection.onicecandidate = null;
-        audioPeerConnection.onconnectionstatechange = null;
-        audioPeerConnection.onnegotiationneeded = null;
-        audioPeerConnection.close();
-        audioPeerConnection = null;
-    }
-    
-    // Remove remote audio element safely
-    const remoteAudio = document.getElementById('remote-audio');
-    if (remoteAudio) {
-        remoteAudio.srcObject = null;
-        remoteAudio.pause();
-        remoteAudio.remove();
-    }
-    
-    // Clear queues
-    audioSignalingQueue = [];
-    audioIceCandidatesQueue = [];
-    audioConnectionStartTime = null;
-    connectionQuality = 'unknown';
-    isReconnecting = false;
-
-    isAudioEnabled = false;
-    isMuted = false;
-}
-
-function toggleMute() {
-    if (!localAudioStream) return;
-    
-    isMuted = !isMuted;
-    localAudioStream.getAudioTracks().forEach(track => {
-        track.enabled = !isMuted;
-    });
-    
-    console.log(isMuted ? 'Microphone muted' : 'Microphone unmuted');
-}
-
-function updateAudioStatusIndicator() {
-    // Log the current state for debugging
-    const state = audioPeerConnection?.connectionState || 'not-initialized';
-    const iceState = audioPeerConnection?.iceConnectionState || 'not-initialized';
-    
-    console.log('Audio Status Update:', {
-        connectionState: state,
-        iceConnectionState: iceState,
-        isEnabled: isAudioEnabled,
-        isMuted: isMuted,
-        hasLocalStream: !!localAudioStream,
-        hasRemoteStream: !!remoteAudioStream,
-        quality: connectionQuality
-    });
-    
-    // Dispatch event for UI updates
-    const event = new CustomEvent('audioStatusChanged', { 
-        detail: { 
-            isEnabled: isAudioEnabled, 
-            isMuted: isMuted,
-            connectionState: state,
-            iceConnectionState: iceState,
-            quality: connectionQuality
-        } 
-    });
-    window.dispatchEvent(event);
-}
-
-function validateAudioConnection() {
-    if (!audioPeerConnection) return false;
-    
-    // Check for actual audio tracks
-    const receivers = audioPeerConnection.getReceivers();
-    const audioTracks = receivers.filter(r => r.track && r.track.kind === 'audio');
-    
-    if (audioTracks.length === 0) {
-        console.warn('No audio tracks received from peer');
-        return false;
-    }
-    
-    // Check if tracks are enabled
-    const activeTracks = audioTracks.filter(t => t.track.enabled);
-    console.log('Active audio tracks:', activeTracks.length);
-    return activeTracks.length > 0;
-}
-
-function showAudioError(message) {
-    console.error('Audio Error:', message);
-    // Dispatch event for UI to show error
-    const event = new CustomEvent('audioError', { detail: { message } });
-    window.dispatchEvent(event);
-}
-
-function startAudioStatsMonitoring() {
-    if (!audioPeerConnection) return;
-    // Clear any existing stats monitor to prevent leaks
-    stopAudioStatsMonitoring();
-    
-    audioStatsInterval = setInterval(async () => {
-        if (!audioPeerConnection) {
-            stopAudioStatsMonitoring();
-            return;
-        }
-        
-        try {
-            const stats = await audioPeerConnection.getStats();
-            stats.forEach(report => {
-                if (report.type === 'inbound-rtp' && report.mediaType === 'audio') {
-                    if (report.bytesReceived > 0) {
-                        console.log('Audio RTP - Bytes received:', report.bytesReceived, 
-                                  'Packets lost:', report.packetsLost || 0,
-                                  'Jitter:', (report.jitter || 0).toFixed(4));
-                    }
-                }
-            });
-        } catch (error) {
-            console.warn('Error getting audio stats:', error);
-            stopAudioStatsMonitoring();
-        }
-    }, 5000);
-}
-
-function stopAudioStatsMonitoring() {
-    if (audioStatsInterval) {
-        clearInterval(audioStatsInterval);
-        audioStatsInterval = null;
-    }
-}
-
-function startConnectionQualityMonitoring() {
-    if (audioQualityMonitorInterval) return;
-    
-    audioQualityMonitorInterval = setInterval(async () => {
-        if (!audioPeerConnection) {
-            stopConnectionQualityMonitoring();
-            return;
-        }
-        
-        try {
-            const stats = await audioPeerConnection.getStats();
-            let packetsLost = 0;
-            let packetsReceived = 0;
-            let jitter = 0;
-            
-            stats.forEach(report => {
-                if (report.type === 'inbound-rtp' && report.mediaType === 'audio') {
-                    packetsLost = report.packetsLost || 0;
-                    packetsReceived = report.packetsReceived || 0;
-                    jitter = report.jitter || 0;
-                }
-            });
-            
-            // Calculate packet loss percentage
-            const totalPackets = packetsReceived + packetsLost;
-            const lossRate = totalPackets > 0 ? (packetsLost / totalPackets) * 100 : 0;
-            
-            // Determine quality
-            if (lossRate < 1 && jitter < 0.03) {
-                connectionQuality = 'excellent';
-            } else if (lossRate < 3 && jitter < 0.05) {
-                connectionQuality = 'good';
-            } else if (lossRate < 5 && jitter < 0.1) {
-                connectionQuality = 'fair';
-            } else {
-                connectionQuality = 'poor';
-                if (lossRate > 10) {
-                    console.warn('Poor audio quality detected:', lossRate.toFixed(1), '% packet loss');
-                }
-            }
-            
-            updateAudioStatusIndicator();
-        } catch (error) {
-            console.warn('Error monitoring connection quality:', error);
-        }
-    }, 2000); // Check every 2 seconds
-}
-
-function stopConnectionQualityMonitoring() {
-    if (audioQualityMonitorInterval) {
-        clearInterval(audioQualityMonitorInterval);
-        audioQualityMonitorInterval = null;
-    }
-}
-
-function startAudioLevelMonitoring(stream) {
-    if (audioLevelCheckInterval || !stream) return;
-    
-    try {
-        // Close previous AudioContext if any to prevent leaks
-        if (audioLevelContext) {
-            audioLevelContext.close().catch(() => {});
-        }
-        audioLevelContext = new (window.AudioContext || window.webkitAudioContext)();
-        const analyser = audioLevelContext.createAnalyser();
-        const microphone = audioLevelContext.createMediaStreamSource(stream);
-        const dataArray = new Uint8Array(analyser.frequencyBinCount);
-        
-        microphone.connect(analyser);
-        analyser.fftSize = 256;
-        
-        audioLevelCheckInterval = setInterval(() => {
-            analyser.getByteFrequencyData(dataArray);
-            
-            // Calculate average audio level
-            const average = dataArray.reduce((a, b) => a + b) / dataArray.length;
-            const normalizedLevel = average / 255;
-            
-            lastAudioLevel = normalizedLevel;
-            
-            // Detect prolonged silence
-            if (normalizedLevel < SILENCE_THRESHOLD) {
-                silenceDetectionCount++;
-                if (silenceDetectionCount > MAX_SILENCE_CHECKS) {
-                    console.warn('No audio detected for', MAX_SILENCE_CHECKS, 'seconds');
-                    showAudioError('No audio detected. Check if partner is muted.');
-                    silenceDetectionCount = 0; // Reset to avoid spam
-                }
-            } else {
-                silenceDetectionCount = 0; // Reset when audio detected
-            }
-        }, 1000); // Check every second
-        
-    } catch (error) {
-        console.warn('Could not start audio level monitoring:', error);
-    }
-}
-
-function stopAudioLevelMonitoring() {
-    if (audioLevelCheckInterval) {
-        clearInterval(audioLevelCheckInterval);
-        audioLevelCheckInterval = null;
-    }
-    if (audioLevelContext) {
-        audioLevelContext.close().catch(() => {});
-        audioLevelContext = null;
-    }
-    lastAudioLevel = 0;
-    silenceDetectionCount = 0;
-}
 
 // Character-specific stats
 const CHARACTER_STATS = {
@@ -1218,76 +347,33 @@ const Icons = {
         g.lineTo(x + s - 4, y - s - 1);
         g.strokePath();
     },
-    // User icon (single person)
-    drawUser(g, x, y, size = 20, color = 0x00ff88, stroke = 2) {
-        g.lineStyle(stroke, color);
+
+    drawMic(g, x, y, size = 20, color = 0x00ff88, stroke = 2) {
         const s = size / 2;
-        // Head (circle)
-        g.strokeCircle(x, y - s * 0.5, s * 0.4);
-        // Body (arc/shoulders)
+        g.lineStyle(stroke, color);
+        // Mic body (capsule)
+        g.strokeRoundedRect(x - s * 0.25, y - s * 0.7, s * 0.5, s * 0.9, s * 0.25);
+        // Holder arc
         g.beginPath();
-        g.arc(x, y + s * 0.8, s * 0.7, Math.PI * 1.2, Math.PI * 1.8, false);
+        g.arc(x, y + s * 0.05, s * 0.45, Math.PI, 0, false);
         g.strokePath();
+        // Stand
+        g.lineBetween(x, y + s * 0.5, x, y + s * 0.8);
+        g.lineBetween(x - s * 0.3, y + s * 0.8, x + s * 0.3, y + s * 0.8);
     },
-    // Users icon (two people)
-    drawUsers(g, x, y, size = 20, color = 0x00ccff, stroke = 2) {
-        g.lineStyle(stroke, color);
+
+    drawMicOff(g, x, y, size = 20, color = 0xff4444, stroke = 2) {
         const s = size / 2;
-        // Front person head
-        g.strokeCircle(x - s * 0.2, y - s * 0.4, s * 0.35);
-        // Front person body
-        g.beginPath();
-        g.arc(x - s * 0.2, y + s * 0.7, s * 0.55, Math.PI * 1.2, Math.PI * 1.8, false);
-        g.strokePath();
-        // Back person head (slightly behind)
-        g.strokeCircle(x + s * 0.5, y - s * 0.55, s * 0.3);
-        // Back person body
-        g.beginPath();
-        g.arc(x + s * 0.5, y + s * 0.5, s * 0.45, Math.PI * 1.25, Math.PI * 1.75, false);
-        g.strokePath();
-    },
-    // Home icon
-    drawHome(g, x, y, size = 20, color = 0x00ff88, stroke = 2) {
         g.lineStyle(stroke, color);
-        const s = size / 2;
-        // Roof (triangle)
+        g.strokeRoundedRect(x - s * 0.25, y - s * 0.7, s * 0.5, s * 0.9, s * 0.25);
         g.beginPath();
-        g.moveTo(x, y - s);
-        g.lineTo(x + s, y);
-        g.lineTo(x - s, y);
-        g.closePath();
+        g.arc(x, y + s * 0.05, s * 0.45, Math.PI, 0, false);
         g.strokePath();
-        // House body
-        g.strokeRect(x - s * 0.7, y, s * 1.4, s * 0.9);
-        // Door
-        g.strokeRect(x - s * 0.2, y + s * 0.3, s * 0.4, s * 0.6);
-    },
-    // Link icon
-    drawLink(g, x, y, size = 20, color = 0x00ccff, stroke = 2) {
-        g.lineStyle(stroke, color);
-        const s = size / 2;
-        // First chain link
-        g.beginPath();
-        g.arc(x - s * 0.4, y - s * 0.2, s * 0.4, Math.PI * 0.75, Math.PI * 1.75, false);
-        g.arc(x - s * 0.1, y + s * 0.1, s * 0.4, Math.PI * 1.75, Math.PI * 0.75, false);
-        g.closePath();
-        g.strokePath();
-        // Second chain link
-        g.beginPath();
-        g.arc(x + s * 0.4, y + s * 0.2, s * 0.4, Math.PI * 1.75, Math.PI * 0.75, false);
-        g.arc(x + s * 0.1, y - s * 0.1, s * 0.4, Math.PI * 0.75, Math.PI * 1.75, false);
-        g.closePath();
-        g.strokePath();
-    },
-    // Chevron Left (back arrow)
-    drawChevronLeft(g, x, y, size = 16, color = 0x888888, stroke = 2) {
-        g.lineStyle(stroke, color);
-        const s = size / 2;
-        g.beginPath();
-        g.moveTo(x + s * 0.4, y - s);
-        g.lineTo(x - s * 0.4, y);
-        g.lineTo(x + s * 0.4, y + s);
-        g.strokePath();
+        g.lineBetween(x, y + s * 0.5, x, y + s * 0.8);
+        g.lineBetween(x - s * 0.3, y + s * 0.8, x + s * 0.3, y + s * 0.8);
+        // Diagonal slash
+        g.lineStyle(stroke + 0.5, color);
+        g.lineBetween(x - s * 0.7, y - s * 0.9, x + s * 0.7, y + s * 0.9);
     }
 };
 
@@ -1336,17 +422,14 @@ class SplashScene extends Phaser.Scene {
         this.add.rectangle(0, 0, width, height, 0x000000).setOrigin(0);
 
         // --- POSTER ---
-        this.posterImage = null;
-        if (this.textures.exists('poster')) {
-            this.posterImage = this.add.image(width / 2, height / 2, 'poster');
-            const scale = Math.min(width / this.posterImage.width, height / this.posterImage.height);
-            this.posterImage.setScale(isCompact ? scale * 0.92 : scale);
-            this.posterImage.setAlpha(0);
+        const poster = this.add.image(width / 2, height / 2, 'poster');
+        const scale = Math.min(width / poster.width, height / poster.height);
+        poster.setScale(isCompact ? scale * 0.92 : scale);
+        poster.setAlpha(0);
 
-            this.tweens.add({
-                targets: this.posterImage, alpha: 1, duration: 800, ease: 'Power2'
-            });
-        }
+        this.tweens.add({
+            targets: poster, alpha: 1, duration: 800, ease: 'Power2'
+        });
 
         // --- TUTORIAL VIDEO OVERLAY (Hidden initially) ---
         // Create HTML video element for the tutorial
@@ -1429,13 +512,10 @@ class SplashScene extends Phaser.Scene {
         }).setOrigin(0.5).setDepth(20);
 
         getLeaderboard().then(scores => {
-            // Check if scene and highScoreText still exist to avoid console errors or crashes
-            if (this.scene && this.scene.isActive('SplashScene') && this.highScoreText && this.highScoreText.active) {
-                const topScore = scores && scores.length > 0 ? scores[0].score : 0;
+            if (this.scene.isActive('SplashScene')) {
+                const topScore = scores.length > 0 ? scores[0].score : 0;
                 this.highScoreText.setText(`BEAT THE CURRENT HIGH SCORE: ${topScore}`);
             }
-        }).catch(err => {
-            console.warn('Leaderboard fetch failed (expected if local or offline):', err);
         });
 
         // --- AUDIO ---
@@ -1498,7 +578,7 @@ class SplashScene extends Phaser.Scene {
                 promptText.setText('TAP TO PLAY');
                 tutorialVideo.style.opacity = '1';
                 tutorialVideo.play().catch(e => console.log('Video autoplay blocked:', e));
-                if (this.posterImage) this.tweens.add({ targets: this.posterImage, alpha: 0.3, duration: 300 }); // Dim poster
+                this.tweens.add({ targets: poster, alpha: 0.3, duration: 300 }); // Dim poster
             } else if (step === 1) {
                 // Go to Mode Selection
                 step = 2;
@@ -1528,7 +608,7 @@ class SplashScene extends Phaser.Scene {
                 this.cameras.main.fadeOut(300, 0, 0, 0);
                 this.cameras.main.once('camerafadeoutcomplete', () => {
                     if (this.bgm) this.bgm.stop();
-                    this.scene.start('ModeSelectScene');
+                    this.scene.start('NameEntryScene');
                 });
             }
         };
@@ -1539,6 +619,187 @@ class SplashScene extends Phaser.Scene {
         this.input.keyboard.on('keydown', handleInput);
 
         console.log("SplashScene ready. Two-step start active.");
+    }
+}
+
+// ===== NAME ENTRY SCENE =====
+class NameEntryScene extends Phaser.Scene {
+    constructor() { super({ key: 'NameEntryScene' }); }
+
+    create() {
+        const { width, height } = this.scale;
+        const isCompact = isCompactViewport(width, height);
+        const isMobile = width < 500;
+
+        // Background
+        this.add.rectangle(0, 0, width, height, 0x0a1a2d).setOrigin(0);
+
+        // Stars
+        const starGraphics = this.add.graphics();
+        starGraphics.fillStyle(0xffffff, 0.2);
+        for (let i = 0; i < 50; i++) {
+            starGraphics.fillCircle(
+                Phaser.Math.Between(0, width),
+                Phaser.Math.Between(0, height),
+                Phaser.Math.Between(1, 2)
+            );
+        }
+
+        // Newt icon at the top
+        if (this.textures.exists('newt')) {
+            const newtImg = this.add.image(width / 2, height * 0.14, 'newt');
+            newtImg.setScale(Math.min(60 / newtImg.width, 60 / newtImg.height));
+            newtImg.setAlpha(0.8);
+        }
+
+        // Title
+        const titleSize = isMobile ? '22px' : (isCompact ? '28px' : '36px');
+        this.add.text(width / 2, height * 0.24, 'WHAT\'S YOUR NAME?', {
+            fontFamily: 'Fredoka, sans-serif',
+            fontSize: titleSize,
+            color: '#ffffff',
+            stroke: '#000000',
+            strokeThickness: isMobile ? 3 : 4
+        }).setOrigin(0.5);
+
+        // Subtitle
+        this.add.text(width / 2, height * 0.31, 'So we can put you on the leaderboard!', {
+            fontFamily: 'Outfit, sans-serif',
+            fontSize: isMobile ? '13px' : (isCompact ? '15px' : '17px'),
+            color: '#aaaaaa'
+        }).setOrigin(0.5);
+
+        // Disable Phaser key capture so typing works
+        this.input.keyboard.removeCapture('W,A,S,D');
+        this.input.keyboard.removeCapture([32, 37, 38, 39, 40]);
+
+        // DOM input
+        const canvasRect = this.game.canvas.getBoundingClientRect();
+        const inputY = height * 0.42;
+        const inputEl = document.createElement('input');
+        inputEl.type = 'text';
+        inputEl.placeholder = 'Enter your name';
+        inputEl.maxLength = 15;
+        inputEl.value = playerName || '';
+        inputEl.style.cssText = `
+            position: fixed;
+            left: ${canvasRect.left + width / 2}px;
+            top: ${canvasRect.top + inputY}px;
+            transform: translate(-50%, -50%);
+            padding: 14px 24px;
+            font-size: ${isMobile ? '18px' : '22px'};
+            font-family: 'Fredoka', sans-serif;
+            border: 3px solid #00ffff;
+            border-radius: 12px;
+            background: rgba(0, 0, 0, 0.6);
+            color: #ffffff;
+            text-align: center;
+            width: ${isMobile ? '200px' : '240px'};
+            z-index: 10000;
+            outline: none;
+            transition: border-color 0.2s;
+        `;
+        document.body.appendChild(inputEl);
+        inputEl.focus();
+
+        // Glow effect on focus
+        inputEl.addEventListener('focus', () => {
+            inputEl.style.borderColor = '#00ffff';
+            inputEl.style.boxShadow = '0 0 20px rgba(0, 255, 255, 0.3)';
+        });
+        inputEl.addEventListener('blur', () => {
+            inputEl.style.boxShadow = 'none';
+        });
+
+        // Error text (hidden initially)
+        const errorText = this.add.text(width / 2, inputY + (isMobile ? 32 : 38), '', {
+            fontFamily: 'Outfit, sans-serif',
+            fontSize: '14px',
+            color: '#ff6666'
+        }).setOrigin(0.5).setDepth(10);
+
+        // Continue button
+        const btnY = height * 0.58;
+        const btnWidth = isMobile ? 200 : 240;
+        const btnHeight = isMobile ? 50 : 56;
+
+        const continueBg = this.add.rectangle(width / 2, btnY, btnWidth, btnHeight, 0x003333, 0.9)
+            .setStrokeStyle(3, 0x00ffff, 1)
+            .setInteractive({ useHandCursor: true });
+
+        const continueText = this.add.text(width / 2, btnY, 'CONTINUE', {
+            fontFamily: 'Fredoka, sans-serif',
+            fontSize: isMobile ? '20px' : '24px',
+            color: '#00ffff'
+        }).setOrigin(0.5);
+
+        continueBg.on('pointerover', () => {
+            continueBg.setStrokeStyle(4, 0x00ffff, 1);
+            continueBg.setFillStyle(0x004444, 0.9);
+        });
+        continueBg.on('pointerout', () => {
+            continueBg.setStrokeStyle(3, 0x00ffff, 1);
+            continueBg.setFillStyle(0x003333, 0.9);
+        });
+
+        const proceed = () => {
+            const name = inputEl.value.trim();
+            if (!name) {
+                errorText.setText('Please enter your name to continue');
+                inputEl.style.borderColor = '#ff6666';
+                this.time.delayedCall(2000, () => {
+                    errorText.setText('');
+                    inputEl.style.borderColor = '#00ffff';
+                });
+                return;
+            }
+            playerName = name;
+            inputEl.remove();
+            this.cameras.main.fadeOut(300, 0, 0, 0);
+            this.cameras.main.once('camerafadeoutcomplete', () => {
+                this.scene.start('ModeSelectScene');
+            });
+        };
+
+        continueBg.on('pointerdown', proceed);
+        inputEl.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') proceed();
+        });
+
+        // Show top scores as motivation
+        this.showTopScores(width, height, isMobile, isCompact);
+
+        // Cleanup on scene shutdown
+        this.events.once('shutdown', () => {
+            if (inputEl && inputEl.parentNode) inputEl.remove();
+        });
+
+        this.cameras.main.fadeIn(300);
+    }
+
+    async showTopScores(width, height, isMobile, isCompact) {
+        const scores = await getLeaderboard();
+        if (scores.length === 0) return;
+
+        const startY = height * 0.72;
+        const trophyIcon = this.add.graphics();
+        Icons.drawTrophy(trophyIcon, width / 2 - 65, startY, 16, 0xffcc00);
+        this.add.text(width / 2 + 5, startY, 'TOP SCORES', {
+            fontFamily: 'Fredoka, sans-serif',
+            fontSize: '15px',
+            color: '#ffcc00'
+        }).setOrigin(0.5);
+
+        const lineHeight = isMobile ? 18 : 20;
+        scores.slice(0, 3).forEach((s, i) => {
+            const medal = i === 0 ? '1st' : i === 1 ? '2nd' : '3rd';
+            const color = i === 0 ? '#ffd700' : i === 1 ? '#c0c0c0' : '#cd7f32';
+            this.add.text(width / 2, startY + 28 + (i * lineHeight), `${medal}  ${s.player_name} — ${s.score}`, {
+                fontFamily: 'Outfit, sans-serif',
+                fontSize: '13px',
+                color: color
+            }).setOrigin(0.5);
+        });
     }
 }
 
@@ -1587,16 +848,11 @@ class ModeSelectScene extends Phaser.Scene {
             .setStrokeStyle(3, 0x00ff88, 1)
             .setInteractive({ useHandCursor: true });
 
-        const singleText = this.add.text(width / 2 + 12, singleY - 12, 'SINGLE PLAYER', {
+        this.add.text(width / 2, singleY - 12, '👤 SINGLE PLAYER', {
             fontFamily: 'Fredoka, sans-serif',
             fontSize: isMobile ? '18px' : (isCompact ? '22px' : '26px'),
             color: '#00ff88'
         }).setOrigin(0.5);
-        
-        // User icon for single player
-        const singleIcon = this.add.graphics();
-        const singleIconSize = isMobile ? 18 : (isCompact ? 22 : 26);
-        Icons.drawUser(singleIcon, singleText.x - singleText.width/2 - singleIconSize, singleY - 12, singleIconSize, 0x00ff88, 2);
 
         this.add.text(width / 2, singleY + 16, 'Classic solo adventure', {
             fontFamily: 'Outfit, sans-serif',
@@ -1610,16 +866,11 @@ class ModeSelectScene extends Phaser.Scene {
             .setStrokeStyle(3, 0x00ccff, 1)
             .setInteractive({ useHandCursor: true });
 
-        const multiText = this.add.text(width / 2 + 12, multiY - 12, 'MULTIPLAYER', {
+        this.add.text(width / 2, multiY - 12, '👥 MULTIPLAYER', {
             fontFamily: 'Fredoka, sans-serif',
             fontSize: isMobile ? '18px' : (isCompact ? '22px' : '26px'),
             color: '#00ccff'
         }).setOrigin(0.5);
-
-        // Users icon for multiplayer
-        const multiIcon = this.add.graphics();
-        const multiIconSize = isMobile ? 20 : (isCompact ? 24 : 28);
-        Icons.drawUsers(multiIcon, multiText.x - multiText.width/2 - multiIconSize, multiY - 12, multiIconSize, 0x00ccff, 2);
 
         this.add.text(width / 2, multiY + 16, 'Team up with a friend!', {
             fontFamily: 'Outfit, sans-serif',
@@ -1661,31 +912,27 @@ class ModeSelectScene extends Phaser.Scene {
         });
 
         // Back button (small, top-left)
-        const backBtn = this.add.text(36, 20, 'BACK', {
+        const backBtn = this.add.text(20, 20, '← BACK', {
             fontFamily: 'Outfit, sans-serif',
             fontSize: '14px',
             color: '#888888'
         }).setInteractive({ useHandCursor: true });
-        
-        const backIcon = this.add.graphics();
-        Icons.drawChevronLeft(backIcon, 20, 27, 14, 0x888888, 2);
 
-        backBtn.on('pointerover', () => {
-            backBtn.setColor('#ffffff');
-            backIcon.clear();
-            Icons.drawChevronLeft(backIcon, 20, 27, 14, 0xffffff, 2);
-        });
-        backBtn.on('pointerout', () => {
-            backBtn.setColor('#888888');
-            backIcon.clear();
-            Icons.drawChevronLeft(backIcon, 20, 27, 14, 0x888888, 2);
-        });
+        backBtn.on('pointerover', () => backBtn.setColor('#ffffff'));
+        backBtn.on('pointerout', () => backBtn.setColor('#888888'));
         backBtn.on('pointerdown', () => {
             this.cameras.main.fadeOut(200, 0, 0, 0);
             this.cameras.main.once('camerafadeoutcomplete', () => {
-                this.scene.start('SplashScene');
+                this.scene.start('NameEntryScene');
             });
         });
+
+        // Show player name badge
+        this.add.text(width / 2, height * 0.90, `Playing as: ${playerName}`, {
+            fontFamily: 'Outfit, sans-serif',
+            fontSize: '13px',
+            color: '#666666'
+        }).setOrigin(0.5);
 
         this.cameras.main.fadeIn(300);
     }
@@ -1719,25 +966,14 @@ class LobbyScene extends Phaser.Scene {
         this.createLobbyMenu();
 
         // Back button
-        const backBtn = this.add.text(36, 20, 'BACK', {
+        const backBtn = this.add.text(20, 20, '← BACK', {
             fontFamily: 'Outfit, sans-serif',
             fontSize: '14px',
             color: '#888888'
         }).setInteractive({ useHandCursor: true });
 
-        const backIcon = this.add.graphics();
-        Icons.drawChevronLeft(backIcon, 20, 27, 14, 0x888888, 2);
-
-        backBtn.on('pointerover', () => {
-            backBtn.setColor('#ffffff');
-            backIcon.clear();
-            Icons.drawChevronLeft(backIcon, 20, 27, 14, 0xffffff, 2);
-        });
-        backBtn.on('pointerout', () => {
-            backBtn.setColor('#888888');
-            backIcon.clear();
-            Icons.drawChevronLeft(backIcon, 20, 27, 14, 0x888888, 2);
-        });
+        backBtn.on('pointerover', () => backBtn.setColor('#ffffff'));
+        backBtn.on('pointerout', () => backBtn.setColor('#888888'));
         backBtn.on('pointerdown', () => {
             this.cleanup();
             this.cameras.main.fadeOut(200, 0, 0, 0);
@@ -1759,13 +995,10 @@ class LobbyScene extends Phaser.Scene {
             this.inputEl.parentNode.removeChild(this.inputEl);
             this.inputEl = null;
         }
-        // Only delete the room if we were still waiting (not transitioning to game)
+        // If we created a room but didn't start, delete it
         if (isHost && roomId && this.lobbyState === 'waiting') {
             deleteRoom();
         }
-        // Reset transition guard for future use of this scene instance
-        this._transitioning = false;
-        this._transitioned = false;
     }
 
     createLobbyMenu() {
@@ -1788,18 +1021,13 @@ class LobbyScene extends Phaser.Scene {
             .setStrokeStyle(3, 0x00ff88, 1)
             .setInteractive({ useHandCursor: true });
 
-        const createText = this.add.text(width / 2 + 14, btnY, 'CREATE ROOM', {
+        const createText = this.add.text(width / 2, btnY, '🏠 CREATE ROOM', {
             fontFamily: 'Fredoka, sans-serif',
             fontSize: isMobile ? '18px' : (isCompact ? '22px' : '26px'),
             color: '#00ff88'
         }).setOrigin(0.5);
 
-        // Home icon for create room
-        const createIcon = this.add.graphics();
-        const createIconSize = isMobile ? 20 : (isCompact ? 24 : 28);
-        Icons.drawHome(createIcon, createText.x - createText.width/2 - createIconSize, btnY, createIconSize, 0x00ff88, 2);
-
-        this.menuContainer.add([createBg, createText, createIcon]);
+        this.menuContainer.add([createBg, createText]);
 
         createBg.on('pointerover', () => createBg.setStrokeStyle(4, 0x00ff88, 1));
         createBg.on('pointerout', () => createBg.setStrokeStyle(3, 0x00ff88, 1));
@@ -1811,18 +1039,13 @@ class LobbyScene extends Phaser.Scene {
             .setStrokeStyle(3, 0x00ccff, 1)
             .setInteractive({ useHandCursor: true });
 
-        const joinText = this.add.text(width / 2 + 14, joinY, 'JOIN ROOM', {
+        const joinText = this.add.text(width / 2, joinY, '🔗 JOIN ROOM', {
             fontFamily: 'Fredoka, sans-serif',
             fontSize: isMobile ? '18px' : (isCompact ? '22px' : '26px'),
             color: '#00ccff'
         }).setOrigin(0.5);
 
-        // Link icon for join room
-        const joinIcon = this.add.graphics();
-        const joinIconSize = isMobile ? 20 : (isCompact ? 24 : 28);
-        Icons.drawLink(joinIcon, joinText.x - joinText.width/2 - joinIconSize, joinY, joinIconSize, 0x00ccff, 2);
-
-        this.menuContainer.add([joinBg, joinText, joinIcon]);
+        this.menuContainer.add([joinBg, joinText]);
 
         joinBg.on('pointerover', () => joinBg.setStrokeStyle(4, 0x00ccff, 1));
         joinBg.on('pointerout', () => joinBg.setStrokeStyle(3, 0x00ccff, 1));
@@ -1898,53 +1121,7 @@ class LobbyScene extends Phaser.Scene {
             letterSpacing: 8
         }).setOrigin(0.5);
 
-        // Copy button
-        const copyLabel = this.add.text(width / 2, height * 0.42, 'CLICK TO COPY', {
-            fontFamily: 'Outfit, sans-serif',
-            fontSize: '10px',
-            color: '#00ccff',
-            backgroundColor: '#000000',
-            padding: { left: 8, right: 8, top: 4, bottom: 4 }
-        }).setOrigin(0.5).setInteractive({ useHandCursor: true });
-
-        this.menuContainer.add([codeBox, codeText, copyLabel]);
-
-        const copyToClipboard = () => {
-            if (navigator.clipboard && navigator.clipboard.writeText) {
-                navigator.clipboard.writeText(roomCode).then(() => {
-                    copyLabel.setText('COPIED!');
-                    copyLabel.setColor('#ffffff');
-                    copyLabel.setBackgroundColor('#008800');
-                    this.time.delayedCall(2000, () => {
-                        if (copyLabel.active) {
-                            copyLabel.setText('CLICK TO COPY');
-                            copyLabel.setColor('#00ccff');
-                            copyLabel.setBackgroundColor('#000000');
-                        }
-                    });
-                });
-            } else {
-                // Fallback for older browsers
-                const textArea = document.createElement("textarea");
-                textArea.value = roomCode;
-                document.body.appendChild(textArea);
-                textArea.select();
-                try {
-                    document.execCommand('copy');
-                    copyLabel.setText('COPIED!');
-                } catch (err) {
-                    console.error('Fallback copy failed', err);
-                }
-                document.body.removeChild(textArea);
-            }
-        };
-
-        codeBox.setInteractive({ useHandCursor: true });
-        codeText.setInteractive({ useHandCursor: true });
-        
-        codeBox.on('pointerdown', copyToClipboard);
-        codeText.on('pointerdown', copyToClipboard);
-        copyLabel.on('pointerdown', copyToClipboard);
+        this.menuContainer.add([codeBox, codeText]);
 
         // Waiting message with animation
         const waitingText = this.add.text(width / 2, height * 0.50, 'Waiting for player to join...', {
@@ -2133,13 +1310,6 @@ class LobbyScene extends Phaser.Scene {
     }
 
     startMultiplayerGame() {
-        // Guard against double-calls (Supabase realtime can fire duplicate events)
-        if (this._transitioning) return;
-        this._transitioning = true;
-
-        // Mark lobby as starting so cleanup() won't delete the room
-        this.lobbyState = 'starting';
-
         if (this.dotsTimer) this.dotsTimer.destroy();
         if (this.roomSubscription) {
             supabaseClient.removeChannel(this.roomSubscription);
@@ -2150,18 +1320,12 @@ class LobbyScene extends Phaser.Scene {
             this.inputEl = null;
         }
 
-        // Transition to game scene with fade, plus a safety timeout
-        // in case camerafadeoutcomplete never fires (prevents permanent black screen)
-        const doTransition = () => {
-            if (this._transitioned) return;
-            this._transitioned = true;
-            this.scene.start('GameScene');
-        };
-
+        // Both players now go to character select (but their choice is already made)
+        // For simplicity, we'll skip character select in multiplayer and go straight to game
         this.cameras.main.fadeOut(300, 0, 0, 0);
-        this.cameras.main.once('camerafadeoutcomplete', doTransition);
-        // Safety: if fade doesn't complete within 600ms, force the transition
-        this.time.delayedCall(600, doTransition);
+        this.cameras.main.once('camerafadeoutcomplete', () => {
+            this.scene.start('GameScene');
+        });
     }
 }
 
@@ -2176,7 +1340,6 @@ class GameScene extends Phaser.Scene {
         this.load.audio('sfx_hit', 'assets/sfx_hit.mp3');
         this.load.audio('sfx_crash', 'assets/sfx_crash.mp3');
         this.load.audio('bgm_end', 'assets/bgm_end.mp3');
-        this.load.audio('rain_ambient', 'assets/rain_background.mp3');
     }
 
     create() {
@@ -2188,11 +1351,7 @@ class GameScene extends Phaser.Scene {
         this.gameOver = false;
         this.difficulty = 1;
         this.runStartTime = this.time.now;
-        this.displayedScore = 0;
 
-        // Detect mobile device (not just compact screen)
-        this.isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-        
         // Multiplayer state
         this.isMultiplayer = gameMode === 'multi';
         this.teamScore = 0;
@@ -2202,13 +1361,11 @@ class GameScene extends Phaser.Scene {
         this.lastBroadcastTime = 0;
         this.disconnectTimer = null;
         this.partnerDisconnected = false;
+        this.partnerName = '';
         this.lastHitIntentAt = 0;
         this.lastHitByPlayer = new Map();
         this.gameStateSeq = 0;
         this.lastReceivedSeq = -1;
-        
-        // Register this as the active game scene for multiplayer channel callbacks
-        window._activeGameScene = this;
 
         // Achievement tracking
         this.streak = 0;
@@ -2238,43 +1395,17 @@ class GameScene extends Phaser.Scene {
         if (this.isMultiplayer) {
             this.createRemotePlayer();
             this.setupMultiplayerSync();
-            // Initialize audio sharing for multiplayer
-            this.initMultiplayerAudio();
         }
         
         this.createHUD();
         this.createControls();
 
-        // Track dimensions for resize logic
-        this.lastWidth = this.scale.width;
-        this.lastHeight = this.scale.height;
-
-        // Remove any previously registered resize handler to prevent accumulation.
-        // this.scale is the shared Scale Manager; listeners on it persist across
-        // scene shutdowns, so we must clean up manually.
-        if (this._resizeHandler) {
-            this.scale.off('resize', this._resizeHandler);
-        }
-        this._resizeHandler = (gameSize) => {
+        this.scale.on('resize', () => {
             // Don't restart during game over to preserve the name input form
-            if (this.gameOver) return;
-
-            // In multiplayer, NEVER restart the scene on resize.
-            // Resizes are typically caused by browser UI changes (mic permission bar, 
-            // address bar hiding on mobile, etc.) and restarting the scene destroys 
-            // the real-time channel, WebRTC audio, and all sync state.
-            if (this.isMultiplayer) {
-                console.log('Ignoring resize during multiplayer to preserve connection');
-                this.lastWidth = gameSize.width;
-                this.lastHeight = gameSize.height;
-                return;
+            if (!this.gameOver) {
+                this.scene.restart();
             }
-
-            this.lastWidth = gameSize.width;
-            this.lastHeight = gameSize.height;
-            this.scene.restart();
-        };
-        this.scale.on('resize', this._resizeHandler);
+        });
 
         // Only host spawns cars and newts in multiplayer
         if (!this.isMultiplayer || isHost) {
@@ -2288,10 +1419,6 @@ class GameScene extends Phaser.Scene {
             this.spawnNewt();
         }
 
-        // Ensure camera is in a clean state before fading in.
-        // Resets any stale fade/flash effects carried over from a scene restart.
-        this.cameras.main.fadeEffect.reset();
-        this.cameras.main.flashEffect.reset();
         this.cameras.main.fadeIn(300);
 
         // Rain effect
@@ -2307,19 +1434,6 @@ class GameScene extends Phaser.Scene {
         this.rainGraphics = this.add.graphics().setDepth(100);
         if (this.isCompact) {
             this.rainGraphics.setAlpha(0.8);
-        }
-
-        // Rain ambient sound with fade-in (disabled in multiplayer to reduce audio clutter)
-        if (this.cache.audio.exists('rain_ambient') && !this.isMultiplayer) {
-            this.rainSound = this.sound.add('rain_ambient', { loop: true, volume: 0 });
-            this.rainSound.play();
-            // Fade in over 2 seconds
-            this.tweens.add({
-                targets: this.rainSound,
-                volume: 0.4,
-                duration: 2000,
-                ease: 'Power2'
-            });
         }
     }
 
@@ -2452,12 +1566,8 @@ class GameScene extends Phaser.Scene {
         // Newt crossing signs - diagonally opposite (top-left and bottom-right at road edges)
         const signSize = this.isCompact ? 40 : 50;
         const signOffset = this.isCompact ? 34 : 45;
-        
-        // Safety check for texture before creating images
-        if (this.textures.exists('newtXing')) {
-            this.add.image(signOffset, this.topSafe - topTextOffset, 'newtXing').setDisplaySize(signSize, signSize);
-            this.add.image(width - signOffset, this.botSafe - topTextOffset, 'newtXing').setDisplaySize(signSize, signSize);
-        }
+        this.add.image(signOffset, this.topSafe - topTextOffset, 'newtXing').setDisplaySize(signSize, signSize);
+        this.add.image(width - signOffset, this.botSafe - topTextOffset, 'newtXing').setDisplaySize(signSize, signSize);
     }
 
     createCrossingSign(x, y) {
@@ -2520,237 +1630,7 @@ class GameScene extends Phaser.Scene {
         this.walkTime = 0;
     }
 
-    async initMultiplayerAudio() {
-        console.log('═══════════════════════════════════════');
-        console.log('🎤 Initializing multiplayer audio...');
-        console.log('Role:', isHost ? 'HOST' : 'GUEST');
-        console.log('Player ID:', playerId);
-        console.log('Channel ready:', !!multiplayerChannel);
-        console.log('Existing audio connection:', audioPeerConnection?.connectionState || 'none');
-        console.log('═══════════════════════════════════════');
-        
-        // If audio is already connected, just recreate the UI mute button (scene was restarted)
-        if (audioPeerConnection && 
-            (audioPeerConnection.connectionState === 'connected' || 
-             audioPeerConnection.connectionState === 'connecting')) {
-            console.log('✓ Audio already connected/connecting, skipping re-init. Just recreating mute button.');
-            this.createMuteButton();
-            return;
-        }
-        
-        // Wait a bit for channel to be fully ready
-        await new Promise(resolve => setTimeout(resolve, 500));
-        
-        // Verify channel is actually subscribed before proceeding
-        if (!multiplayerChannel || multiplayerChannel.state !== 'joined') {
-            console.log('Channel not ready yet, waiting for subscription...');
-            // Wait up to 5 seconds for the channel to be ready
-            let waited = 0;
-            while ((!multiplayerChannel || multiplayerChannel.state !== 'joined') && waited < 5000) {
-                await new Promise(resolve => setTimeout(resolve, 500));
-                waited += 500;
-            }
-            if (!multiplayerChannel || multiplayerChannel.state !== 'joined') {
-                console.error('✗ Channel not ready after waiting. Cannot initialize audio.');
-                return;
-            }
-        }
-        
-        // Initialize WebRTC audio
-        const audioInitialized = await initAudioSharing();
-        
-        if (audioInitialized) {
-            console.log('✓ Audio hardware initialized');
-            
-            // Start monitoring audio quality
-            startAudioStatsMonitoring();
-            
-            // If we are the guest, send a request to the host to start signaling
-            // If the host is already in the channel, they will reply with an offer
-            if (!isHost && multiplayerChannel) {
-                console.log('→ Guest sending audio request to host...');
-                multiplayerChannel.send({
-                    type: 'broadcast',
-                    event: 'audio_request',
-                    payload: { playerId: playerId }
-                });
-            } else if (isHost) {
-                // Host waits for guest's request, but also sends offer proactively
-                console.log('Host waiting 2s before sending initial offer...');
-                this.time.delayedCall(2000, () => {
-                    console.log('→ Host sending initial audio offer...');
-                    createAudioOffer();
-                });
-            }
-            
-            // Add mute button to HUD
-            this.createMuteButton();
-        } else {
-            console.error('✗ Failed to initialize audio');
-            console.log('Troubleshooting:');
-            console.log('  1. Check if microphone permission is granted');
-            console.log('  2. Ensure no other app is using the microphone');
-            console.log('  3. Try refreshing the page');
-        }
-    }
-
-    createMuteButton() {
-        const { width } = this.scale;
-        const padding = this.isCompact ? 12 : 20;
-        
-        // Destroy existing mute button elements if they exist (scene restart)
-        if (this.muteBtnBg && this.muteBtnBg.active) this.muteBtnBg.destroy();
-        if (this.muteIcon && this.muteIcon.active) this.muteIcon.destroy();
-        if (this.muteTooltip && this.muteTooltip.active) this.muteTooltip.destroy();
-        
-        // Remove old event listener if it exists
-        if (this._audioStatusHandler) {
-            window.removeEventListener('audioStatusChanged', this._audioStatusHandler);
-        }
-        
-        // Create mute button in top-right area, below score
-        const muteBtnSize = this.isCompact ? 32 : 40;
-        const muteBtnX = width - padding - muteBtnSize / 2;
-        const muteBtnY = padding + (this.isCompact ? 50 : 65);
-        
-        // Button background
-        this.muteBtnBg = this.add.rectangle(muteBtnX, muteBtnY, muteBtnSize, muteBtnSize, 0x000000, 0.8)
-            .setStrokeStyle(2, 0x00ccff, 0.8)
-            .setInteractive({ useHandCursor: true })
-            .setDepth(200);
-        
-        // Mute icon (using graphics)
-        this.muteIcon = this.add.graphics().setDepth(201);
-        this.updateMuteIcon();
-        
-        // Click handler
-        this.muteBtnBg.on('pointerdown', () => {
-            toggleMute();
-            this.updateMuteIcon();
-        });
-        
-        // Tooltip text
-        this.muteTooltip = this.add.text(muteBtnX, muteBtnY + muteBtnSize / 2 + 10, 'Mute', {
-            fontFamily: 'Outfit, sans-serif',
-            fontSize: '10px',
-            color: '#ffffff'
-        }).setOrigin(0.5).setDepth(200).setAlpha(0);
-        
-        // Show tooltip on hover
-        this.muteBtnBg.on('pointerover', () => {
-            this.muteBtnBg.setAlpha(1);
-            this.muteTooltip.setAlpha(1);
-        });
-        
-        this.muteBtnBg.on('pointerout', () => {
-            this.muteBtnBg.setAlpha(0.8);
-            this.muteTooltip.setAlpha(0);
-        });
-        
-        // Listen for audio status changes (store reference for cleanup)
-        this._audioStatusHandler = () => {
-            if (this.scene && this.scene.isActive()) {
-                this.updateMuteIcon();
-            }
-        };
-        window.addEventListener('audioStatusChanged', this._audioStatusHandler);
-        
-        // Remove listener when scene shuts down
-        this.events.once('shutdown', () => {
-            if (this._audioStatusHandler) {
-                window.removeEventListener('audioStatusChanged', this._audioStatusHandler);
-                this._audioStatusHandler = null;
-            }
-        });
-    }
-
-    updateMuteIcon() {
-        if (!this.muteIcon || !this.muteBtnBg) return;
-        // Guard against destroyed Phaser objects (scene was restarted)
-        if (!this.muteIcon.active || !this.muteBtnBg.active) return;
-        
-        const { width } = this.scale;
-        const padding = this.isCompact ? 12 : 20;
-        const muteBtnSize = this.isCompact ? 32 : 40;
-        const muteBtnX = width - padding - muteBtnSize / 2;
-        const muteBtnY = padding + (this.isCompact ? 50 : 65);
-        
-        this.muteIcon.clear();
-        
-        // Get connection state
-        const connState = audioPeerConnection?.connectionState || 'disconnected';
-        let borderColor = 0x00ccff; // Default cyan
-        let tooltipText = isMuted ? 'Unmute' : 'Mute';
-        
-        if (connState === 'connected') {
-            borderColor = 0x00ff88; // Neon green
-            tooltipText += ' (Connected)';
-        } else if (connState === 'connecting' || connState === 'new') {
-            borderColor = 0xffcc00; // Gold/Yellow
-            tooltipText += ' (Connecting...)';
-        } else if (connState === 'failed' || connState === 'closed') {
-            borderColor = 0xff3366; // Pink/Red
-            tooltipText += ' (Failed/Closed)';
-        } else if (connState === 'disconnected') {
-            borderColor = 0x888888; // Gray
-            tooltipText += ' (Disconnected)';
-        }
-
-        this.muteBtnBg.setStrokeStyle(2, borderColor, 0.8);
-        if (this.muteTooltip && this.muteTooltip.active) this.muteTooltip.setText(tooltipText);
-        
-        if (isMuted) {
-            // Muted icon - microphone with slash
-            this.drawMutedIcon(this.muteIcon, muteBtnX, muteBtnY, this.isCompact ? 16 : 20, 0xff3366);
-        } else {
-            // Unmuted icon - microphone
-            this.drawMicIcon(this.muteIcon, muteBtnX, muteBtnY, this.isCompact ? 16 : 20, borderColor);
-        }
-    }
-
-    drawMicIcon(g, x, y, size, color) {
-        // Microphone icon
-        const s = size / 2;
-        g.lineStyle(2, color);
-        
-        // Mic body (rounded rectangle)
-        g.strokeRoundedRect(x - s * 0.3, y - s * 0.5, s * 0.6, s * 0.8, s * 0.15);
-        
-        // Mic arc at bottom
-        g.beginPath();
-        g.arc(x, y + s * 0.3, s * 0.4, 0, Math.PI, false);
-        g.strokePath();
-        
-        // Stand
-        g.lineBetween(x, y + s * 0.7, x, y + s * 0.5);
-        
-        // Base
-        g.lineBetween(x - s * 0.3, y + s * 0.7, x + s * 0.3, y + s * 0.7);
-    }
-
-    drawMutedIcon(g, x, y, size, color) {
-        // Muted microphone icon
-        const s = size / 2;
-        g.lineStyle(2, color);
-        
-        // Mic body (rounded rectangle)
-        g.strokeRoundedRect(x - s * 0.3, y - s * 0.5, s * 0.6, s * 0.8, s * 0.15);
-        
-        // Mic arc at bottom
-        g.beginPath();
-        g.arc(x, y + s * 0.3, s * 0.4, 0, Math.PI, false);
-        g.strokePath();
-        
-        // Slash line
-        g.lineStyle(3, 0xff6666);
-        g.lineBetween(x - s * 0.5, y - s * 0.5, x + s * 0.5, y + s * 0.5);
-    }
-
     createRemotePlayer() {
-        console.log('Creating remote player...');
-        console.log('Remote character:', remoteCharacter);
-        console.log('Is host:', isHost);
-        
         const { width } = this.scale;
         // Remote player starts on opposite side
         const startX = isHost ? width / 2 + 60 : width / 2 - 60;
@@ -2758,8 +1638,6 @@ class GameScene extends Phaser.Scene {
         this.remotePlayer = this.add.container(startX, this.botSafe + 60);
         this.remotePlayer.setDepth(49); // Slightly below local player
         this.remotePlayer.setScale(this.layoutScale);
-        // Start fully visible — both players are confirmed by the time GameScene loads
-        this.remotePlayer.setAlpha(1.0);
         
         const g = this.add.graphics();
         
@@ -2777,8 +1655,6 @@ class GameScene extends Phaser.Scene {
         const remoteStats = CHARACTER_STATS[remoteCharacter] || CHARACTER_STATS['male'];
         this.remotePlayer.carryCapacity = remoteStats.carryCapacity;
         this.remotePlayer.carried = [];
-        
-        console.log('✓ Remote player created at position:', startX, this.botSafe + 60);
         
         // Add P2 label above remote player
         const label = this.add.text(0, -55, 'P2', {
@@ -2806,256 +1682,126 @@ class GameScene extends Phaser.Scene {
     setupMultiplayerSync() {
         if (!supabaseClient || !roomCode) return;
         
-        // If channel already exists and is subscribed, reuse it (e.g. on scene restart)
-        if (multiplayerChannel && multiplayerChannel.state === 'joined') {
-            console.log('Reusing existing multiplayer channel (already subscribed)');
-            // Re-announce ourselves and start broadcasting
-            multiplayerChannel.send({
-                type: 'broadcast',
-                event: 'player_ready',
-                payload: {
-                    playerId: playerId,
-                    character: selectedCharacter,
-                    isHost: isHost
-                }
-            });
-            // Immediately broadcast initial position
-            this.broadcastPlayerState();
-            
-            // Start broadcasting position continuously
-            this.broadcastTimer = this.time.addEvent({
-                delay: 50, // 20Hz broadcast rate
-                callback: this.broadcastPlayerState,
-                callbackScope: this,
-                loop: true
-            });
-            
-            // Start disconnect detection
-            lastRemoteUpdate = Date.now();
-            this.disconnectCheckTimer = this.time.addEvent({
-                delay: 1000,
-                callback: this.checkPartnerConnection,
-                callbackScope: this,
-                loop: true
-            });
-            return;
-        }
-        
-        // Cleanup old channel if exists and not in good state
-        if (multiplayerChannel) {
-            console.log('Cleaning up old channel (state:', multiplayerChannel.state, ')');
-            try {
-                supabaseClient.removeChannel(multiplayerChannel);
-            } catch (e) {
-                console.warn('Error removing old channel:', e);
-            }
-            multiplayerChannel = null;
-        }
-
         // Create broadcast channel for real-time sync
-        // All event listeners use window._activeGameScene to always reference the current
-        // scene instance, even if the scene is restarted (channel persists across restarts).
         multiplayerChannel = supabaseClient.channel(`game-${roomCode}`, {
             config: {
                 broadcast: { self: false }
             }
         });
 
-        // Helper to get the active scene safely
-        const getScene = () => window._activeGameScene;
-
         // Listen for remote player updates
         multiplayerChannel.on('broadcast', { event: 'player_update' }, (payload) => {
-            const scene = getScene();
-            if (!scene) return;
             if (payload.payload.playerId !== playerId) {
-                scene.handleRemotePlayerUpdate(payload.payload);
+                this.handleRemotePlayerUpdate(payload.payload);
             }
         });
 
         // Listen for game state updates (from host)
         multiplayerChannel.on('broadcast', { event: 'game_state' }, (payload) => {
-            const scene = getScene();
-            if (!scene) return;
             if (!isHost) {
-                scene.handleGameStateUpdate(payload.payload);
+                this.handleGameStateUpdate(payload.payload);
             }
         });
 
+        // Note: newt_spawn events removed - newts are synced via game_state broadcast
+
         // Listen for newt pickup events
         multiplayerChannel.on('broadcast', { event: 'newt_pickup' }, (payload) => {
-            const scene = getScene();
-            if (!scene) return;
             if (payload.payload.playerId !== playerId) {
-                scene.handleRemoteNewtPickup(payload.payload);
+                this.handleRemoteNewtPickup(payload.payload);
             }
         });
 
         // Listen for newt save events
         multiplayerChannel.on('broadcast', { event: 'newt_save' }, (payload) => {
-            const scene = getScene();
-            if (!scene) return;
             if (isHost || payload.payload.playerId !== playerId) {
-                scene.handleNewtSave(payload.payload);
+                this.handleNewtSave(payload.payload);
             }
         });
 
         // Listen for partner disconnect
         multiplayerChannel.on('broadcast', { event: 'player_disconnect' }, (payload) => {
-            const scene = getScene();
-            if (!scene) return;
             if (payload.payload.playerId !== playerId) {
-                scene.handlePartnerDisconnect();
+                this.handlePartnerDisconnect();
             }
         });
 
         // Listen for game over event (normal end of game)
         multiplayerChannel.on('broadcast', { event: 'game_over' }, (payload) => {
-            const scene = getScene();
-            if (!scene) return;
-            if (payload.payload.playerId !== playerId && !scene.gameOver) {
-                scene.handleRemoteGameOver(payload.payload);
+            if (payload.payload.playerId !== playerId && !this.gameOver) {
+                this.handleRemoteGameOver(payload.payload);
             }
         });
 
         // Listen for partner's name during game over screen
         multiplayerChannel.on('broadcast', { event: 'player_name' }, (payload) => {
-            const scene = getScene();
-            if (!scene) return;
             if (payload.payload.playerId !== playerId) {
-                scene.handlePartnerName(payload.payload);
+                this.handlePartnerName(payload.payload);
             }
         });
 
-        // Listen for score submission confirmation
-        multiplayerChannel.on('broadcast', { event: 'score_submitted' }, (payload) => {
-            const scene = getScene();
-            if (!scene) return;
-            scene.handleScoreSubmitted(payload.payload);
-        });
 
         // Guest -> host hit intent, host -> guest hit outcome
         multiplayerChannel.on('broadcast', { event: 'player_hit_intent' }, (payload) => {
-            const scene = getScene();
-            if (!scene) return;
             if (isHost) {
-                scene.handlePlayerHitIntent(payload.payload);
+                this.handlePlayerHitIntent(payload.payload);
             }
         });
 
         multiplayerChannel.on('broadcast', { event: 'player_hit' }, (payload) => {
-            const scene = getScene();
-            if (!scene) return;
-            scene.handlePlayerHitOutcome(payload.payload);
+            this.handlePlayerHitOutcome(payload.payload);
         });
 
-        // Audio sharing signaling
-        multiplayerChannel.on('broadcast', { event: 'audio_request' }, (payload) => {
-            if (isHost && payload.payload.playerId !== playerId) {
-                console.log('Received audio request from guest, creating offer...');
-                createAudioOffer();
+        // WebRTC voice chat signaling
+        multiplayerChannel.on('broadcast', { event: 'webrtc_offer' }, (payload) => {
+            if (payload.payload.playerId !== playerId) {
+                this.handleWebRTCOffer(payload.payload);
             }
         });
 
-        multiplayerChannel.on('broadcast', { event: 'audio_offer' }, (payload) => {
+        multiplayerChannel.on('broadcast', { event: 'webrtc_answer' }, (payload) => {
             if (payload.payload.playerId !== playerId) {
-                handleAudioOffer(payload.payload);
+                this.handleWebRTCAnswer(payload.payload);
             }
         });
 
-        multiplayerChannel.on('broadcast', { event: 'audio_answer' }, (payload) => {
+        multiplayerChannel.on('broadcast', { event: 'webrtc_ice' }, (payload) => {
             if (payload.payload.playerId !== playerId) {
-                handleAudioAnswer(payload.payload);
-            }
-        });
-
-        multiplayerChannel.on('broadcast', { event: 'audio_ice_candidate' }, (payload) => {
-            if (payload.payload.playerId !== playerId) {
-                handleAudioIceCandidate(payload.payload);
-            }
-        });
-
-        // Listen for player ready announcements
-        multiplayerChannel.on('broadcast', { event: 'player_ready' }, (payload) => {
-            const scene = getScene();
-            if (!scene) return;
-            if (payload.payload.playerId !== playerId) {
-                console.log('Partner is ready:', payload.payload.playerId);
-                console.log('Partner character:', payload.payload.character);
-                
-                // Update remote character if we didn't know it yet
-                if (!remoteCharacter && payload.payload.character) {
-                    remoteCharacter = payload.payload.character;
-                    console.log('Updated remoteCharacter from ready announcement:', remoteCharacter);
-                    
-                    // Recreate remote player with correct character
-                    if (scene.remotePlayer) {
-                        scene.remotePlayer.destroy();
-                    }
-                    scene.createRemotePlayer();
-                }
-                
-                // Make remote player visible
-                if (scene.remotePlayer) {
-                    scene.remotePlayer.setAlpha(1.0);
-                    console.log('Remote player made visible');
-                }
+                this.handleWebRTCIce(payload.payload);
             }
         });
 
         multiplayerChannel.subscribe((status) => {
-            const scene = getScene();
             console.log('Multiplayer channel status:', status);
             if (status === 'SUBSCRIBED') {
-                console.log('✓ Subscribed to multiplayer channel');
-                console.log('Player ID:', playerId);
-                console.log('Selected character:', selectedCharacter);
-                console.log('Remote character:', remoteCharacter);
-                
-                if (!scene) return;
-                
-                // Announce ourselves to the other player
-                multiplayerChannel.send({
-                    type: 'broadcast',
-                    event: 'player_ready',
-                    payload: {
-                        playerId: playerId,
-                        character: selectedCharacter,
-                        isHost: isHost
-                    }
-                });
-                console.log('→ Sent player_ready announcement');
-                
-                // Immediately broadcast initial position
-                scene.broadcastPlayerState();
-                
-                // Start broadcasting position continuously
-                scene.broadcastTimer = scene.time.addEvent({
+                // Broadcast our name to the partner
+                this.broadcastPlayerName(playerName);
+
+                // Start broadcasting position
+                this.broadcastTimer = this.time.addEvent({
                     delay: 50, // 20Hz broadcast rate
-                    callback: scene.broadcastPlayerState,
-                    callbackScope: scene,
+                    callback: this.broadcastPlayerState,
+                    callbackScope: this,
                     loop: true
                 });
                 
                 // Start disconnect detection
                 lastRemoteUpdate = Date.now();
-                scene.disconnectCheckTimer = scene.time.addEvent({
+                this.disconnectCheckTimer = this.time.addEvent({
                     delay: 1000,
-                    callback: scene.checkPartnerConnection,
-                    callbackScope: scene,
+                    callback: this.checkPartnerConnection,
+                    callbackScope: this,
                     loop: true
                 });
+
+                // Start voice chat
+                this.setupVoiceChat();
             }
         });
     }
 
     broadcastPlayerState() {
         if (!multiplayerChannel || this.gameOver) return;
-        
-        if (!this.player) {
-            console.warn('Cannot broadcast - player object missing');
-            return;
-        }
         
         const w = this.scale.width;
         const h = this.scale.height;
@@ -3131,16 +1877,7 @@ class GameScene extends Phaser.Scene {
     }
 
     handleRemotePlayerUpdate(data) {
-        if (!this.remotePlayer || this.gameOver) {
-            console.warn('Cannot update remote player - player object missing or game over');
-            return;
-        }
-        
-        // Make remote player fully visible on first update
-        if (this.remotePlayer.alpha < 1) {
-            console.log('First remote player update received - making fully visible');
-            this.remotePlayer.setAlpha(1.0);
-        }
+        if (!this.remotePlayer || this.gameOver) return;
         
         lastRemoteUpdate = Date.now();
         
@@ -3151,10 +1888,14 @@ class GameScene extends Phaser.Scene {
         const targetX = data.xRatio * w;
         const targetY = data.yRatio * h;
         
-        // Directly set position for smooth updates at 20Hz
-        // (Using tweens at this rate causes stacking and jitter)
-        this.remotePlayer.x = targetX;
-        this.remotePlayer.y = targetY;
+        // Smoothly interpolate to new position
+        this.tweens.add({
+            targets: this.remotePlayer,
+            x: targetX,
+            y: targetY,
+            duration: 50,
+            ease: 'Linear'
+        });
         
         this.remotePlayer.scaleX = data.scaleX;
         
@@ -3240,17 +1981,15 @@ class GameScene extends Phaser.Scene {
                 currentNewts.delete(nData.id);
             } else if (!nData.isCarried) {
                 // Create new newt on guest
-                if (this.textures.exists('newt')) {
-                    const newt = this.add.image(localX, localY, 'newt');
-                    newt.setDisplaySize(GAME_CONFIG.NEWT_SIZE, GAME_CONFIG.NEWT_SIZE);
-                    newt.setDepth(25);
-                    newt.dir = nData.dir || 1;
-                    newt.dest = nData.dest;
-                    newt.isCarried = false;
-                    newt.newtId = nData.id;
-                    newt.rotation = newt.dir === 1 ? Math.PI / 2 : -Math.PI / 2;
-                    this.newts.add(newt);
-                }
+                const newt = this.add.image(localX, localY, 'newt');
+                newt.setDisplaySize(GAME_CONFIG.NEWT_SIZE, GAME_CONFIG.NEWT_SIZE);
+                newt.setDepth(25);
+                newt.dir = nData.dir || 1;
+                newt.dest = nData.dest;
+                newt.isCarried = false;
+                newt.newtId = nData.id;
+                newt.rotation = newt.dir === 1 ? Math.PI / 2 : -Math.PI / 2;
+                this.newts.add(newt);
             }
         });
         
@@ -3460,9 +2199,6 @@ class GameScene extends Phaser.Scene {
         // Haptic feedback for mobile (strong vibration pattern)
         if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
 
-        // Enhanced impact particle explosion
-        this.createImpactExplosion(this.player.x, this.player.y);
-
         this.player.carried.forEach(n => n.destroy()); this.player.carried = [];
         this.cameras.main.flash(150, 255, 50, 50, false);
         this.player.invincible = true;
@@ -3472,153 +2208,11 @@ class GameScene extends Phaser.Scene {
         if (this.lives <= 0) { this.gameOver = true; this.showGameOver(); }
     }
 
-    createImpactExplosion(x, y) {
-        // Create a dramatic explosion effect when player is hit
-        const centerX = x;
-        const centerY = y;
-        
-        // Central flash
-        const flash = this.add.circle(centerX, centerY, 60, 0xffffff, 0.9);
-        flash.setDepth(200);
-        this.tweens.add({
-            targets: flash,
-            scale: 3,
-            alpha: 0,
-            duration: 300,
-            ease: 'Power2',
-            onComplete: () => flash.destroy()
-        });
-        
-        // Expanding shockwave ring
-        const shockwave = this.add.ellipse(centerX, centerY, 40, 20, 0xff6600, 0);
-        shockwave.setStrokeStyle(4, 0xff6600, 0.8);
-        shockwave.setDepth(199);
-        this.tweens.add({
-            targets: shockwave,
-            scaleX: 8,
-            scaleY: 4,
-            alpha: 0,
-            duration: 500,
-            ease: 'Power2',
-            onComplete: () => shockwave.destroy()
-        });
-        
-        // Fire particles - fast moving
-        for (let i = 0; i < 20; i++) {
-            const angle = (Math.random() * Math.PI * 2);
-            const speed = Phaser.Math.Between(100, 250);
-            const size = Phaser.Math.Between(6, 14);
-            const particle = this.add.circle(
-                centerX, centerY, size,
-                Phaser.Display.Color.GetColor(
-                    255,
-                    Phaser.Math.Between(50, 150),
-                    0
-                ),
-                0.9
-            );
-            particle.setDepth(198);
-            
-            const targetX = centerX + Math.cos(angle) * speed;
-            const targetY = centerY + Math.sin(angle) * speed;
-            
-            this.tweens.add({
-                targets: particle,
-                x: targetX,
-                y: targetY,
-                scale: 0.2,
-                alpha: 0,
-                duration: 400 + Math.random() * 300,
-                ease: 'Power2',
-                onComplete: () => particle.destroy()
-            });
-        }
-        
-        // Smoke particles - slower, darker
-        for (let i = 0; i < 12; i++) {
-            const angle = (Math.random() * Math.PI * 2);
-            const speed = Phaser.Math.Between(50, 120);
-            const particle = this.add.circle(
-                centerX, centerY,
-                Phaser.Math.Between(8, 16),
-                0x333333,
-                0.6
-            );
-            particle.setDepth(197);
-            
-            const targetX = centerX + Math.cos(angle) * speed;
-            const targetY = centerY + Math.sin(angle) * speed - 30; // Drift upward
-            
-            this.tweens.add({
-                targets: particle,
-                x: targetX,
-                y: targetY,
-                scale: 1.5,
-                alpha: 0,
-                duration: 800 + Math.random() * 400,
-                ease: 'Power2',
-                onComplete: () => particle.destroy()
-            });
-        }
-        
-        // Sparks - small, fast, bright
-        for (let i = 0; i < 15; i++) {
-            const angle = (Math.random() * Math.PI * 2);
-            const speed = Phaser.Math.Between(80, 180);
-            const spark = this.add.rectangle(centerX, centerY, 4, 4, 0xffff00, 0.9);
-            spark.setDepth(201);
-            
-            const targetX = centerX + Math.cos(angle) * speed;
-            const targetY = centerY + Math.sin(angle) * speed;
-            
-            this.tweens.add({
-                targets: spark,
-                x: targetX,
-                y: targetY,
-                rotation: Math.random() * Math.PI * 4,
-                scale: 0.1,
-                alpha: 0,
-                duration: 300 + Math.random() * 200,
-                ease: 'Power2',
-                onComplete: () => spark.destroy()
-            });
-        }
-        
-        // Debris chunks
-        for (let i = 0; i < 8; i++) {
-            const angle = (Math.random() * Math.PI * 2);
-            const speed = Phaser.Math.Between(60, 140);
-            const debris = this.add.rectangle(
-                centerX, centerY,
-                Phaser.Math.Between(6, 12),
-                Phaser.Math.Between(6, 12),
-                Phaser.Math.Between(0x333333, 0x666666),
-                0.8
-            );
-            debris.setDepth(196);
-            
-            const targetX = centerX + Math.cos(angle) * speed;
-            const targetY = centerY + Math.sin(angle) * speed;
-            
-            this.tweens.add({
-                targets: debris,
-                x: targetX,
-                y: targetY,
-                rotation: Math.random() * Math.PI * 6,
-                alpha: 0,
-                duration: 600 + Math.random() * 300,
-                ease: 'Power2',
-                onComplete: () => debris.destroy()
-            });
-        }
-    }
-
     checkPartnerConnection() {
         if (this.gameOver || this.partnerDisconnected) return;
         
         const timeSinceUpdate = Date.now() - lastRemoteUpdate;
-        // Increased timeout to 30s to allow for browser mic prompts and scene restarts
-        if (timeSinceUpdate > 30000) { 
+        if (timeSinceUpdate > 10000) { // 10 seconds timeout
             this.handlePartnerDisconnect();
         }
     }
@@ -3705,7 +2299,6 @@ class GameScene extends Phaser.Scene {
     handlePartnerName(data) {
         if (data.name) {
             this.partnerName = data.name;
-            this.updateSubmitButtonState();
         }
     }
 
@@ -3719,39 +2312,242 @@ class GameScene extends Phaser.Scene {
         }
     }
 
-    handleScoreSubmitted(data) {
-        if (this.multiplayerSubmitBtn && data.success) {
-            this.multiplayerSubmitBtn.setText('Submitted!');
-            this.multiplayerSubmitBtn.disableInteractive();
-            if (this.multiplayerInputEl && this.multiplayerInputEl.parentNode) {
-                this.multiplayerInputEl.remove();
+    // ===== VOICE CHAT METHODS =====
+
+    async setupVoiceChat() {
+        if (!this.isMultiplayer) return;
+        if (peerConnection) return; // Already connected (survives scene restart)
+
+        this._bufferedOffer = null;
+        this._bufferedIceCandidates = [];
+        this.voiceChatReady = false;
+
+        const rtcConfig = {
+            iceServers: [
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:stun1.l.google.com:19302' }
+            ]
+        };
+
+        try {
+            peerConnection = new RTCPeerConnection(rtcConfig);
+        } catch (err) {
+            console.warn('Voice chat: WebRTC not supported -', err.message);
+            this.voiceChatAvailable = false;
+            this.updateMicButton();
+            return;
+        }
+
+        peerConnection.ontrack = (event) => {
+            console.log('Voice chat: remote audio track received');
+            remoteAudioEl = document.createElement('audio');
+            remoteAudioEl.srcObject = event.streams[0];
+            remoteAudioEl.autoplay = true;
+            remoteAudioEl.style.display = 'none';
+            document.body.appendChild(remoteAudioEl);
+            voiceChatActive = true;
+            this.updateMicButton();
+        };
+
+        peerConnection.onicecandidate = (event) => {
+            if (event.candidate && multiplayerChannel) {
+                multiplayerChannel.send({
+                    type: 'broadcast',
+                    event: 'webrtc_ice',
+                    payload: { playerId: playerId, candidate: event.candidate.toJSON() }
+                });
             }
-            if (this.multiplayerSubmitIcon) {
-                this.multiplayerSubmitIcon.clear();
+        };
+
+        peerConnection.oniceconnectionstatechange = () => {
+            if (!peerConnection) return;
+            const state = peerConnection.iceConnectionState;
+            console.log('Voice chat ICE state:', state);
+            if (state === 'connected' || state === 'completed') {
+                voiceChatActive = true;
+            } else if (state === 'failed' || state === 'disconnected' || state === 'closed') {
+                voiceChatActive = false;
             }
-            this.multiplayerSubmitted = true;
-            this.refreshLeaderboard();
+            this.updateMicButton();
+        };
+
+        // Request microphone
+        try {
+            localStream = await navigator.mediaDevices.getUserMedia({
+                audio: true, video: false
+            });
+        } catch (err) {
+            console.warn('Voice chat: mic unavailable -', err.message);
+            this.voiceChatAvailable = false;
+            peerConnection.close();
+            peerConnection = null;
+            this.updateMicButton();
+            return;
+        }
+
+        // Add local audio tracks
+        localStream.getTracks().forEach(track => {
+            peerConnection.addTrack(track, localStream);
+        });
+
+        this.voiceChatReady = true;
+        this.voiceChatAvailable = true;
+
+        // Host creates offer after a short delay to ensure guest has subscribed
+        if (isHost) {
+            this.time.delayedCall(1500, () => this.createAndSendOffer());
+        }
+
+        // Process any buffered signaling messages
+        if (this._bufferedOffer) {
+            await this.handleWebRTCOffer(this._bufferedOffer);
+            this._bufferedOffer = null;
+        }
+        for (const ice of this._bufferedIceCandidates) {
+            await this.handleWebRTCIce(ice);
+        }
+        this._bufferedIceCandidates = [];
+
+        this.updateMicButton();
+    }
+
+    async createAndSendOffer() {
+        if (!peerConnection || !multiplayerChannel) return;
+        try {
+            const offer = await peerConnection.createOffer();
+            await peerConnection.setLocalDescription(offer);
+            multiplayerChannel.send({
+                type: 'broadcast',
+                event: 'webrtc_offer',
+                payload: {
+                    playerId: playerId,
+                    sdp: peerConnection.localDescription.toJSON()
+                }
+            });
+            // Retry once if no answer received within 5 seconds
+            this._offerRetryTimer = this.time.delayedCall(5000, () => {
+                if (peerConnection &&
+                    peerConnection.signalingState === 'have-local-offer') {
+                    console.log('Voice chat: retrying offer');
+                    multiplayerChannel.send({
+                        type: 'broadcast',
+                        event: 'webrtc_offer',
+                        payload: {
+                            playerId: playerId,
+                            sdp: peerConnection.localDescription.toJSON()
+                        }
+                    });
+                }
+            });
+        } catch (err) {
+            console.error('Voice chat: offer failed -', err);
         }
     }
 
-    updateSubmitButtonState() {
-        if (!this.multiplayerSubmitBtn || this.multiplayerSubmitted) return;
-        
-        const myName = this.myName || '';
-        const partnerName = this.partnerName || '';
-        
-        if (myName && partnerName) {
-            this.multiplayerSubmitBtn.setText('SUBMIT TEAM SCORE');
-            this.multiplayerSubmitBtn.setColor('#00ff00');
-            this.multiplayerSubmitBtn.setInteractive({ useHandCursor: true });
-        } else if (myName && !partnerName) {
-            this.multiplayerSubmitBtn.setText('Waiting for partner...');
-            this.multiplayerSubmitBtn.setColor('#ffaa00');
-            this.multiplayerSubmitBtn.disableInteractive();
+    async handleWebRTCOffer(data) {
+        if (!peerConnection || !this.voiceChatReady) {
+            this._bufferedOffer = data;
+            return;
+        }
+        if (isHost) return; // Only guest handles offers
+
+        try {
+            await peerConnection.setRemoteDescription(
+                new RTCSessionDescription(data.sdp)
+            );
+            const answer = await peerConnection.createAnswer();
+            await peerConnection.setLocalDescription(answer);
+            multiplayerChannel.send({
+                type: 'broadcast',
+                event: 'webrtc_answer',
+                payload: {
+                    playerId: playerId,
+                    sdp: peerConnection.localDescription.toJSON()
+                }
+            });
+
+            // Process any ICE candidates that arrived before remote description was set
+            for (const ice of this._bufferedIceCandidates) {
+                await peerConnection.addIceCandidate(new RTCIceCandidate(ice.candidate));
+            }
+            this._bufferedIceCandidates = [];
+        } catch (err) {
+            console.error('Voice chat: answer failed -', err);
+        }
+    }
+
+    async handleWebRTCAnswer(data) {
+        if (!peerConnection || !isHost) return;
+        try {
+            await peerConnection.setRemoteDescription(
+                new RTCSessionDescription(data.sdp)
+            );
+            // Cancel retry timer
+            if (this._offerRetryTimer) {
+                this._offerRetryTimer.destroy();
+                this._offerRetryTimer = null;
+            }
+        } catch (err) {
+            console.error('Voice chat: set answer failed -', err);
+        }
+    }
+
+    async handleWebRTCIce(data) {
+        if (!peerConnection) {
+            if (!this._bufferedIceCandidates) this._bufferedIceCandidates = [];
+            this._bufferedIceCandidates.push(data);
+            return;
+        }
+        // ICE candidates can only be added after remote description is set
+        if (!peerConnection.remoteDescription) {
+            if (!this._bufferedIceCandidates) this._bufferedIceCandidates = [];
+            this._bufferedIceCandidates.push(data);
+            return;
+        }
+        try {
+            await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
+        } catch (err) {
+            console.error('Voice chat: ICE candidate failed -', err);
+        }
+    }
+
+    toggleMute() {
+        if (!localStream || !this.voiceChatAvailable) return;
+        isMuted = !isMuted;
+        localStream.getAudioTracks().forEach(track => {
+            track.enabled = !isMuted;
+        });
+        this.updateMicButton();
+    }
+
+    updateMicButton() {
+        if (!this.micBtnGraphics) return;
+        this.micBtnGraphics.clear();
+
+        const x = this.micBtnX;
+        const y = this.micBtnY;
+        const size = this.isCompact ? 16 : 20;
+        const btnRadius = this.isCompact ? 18 : 22;
+
+        if (!this.voiceChatAvailable) {
+            // Unavailable: dark gray circle, gray mic-off icon
+            this.micBtnGraphics.fillStyle(0x333333, 0.7);
+            this.micBtnGraphics.fillCircle(x, y, btnRadius);
+            Icons.drawMicOff(this.micBtnGraphics, x, y, size, 0x666666);
+        } else if (isMuted) {
+            // Muted: dark red circle, red border, red mic-off icon
+            this.micBtnGraphics.fillStyle(0x442222, 0.8);
+            this.micBtnGraphics.fillCircle(x, y, btnRadius);
+            this.micBtnGraphics.lineStyle(2, 0xff4444, 0.8);
+            this.micBtnGraphics.strokeCircle(x, y, btnRadius);
+            Icons.drawMicOff(this.micBtnGraphics, x, y, size, 0xff4444);
         } else {
-            this.multiplayerSubmitBtn.setText('Enter your name');
-            this.multiplayerSubmitBtn.setColor('#888888');
-            this.multiplayerSubmitBtn.disableInteractive();
+            // Active: dark green circle, green border, green mic icon
+            this.micBtnGraphics.fillStyle(0x224422, 0.8);
+            this.micBtnGraphics.fillCircle(x, y, btnRadius);
+            this.micBtnGraphics.lineStyle(2, 0x00ff88, 0.8);
+            this.micBtnGraphics.strokeCircle(x, y, btnRadius);
+            Icons.drawMic(this.micBtnGraphics, x, y, size, 0x00ff88);
         }
     }
 
@@ -3909,9 +2705,7 @@ class GameScene extends Phaser.Scene {
 
     createHUD() {
         const padding = this.isCompact ? 12 : 20;
-        // More aggressive font scaling for mobile multiplayer
-        const baseFontSize = this.isMobileDevice && this.isMultiplayer ? '14px' : (this.isCompact ? '16px' : '20px');
-        const style = { fontFamily: 'Fredoka, sans-serif', fontSize: baseFontSize, color: '#ffffff', stroke: '#000', strokeThickness: this.isCompact ? 2 : 3 };
+        const style = { fontFamily: 'Fredoka, sans-serif', fontSize: this.isCompact ? '16px' : '20px', color: '#ffffff', stroke: '#000', strokeThickness: this.isCompact ? 2 : 3 };
 
         this.livesIconGroup = this.add.group();
 
@@ -3926,11 +2720,9 @@ class GameScene extends Phaser.Scene {
         this.scoreBg.lineStyle(2, 0xffcc00, 0.8);
         this.scoreBg.strokeRoundedRect(scoreX, scoreY, scoreWidth, scoreHeight, 10);
 
-        // Reduce score size on mobile multiplayer to save space
-        const scoreFontSize = this.isMobileDevice && this.isMultiplayer ? '22px' : (this.isCompact ? '26px' : '35px');
         this.scoreText = this.add.text(this.scale.width - padding - 6, padding + (this.isCompact ? 12 : 18), '', {
             fontFamily: 'Fredoka, sans-serif',
-            fontSize: scoreFontSize,
+            fontSize: this.isCompact ? '26px' : '35px',  // Increased by 75%
             color: '#ffcc00',
             stroke: '#000000',
             strokeThickness: this.isCompact ? 3 : 4,
@@ -3956,19 +2748,17 @@ class GameScene extends Phaser.Scene {
         // Stats panel with semi-transparent dark background
         this.statsBg = this.add.graphics().setDepth(199);
         this.statsBg.fillStyle(0x000000, 0.75);
-        // Make stats panel smaller on mobile
-        const statsWidth = this.isMobileDevice ? 110 : (this.isCompact ? 170 : 200);
-        const statsHeight = this.isMobileDevice ? 32 : (this.isCompact ? 38 : 45);
+        const statsWidth = this.isCompact ? 170 : 200;
+        const statsHeight = this.isCompact ? 38 : 45;
         const statsX = padding - 2;
         const statsY = this.scale.height - statsHeight - padding + 4;
         this.statsBg.fillRoundedRect(statsX, statsY, statsWidth, statsHeight, 10);
         this.statsBg.lineStyle(2, 0x00ffff, 0.5);
         this.statsBg.strokeRoundedRect(statsX, statsY, statsWidth, statsHeight, 10);
 
-        const statsFontSize = this.isMobileDevice ? '16px' : (this.isCompact ? '18px' : '22px');
         this.statsText = this.add.text(padding + 2, this.scale.height - padding - 2, '', {
             fontFamily: 'Fredoka, sans-serif',
-            fontSize: statsFontSize,
+            fontSize: this.isCompact ? '18px' : '22px',
             color: '#ffffff',
             stroke: '#000000',
             strokeThickness: this.isCompact ? 2 : 3
@@ -3976,46 +2766,34 @@ class GameScene extends Phaser.Scene {
 
         // Room code display for multiplayer (top-left corner below hearts)
         if (this.isMultiplayer && roomCode) {
-            const roomFontSize = this.isMobileDevice ? '10px' : (this.isCompact ? '12px' : '14px');
             this.roomCodeText = this.add.text(padding, this.isCompact ? 50 : 60, `ROOM: ${roomCode}`, {
                 fontFamily: 'Outfit, sans-serif',
-                fontSize: roomFontSize,
+                fontSize: this.isCompact ? '12px' : '14px',
                 color: '#00ccff',
                 stroke: '#000000',
-                strokeThickness: 2,
-                alpha: 1.0
+                strokeThickness: 2
             }).setOrigin(0, 0).setDepth(200);
-            
-            // Auto-hide room code on mobile after 5 seconds to reduce clutter
-            if (this.isMobileDevice) {
-                this.time.delayedCall(5000, () => {
-                    if (this.roomCodeText) {
-                        this.tweens.add({
-                            targets: this.roomCodeText,
-                            alpha: 0.15,
-                            duration: 500,
-                            ease: 'Power2'
-                        });
-                    }
-                });
-                
-                // Show on tap
-                this.roomCodeText.setInteractive();
-                this.roomCodeText.on('pointerdown', () => {
-                    if (this.roomCodeText) {
-                        this.roomCodeText.setAlpha(1.0);
-                        this.time.delayedCall(3000, () => {
-                            if (this.roomCodeText) {
-                                this.tweens.add({
-                                    targets: this.roomCodeText,
-                                    alpha: 0.15,
-                                    duration: 500
-                                });
-                            }
-                        });
-                    }
-                });
-            }
+        }
+
+        // Voice chat mic button (multiplayer only)
+        if (this.isMultiplayer) {
+            this.voiceChatAvailable = false; // Updated by setupVoiceChat
+            const btnRadius = this.isCompact ? 18 : 22;
+            this.micBtnX = this.scale.width - padding - btnRadius;
+            this.micBtnY = this.isCompact ? 56 : 68;
+
+            this.micBtnGraphics = this.add.graphics().setDepth(200);
+
+            // Invisible interactive hit area
+            this.micHitArea = this.add.circle(
+                this.micBtnX, this.micBtnY, btnRadius + 4, 0x000000, 0
+            ).setDepth(201).setInteractive({ useHandCursor: true });
+
+            this.micHitArea.on('pointerdown', () => {
+                this.toggleMute();
+            });
+
+            this.updateMicButton();
         }
 
         this.updateHUD();
@@ -4039,7 +2817,7 @@ class GameScene extends Phaser.Scene {
 
         // Display team score in multiplayer, regular score otherwise
         const displayScore = this.isMultiplayer ? this.teamScore : this.score;
-        this.animateScoreChange(displayScore);
+        this.scoreText.setText(`${displayScore}`);
 
         // Update carrying display
         if (this.carryIconGroup) {
@@ -4054,13 +2832,7 @@ class GameScene extends Phaser.Scene {
             const p1Max = this.player.carryCapacity;
             const p2Count = this.remoteCarriedCount || 0;
             const p2Max = this.remotePlayer ? this.remotePlayer.carryCapacity : 1;
-            
-            // Shorter format for mobile to reduce clutter
-            if (this.isMobileDevice) {
-                this.carryText.setText(`P1: ${p1Count} | P2: ${p2Count}`);
-            } else {
-                this.carryText.setText(`P1: newts x ${p1Count} | P2: newts x ${p2Count}`);
-            }
+            this.carryText.setText(`P1: newts x ${p1Count} | P2: newts x ${p2Count}`);
         } else {
             const c = this.player.carried.length;
             const maxCapacity = this.player.carryCapacity;
@@ -4085,12 +2857,7 @@ class GameScene extends Phaser.Scene {
             this.carryBg.strokeRoundedRect(bgX, bgY, bgWidth, bgHeight, bgHeight / 2);
         }
 
-        // Shorter stats format for mobile
-        if (this.isMobileDevice) {
-            this.statsText.setText(`✓${this.saved} | ✗${this.lost}`);
-        } else {
-            this.statsText.setText(`SAVED: ${this.saved} | LOST: ${this.lost}`);
-        }
+        this.statsText.setText(`SAVED: ${this.saved} | LOST: ${this.lost}`);
         
         // Update room code display in multiplayer
         if (this.isMultiplayer && this.roomCodeText) {
@@ -4527,18 +3294,15 @@ class GameScene extends Phaser.Scene {
         const fromTop = Math.random() < 0.5;
         const x = Phaser.Math.Between(60, this.scale.width - 60);
         const y = fromTop ? this.topSafe - 25 : this.botSafe + 25;
-        
-        if (this.textures.exists('newt')) {
-            const newt = this.add.image(x, y, 'newt');
-            newt.setDisplaySize(GAME_CONFIG.NEWT_SIZE, GAME_CONFIG.NEWT_SIZE);
-            newt.setDepth(25);
-            newt.dir = fromTop ? 1 : -1;
-            newt.dest = fromTop ? 'LAKE' : 'FOREST';
-            newt.isCarried = false;
-            newt.newtId = 'newt_' + Date.now() + '_' + Math.random().toString(36).substring(2, 8);
-            newt.rotation = newt.dir === 1 ? Math.PI / 2 : -Math.PI / 2;
-            this.newts.add(newt);
-        }
+        const newt = this.add.image(x, y, 'newt');
+        newt.setDisplaySize(GAME_CONFIG.NEWT_SIZE, GAME_CONFIG.NEWT_SIZE);
+        newt.setDepth(25);
+        newt.dir = fromTop ? 1 : -1;
+        newt.dest = fromTop ? 'LAKE' : 'FOREST';
+        newt.isCarried = false;
+        newt.newtId = 'newt_' + Date.now() + '_' + Math.random().toString(36).substring(2, 8);
+        newt.rotation = newt.dir === 1 ? Math.PI / 2 : -Math.PI / 2;
+        this.newts.add(newt);
         // Note: Newts are synced via game_state broadcast, no need for individual spawn events
     }
 
@@ -4648,11 +3412,6 @@ class GameScene extends Phaser.Scene {
                         // Haptic feedback for save (gentle pulse)
                         if (navigator.vibrate) navigator.vibrate(30);
                         
-                        // Create splash effect if saved at lake
-                        if (inLake) {
-                            this.createSplashEffect(newt.x, newt.y);
-                        }
-                        
                         this.createSuccessEffect(newt.x, newt.y);
                         this.checkAchievements();
                         this.updateDifficulty();
@@ -4735,120 +3494,13 @@ class GameScene extends Phaser.Scene {
             onComplete: () => ring.destroy()
         });
 
-        // Sparkle particle burst
-        for (let i = 0; i < 15; i++) {
-            const color = Phaser.Math.RND.pick([0x00ff88, 0xffffff, 0xccff00]);
-            const star = this.add.star(x, y, 5, 2, 6, color);
-            star.setAlpha(1);
-            star.setDepth(101);
-            
-            const angle = Math.random() * Math.PI * 2;
-            const dist = Phaser.Math.Between(30, 70);
-            
+        // Particle burst
+        for (let i = 0; i < 12; i++) {
+            const star = this.add.star(x, y, 5, 4, 8, 0x00ff88);
+            star.setAlpha(0.9);
             this.tweens.add({
-                targets: star,
-                x: x + Math.cos(angle) * dist,
-                y: y + Math.sin(angle) * dist - 20,
-                rotation: Math.random() * Math.PI * 2,
-                alpha: 0,
-                scale: 0.1,
-                duration: 500 + Math.random() * 500,
-                ease: 'Cubic.easeOut',
-                onUpdate: () => {
-                    // Flicker effect
-                    if (Math.random() > 0.8) star.setAlpha(0.2);
-                    else star.setAlpha(1);
-                },
-                onComplete: () => star.destroy()
-            });
-        }
-    }
-
-    createSplashEffect(x, y) {
-        // Water splash effect when newt reaches the lake
-        const splashColor = 0x44aadd;
-        const waterColor = 0x88ccff;
-        
-        // Create expanding ripple rings
-        for (let i = 0; i < 3; i++) {
-            const ring = this.add.ellipse(x, y, 20, 10, splashColor, 0.6 - i * 0.15);
-            ring.setDepth(50);
-            this.tweens.add({
-                targets: ring,
-                scaleX: 4 + i,
-                scaleY: 2 + i * 0.5,
-                alpha: 0,
-                duration: 800 + i * 200,
-                delay: i * 100,
-                ease: 'Power2',
-                onComplete: () => ring.destroy()
-            });
-        }
-        
-        // Water droplets shooting upward
-        for (let i = 0; i < 15; i++) {
-            const angle = -Math.PI / 2 + (Math.random() - 0.5) * Math.PI; // Upward arc
-            const speed = Phaser.Math.Between(80, 150);
-            const droplet = this.add.circle(x, y, Phaser.Math.Between(3, 6), waterColor, 0.8);
-            droplet.setDepth(51);
-            
-            const targetX = x + Math.cos(angle) * speed;
-            const targetY = y + Math.sin(angle) * speed;
-            
-            this.tweens.add({
-                targets: droplet,
-                x: targetX,
-                y: targetY,
-                alpha: 0,
-                scale: 0.5,
-                duration: 600 + Math.random() * 200,
-                ease: 'Power2',
-                onComplete: () => droplet.destroy()
-            });
-        }
-        
-        // Splash crown effect (water shooting up in a circle)
-        const crownCount = 8;
-        for (let i = 0; i < crownCount; i++) {
-            const angle = (i / crownCount) * Math.PI; // Semi-circle upward
-            const distance = Phaser.Math.Between(30, 60);
-            const droplet = this.add.circle(x, y, Phaser.Math.Between(4, 8), 0xffffff, 0.9);
-            droplet.setDepth(52);
-            
-            const targetX = x + Math.cos(angle) * distance;
-            const targetY = y - Math.sin(angle) * distance * 0.5; // Flattened arc
-            
-            this.tweens.add({
-                targets: droplet,
-                x: targetX,
-                y: targetY,
-                alpha: 0,
-                scale: 0.3,
-                duration: 500,
-                ease: 'Power2',
-                onComplete: () => droplet.destroy()
-            });
-        }
-        
-        // Small bubbles rising
-        for (let i = 0; i < 6; i++) {
-            const bubble = this.add.circle(
-                x + Phaser.Math.Between(-20, 20),
-                y,
-                Phaser.Math.Between(2, 5),
-                0xaaddff,
-                0.5
-            );
-            bubble.setDepth(49);
-            
-            this.tweens.add({
-                targets: bubble,
-                y: y - Phaser.Math.Between(30, 60),
-                x: bubble.x + Phaser.Math.Between(-10, 10),
-                alpha: 0,
-                duration: 1000 + Math.random() * 500,
-                ease: 'Sine.easeOut',
-                onComplete: () => bubble.destroy()
+                targets: star, x: x + Phaser.Math.Between(-50, 50), y: y - Phaser.Math.Between(30, 80),
+                rotation: 2, alpha: 0, scale: 0.4, duration: 600 + Math.random() * 400, onComplete: () => star.destroy()
             });
         }
     }
@@ -5098,67 +3750,6 @@ class GameScene extends Phaser.Scene {
         });
     }
 
-    animateScoreChange(targetScore) {
-        // Kill existing score tween if any
-        if (this.scoreTween) {
-            this.scoreTween.stop();
-        }
-        
-        // Determine if score increased or decreased
-        const scoreDiff = targetScore - this.displayedScore;
-        const duration = Math.min(800, Math.abs(scoreDiff) * 5); // Cap at 800ms
-        
-        // Create a tween object to animate the score
-        this.scoreTween = this.tweens.add({
-            targets: this,
-            displayedScore: targetScore,
-            duration: duration,
-            ease: 'Power2',
-            onUpdate: () => {
-                this.scoreText.setText(`${Math.round(this.displayedScore)}`);
-            },
-            onComplete: () => {
-                this.scoreText.setText(`${targetScore}`);
-                this.scoreTween = null;
-                
-                // Pulse effect on score change completion
-                this.tweens.add({
-                    targets: this.scoreText,
-                    scaleX: 1.2,
-                    scaleY: 1.2,
-                    duration: 100,
-                    yoyo: true,
-                    ease: 'Back.easeOut'
-                });
-                
-                // Flash the score background
-                if (this.scoreBg) {
-                    this.scoreBg.clear();
-                    this.scoreBg.fillStyle(scoreDiff >= 0 ? 0x00ff00 : 0xff0000, 0.5);
-                    const padding = this.isCompact ? 12 : 20;
-                    const scoreWidth = this.isCompact ? 98 : 120;
-                    const scoreHeight = this.isCompact ? 40 : 50;
-                    const scoreX = this.scale.width - scoreWidth - padding;
-                    const scoreY = padding - 6;
-                    this.scoreBg.fillRoundedRect(scoreX, scoreY, scoreWidth, scoreHeight, 10);
-                    this.scoreBg.lineStyle(2, scoreDiff >= 0 ? 0x00ff00 : 0xff0000, 1);
-                    this.scoreBg.strokeRoundedRect(scoreX, scoreY, scoreWidth, scoreHeight, 10);
-                    
-                    // Fade back to normal
-                    this.time.delayedCall(200, () => {
-                        if (this.scoreBg) {
-                            this.scoreBg.clear();
-                            this.scoreBg.fillStyle(0x000000, 0.7);
-                            this.scoreBg.fillRoundedRect(scoreX, scoreY, scoreWidth, scoreHeight, 10);
-                            this.scoreBg.lineStyle(2, 0xffcc00, 0.8);
-                            this.scoreBg.strokeRoundedRect(scoreX, scoreY, scoreWidth, scoreHeight, 10);
-                        }
-                    });
-                }
-            }
-        });
-    }
-
     async showGameOver() {
         // Cleanup multiplayer
         if (this.isMultiplayer) {
@@ -5166,27 +3757,13 @@ class GameScene extends Phaser.Scene {
             this.broadcastGameOver();
             if (this.broadcastTimer) this.broadcastTimer.destroy();
             if (this.disconnectCheckTimer) this.disconnectCheckTimer.destroy();
+            if (this._offerRetryTimer) { this._offerRetryTimer.destroy(); this._offerRetryTimer = null; }
             await updateRoomStatus('finished');
         }
-        
+
         if (this.cache.audio.exists('bgm_end')) {
             this.bgmEnd = this.sound.add('bgm_end', { volume: 0.6, loop: true });
             this.bgmEnd.play();
-        }
-
-        // Fade out rain sound on game over
-        if (this.rainSound && this.rainSound.isPlaying) {
-            this.tweens.add({
-                targets: this.rainSound,
-                volume: 0,
-                duration: 1500,
-                ease: 'Power2',
-                onComplete: () => {
-                    if (this.rainSound) {
-                        this.rainSound.stop();
-                    }
-                }
-            });
         }
 
         // Ensure cleanup when the scene is restarted or shut down
@@ -5195,40 +3772,52 @@ class GameScene extends Phaser.Scene {
                 this.bgmEnd.stop();
                 this.bgmEnd.destroy();
             }
-            if (this.rainSound) {
-                this.rainSound.stop();
-                this.rainSound.destroy();
-            }
-            // Remove resize handler from shared Scale Manager to prevent leaks
-            if (this._resizeHandler) {
-                this.scale.off('resize', this._resizeHandler);
-                this._resizeHandler = null;
-            }
             if (this.isMultiplayer) {
-                // Clear active scene reference
-                if (window._activeGameScene === this) {
-                    window._activeGameScene = null;
-                }
                 cleanupMultiplayerState();
             }
         });
 
         const { width, height } = this.scale;
         const isCompact = this.isCompact;
-        
+
         // Use team score in multiplayer
         const finalScore = this.isMultiplayer ? this.teamScore : this.score;
-        
+
+        // Determine the display name for score submission
+        let displayName = playerName || 'Anonymous';
+        if (this.isMultiplayer && this.partnerName) {
+            displayName = `${playerName} & ${this.partnerName}`;
+        }
+
+        // Auto-submit score immediately
+        let submitSuccess = false;
+        if (supabaseClient) {
+            if (this.isMultiplayer) {
+                // Only host submits to avoid duplicates
+                if (isHost) {
+                    submitSuccess = await submitScore(displayName, finalScore, true);
+                } else {
+                    submitSuccess = true; // Guest trusts host submitted
+                }
+                // Notify partner
+                this.broadcastScoreSubmitted(displayName, submitSuccess);
+            } else {
+                submitSuccess = await submitScore(displayName, finalScore, false);
+            }
+        }
+
+        // --- OVERLAY ---
         this.add.rectangle(0, 0, width, height, 0x000000, 0.92).setOrigin(0).setDepth(300);
-        this.add.text(width / 2, height * 0.08, 'GAME OVER', {
-            fontFamily: 'Fredoka, sans-serif', fontSize: '44px', color: '#ff3366', fontStyle: 'bold'
-        }).setOrigin(0.5).setDepth(301);
-        
-        const scoreLabel = this.isMultiplayer ? 'TEAM SCORE' : 'FINAL SCORE';
-        this.add.text(width / 2, height * 0.16, `${scoreLabel}: ${finalScore}`, {
-            fontFamily: 'Fredoka, sans-serif', fontSize: '26px', color: '#ffffff'
+        this.add.text(width / 2, height * 0.06, 'GAME OVER', {
+            fontFamily: 'Fredoka, sans-serif', fontSize: isCompact ? '36px' : '44px', color: '#ff3366', fontStyle: 'bold'
         }).setOrigin(0.5).setDepth(301);
 
+        const scoreLabel = this.isMultiplayer ? 'TEAM SCORE' : 'FINAL SCORE';
+        this.add.text(width / 2, height * 0.13, `${scoreLabel}: ${finalScore}`, {
+            fontFamily: 'Fredoka, sans-serif', fontSize: isCompact ? '22px' : '26px', color: '#ffffff'
+        }).setOrigin(0.5).setDepth(301);
+
+        // --- RUN SUMMARY ---
         const runSeconds = Math.max(0, (this.time.now - this.runStartTime) / 1000);
         const formatTime = seconds => {
             const mins = Math.floor(seconds / 60);
@@ -5238,11 +3827,11 @@ class GameScene extends Phaser.Scene {
         const totalNewts = this.saved + this.lost;
         const rescueRate = totalNewts > 0 ? Math.round((this.saved / totalNewts) * 100) : 0;
 
-        const summaryTitleY = height * (isCompact ? 0.22 : 0.21);
+        const summaryTitleY = height * 0.18;
         const summaryTitle = this.isMultiplayer ? 'TEAM SUMMARY' : 'RUN SUMMARY';
         this.add.text(width / 2, summaryTitleY, summaryTitle, {
             fontFamily: 'Outfit, sans-serif',
-            fontSize: isCompact ? '14px' : '16px',
+            fontSize: isCompact ? '12px' : '14px',
             color: '#aaaaaa',
             letterSpacing: 1
         }).setOrigin(0.5).setDepth(301);
@@ -5255,19 +3844,19 @@ class GameScene extends Phaser.Scene {
             { label: 'Max Streak', value: `${this.maxStreak}x` }
         ];
 
-        const summaryFont = isCompact ? 14 : 16;
-        const lineHeight = isCompact ? 18 : 22;
-        const summaryPadX = isCompact ? 14 : 18;
-        const summaryPadY = isCompact ? 10 : 12;
-        const summaryBoxWidth = Math.min(width * 0.78, isCompact ? 320 : 380);
+        const summaryFont = isCompact ? 12 : 14;
+        const lineHeight = isCompact ? 16 : 20;
+        const summaryPadX = isCompact ? 12 : 16;
+        const summaryPadY = isCompact ? 8 : 10;
+        const summaryBoxWidth = Math.min(width * 0.78, isCompact ? 300 : 360);
         const summaryBoxHeight = lineHeight * summaryLines.length + summaryPadY * 2;
-        const summaryBoxY = summaryTitleY + (isCompact ? 16 : 20) + summaryBoxHeight / 2;
+        const summaryBoxY = summaryTitleY + (isCompact ? 14 : 16) + summaryBoxHeight / 2;
 
         const summaryBg = this.add.graphics().setDepth(301);
         summaryBg.fillStyle(0x000000, 0.6);
-        summaryBg.fillRoundedRect(width / 2 - summaryBoxWidth / 2, summaryBoxY - summaryBoxHeight / 2, summaryBoxWidth, summaryBoxHeight, 12);
+        summaryBg.fillRoundedRect(width / 2 - summaryBoxWidth / 2, summaryBoxY - summaryBoxHeight / 2, summaryBoxWidth, summaryBoxHeight, 10);
         summaryBg.lineStyle(2, this.isMultiplayer ? 0x00ccff : 0x00ffff, 0.6);
-        summaryBg.strokeRoundedRect(width / 2 - summaryBoxWidth / 2, summaryBoxY - summaryBoxHeight / 2, summaryBoxWidth, summaryBoxHeight, 12);
+        summaryBg.strokeRoundedRect(width / 2 - summaryBoxWidth / 2, summaryBoxY - summaryBoxHeight / 2, summaryBoxWidth, summaryBoxHeight, 10);
 
         const labelText = summaryLines.map(line => line.label).join('\n');
         const valueText = summaryLines.map(line => line.value).join('\n');
@@ -5287,148 +3876,27 @@ class GameScene extends Phaser.Scene {
             lineSpacing: isCompact ? 2 : 4
         }).setOrigin(1, 0).setDepth(302);
 
-        const nextSectionY = summaryBoxY + summaryBoxHeight / 2 + (isCompact ? 18 : 24);
+        // --- LEADERBOARD WITH RANK HIGHLIGHT ---
+        const leaderboardStartY = summaryBoxY + summaryBoxHeight / 2 + (isCompact ? 14 : 20);
+        await this.showGameOverLeaderboard(width, height, isCompact, leaderboardStartY, finalScore, displayName, submitSuccess);
 
-        if (supabaseClient) {
-            // Disable Phaser key capture so typing works in the DOM input
-            this.input.keyboard.removeCapture('W,A,S,D');
-            this.input.keyboard.removeCapture([32, 37, 38, 39, 40]); // Space + Arrow keys
-
-            const namePromptY = nextSectionY;
-            const inputY = namePromptY + (isCompact ? 26 : 32);
-            const submitY = inputY + (isCompact ? 40 : 48);
-
-            // Different prompt for multiplayer
-            const promptText = this.isMultiplayer ? 'Enter your name (team submission):' : 'Enter your name:';
-            this.add.text(width / 2, namePromptY, promptText, {
-                fontFamily: 'Outfit, sans-serif', fontSize: '16px', color: '#aaaaaa'
-            }).setOrigin(0.5).setDepth(301);
-
-            const inputEl = document.createElement('input');
-            inputEl.type = 'text'; inputEl.placeholder = 'Your Name'; inputEl.maxLength = 15;
-            const canvasRect = this.game.canvas.getBoundingClientRect();
-            const borderColor = this.isMultiplayer ? '#00ccff' : '#00ffff';
-            inputEl.style.cssText = `position: fixed; left: ${canvasRect.left + width / 2}px; top: ${canvasRect.top + inputY}px; transform: translate(-50%, -50%); padding: 10px 18px; font-size: 16px; font-family: 'Fredoka', sans-serif; border: 2px solid ${borderColor}; border-radius: 8px; background: #111; color: #fff; text-align: center; width: 180px; z-index: 10000; outline: none;`;
-            document.body.appendChild(inputEl); inputEl.focus();
-
-            const initialBtnText = this.isMultiplayer ? 'Enter your name' : 'SUBMIT SCORE';
-            const initialBtnColor = this.isMultiplayer ? '#888888' : '#00ff00';
-            const submitBtnText = this.add.text(width / 2 + 15, submitY, initialBtnText, {
-                fontFamily: 'Fredoka, sans-serif', fontSize: '20px', color: initialBtnColor, backgroundColor: '#222', padding: { left: 45, right: 18, top: 8, bottom: 8 }
-            }).setOrigin(0.5).setDepth(301);
-
-            // Only make interactive for single player initially
-            if (!this.isMultiplayer) {
-                submitBtnText.setInteractive({ useHandCursor: true });
-            }
-
-            const submitIcon = this.add.graphics().setDepth(302);
-            Icons.drawSend(submitIcon, submitBtnText.x - submitBtnText.width / 2 + 22, submitY, 18, this.isMultiplayer ? 0x888888 : 0x00ff00);
-
-            if (this.isMultiplayer) {
-                // Multiplayer: coordinate name submission between both players
-                this.myName = '';
-                this.partnerName = '';
-                this.multiplayerSubmitBtn = submitBtnText;
-                this.multiplayerInputEl = inputEl;
-                this.multiplayerSubmitIcon = submitIcon;
-                this.multiplayerSubmitted = false;
-
-                // When user types their name, broadcast it to partner
-                inputEl.addEventListener('input', () => {
-                    const name = inputEl.value.trim();
-                    this.myName = name;
-                    if (name) {
-                        this.broadcastPlayerName(name);
-                    }
-                    this.updateSubmitButtonState();
-                });
-
-                // Also broadcast on blur in case they tab away
-                inputEl.addEventListener('blur', () => {
-                    const name = inputEl.value.trim();
-                    if (name) {
-                        this.myName = name;
-                        this.broadcastPlayerName(name);
-                        this.updateSubmitButtonState();
-                    }
-                });
-
-                submitBtnText.on('pointerdown', async () => {
-                    if (this.multiplayerSubmitted) return;
-                    if (!this.myName || !this.partnerName) return;
-
-                    const combinedName = `${this.myName} & ${this.partnerName}`;
-                    this.multiplayerSubmitted = true;
-                    submitBtnText.setText('Submitting...');
-                    submitBtnText.disableInteractive();
-
-                    // Only the host actually submits to avoid duplicates
-                    let success = false;
-                    if (isHost) {
-                        success = await submitScore(combinedName, this.teamScore, true);
-                    } else {
-                        // Guest waits for host to submit, assume success
-                        success = true;
-                    }
-
-                    // Broadcast submission result to partner
-                    this.broadcastScoreSubmitted(combinedName, success);
-
-                    if (success) {
-                        submitBtnText.setText('Submitted!');
-                        inputEl.remove();
-                        submitIcon.clear();
-                        this.refreshLeaderboard();
-                    } else {
-                        submitBtnText.setText('Error - Try Again');
-                        this.multiplayerSubmitted = false;
-                        this.updateSubmitButtonState();
-                    }
-                });
-            } else {
-                // Single player: original behavior
-                let submitted = false;
-                submitBtnText.on('pointerdown', async () => {
-                    if (submitted) return;
-                    const name = inputEl.value.trim() || 'Anonymous';
-                    submitted = true;
-                    submitBtnText.setText('Submitting...');
-                    submitBtnText.disableInteractive();
-                    const success = await submitScore(name, this.score, false);
-                    if (success) { submitBtnText.setText('Submitted!'); inputEl.remove(); submitIcon.clear(); this.refreshLeaderboard(); }
-                    else { submitBtnText.setText('Error - Try Again'); submitted = false; submitBtnText.setInteractive({ useHandCursor: true }); }
-                });
-            }
-
-            this.events.once('shutdown', () => { if (inputEl && inputEl.parentNode) inputEl.remove(); });
-
-            this.leaderboardY = submitY + (isCompact ? 55 : 65);
-            await this.showLeaderboard();
-        } else {
-            this.add.text(width / 2, nextSectionY, '(Leaderboard not configured)', {
-                fontFamily: 'Outfit, sans-serif', fontSize: '14px', color: '#555'
-            }).setOrigin(0.5).setDepth(301);
-            this.leaderboardY = nextSectionY + (isCompact ? 24 : 30);
-        }
-
-        const desiredVolunteerY = supabaseClient ? height * 0.78 : height * 0.66;
-        const minVolunteerY = this.leaderboardY + (isCompact ? 90 : 110);
-        const volunteerY = Math.min(height * 0.88, Math.max(desiredVolunteerY, minVolunteerY));
-        const volunteerBg = this.add.rectangle(width / 2, volunteerY, width * 0.85, 60, 0x004422, 0.9).setStrokeStyle(2, 0x00ff88).setOrigin(0.5).setDepth(301);
-        this.add.text(width / 2, volunteerY - 10, 'Want to help real newts?', { fontFamily: 'Fredoka, sans-serif', fontSize: '16px', color: '#ffffff' }).setOrigin(0.5).setDepth(302);
-        const volunteerLink = this.add.text(width / 2 + 10, volunteerY + 12, 'Volunteer at bioblitz.club/newts', { fontFamily: 'Fredoka, sans-serif', fontSize: '18px', color: '#00ff88', fontStyle: 'bold' }).setOrigin(0.5).setDepth(302).setInteractive({ useHandCursor: true });
+        // --- VOLUNTEER LINK ---
+        const volunteerY = Math.min(height * 0.84, leaderboardStartY + (isCompact ? 190 : 230));
+        const volunteerBg = this.add.rectangle(width / 2, volunteerY, width * 0.82, isCompact ? 46 : 54, 0x004422, 0.9).setStrokeStyle(2, 0x00ff88).setOrigin(0.5).setDepth(301);
+        this.add.text(width / 2, volunteerY - 8, 'Want to help real newts?', { fontFamily: 'Fredoka, sans-serif', fontSize: isCompact ? '13px' : '15px', color: '#ffffff' }).setOrigin(0.5).setDepth(302);
+        const volunteerLink = this.add.text(width / 2 + 10, volunteerY + 10, 'Volunteer at bioblitz.club/newts', { fontFamily: 'Fredoka, sans-serif', fontSize: isCompact ? '14px' : '16px', color: '#00ff88', fontStyle: 'bold' }).setOrigin(0.5).setDepth(302).setInteractive({ useHandCursor: true });
         const volunteerIcon = this.add.graphics().setDepth(303);
-        Icons.drawExternalLink(volunteerIcon, volunteerLink.x - volunteerLink.width / 2 - 18, volunteerY + 12, 16, 0x00ff88);
+        Icons.drawExternalLink(volunteerIcon, volunteerLink.x - volunteerLink.width / 2 - 18, volunteerY + 10, 14, 0x00ff88);
         volunteerLink.on('pointerdown', () => { window.open('https://bioblitz.club/newts', '_blank'); });
 
-        const retryBtnText = this.add.text(width / 2 + 15, height * 0.92, 'TRY AGAIN', {
-            fontFamily: 'Fredoka, sans-serif', fontSize: '24px', color: '#00ffff', backgroundColor: '#222', padding: { left: 45, right: 22, top: 10, bottom: 10 }
+        // --- TRY AGAIN BUTTON ---
+        const retryY = Math.min(height * 0.93, volunteerY + (isCompact ? 45 : 55));
+        const retryBtnText = this.add.text(width / 2 + 15, retryY, 'TRY AGAIN', {
+            fontFamily: 'Fredoka, sans-serif', fontSize: isCompact ? '20px' : '24px', color: '#00ffff', backgroundColor: '#222', padding: { left: 45, right: 22, top: 10, bottom: 10 }
         }).setOrigin(0.5).setDepth(301).setInteractive({ useHandCursor: true });
         const retryIcon = this.add.graphics().setDepth(302);
-        Icons.drawRefresh(retryIcon, retryBtnText.x - retryBtnText.width / 2 + 22, height * 0.92, 22, 0x00ffff);
+        Icons.drawRefresh(retryIcon, retryBtnText.x - retryBtnText.width / 2 + 22, retryY, 22, 0x00ffff);
         retryBtnText.on('pointerdown', () => {
-            // In multiplayer, go back to mode select; in single player, restart game
             if (this.isMultiplayer) {
                 cleanupMultiplayerState();
                 this.scene.start('ModeSelectScene');
@@ -5438,45 +3906,138 @@ class GameScene extends Phaser.Scene {
         });
     }
 
-    async showLeaderboard() {
-        const { width } = this.scale;
-        const startY = this.leaderboardY;
+    async showGameOverLeaderboard(width, height, isCompact, startY, playerScore, displayName, submitted) {
+        const boxWidth = Math.min(width * 0.85, isCompact ? 320 : 380);
+        const headerY = startY;
+
+        // Header
         const trophyIcon = this.add.graphics().setDepth(301);
-        Icons.drawTrophy(trophyIcon, width / 2 - 75, startY, 20, 0xffcc00);
-        this.add.text(width / 2 + 10, startY, 'TOP SCORES', { fontFamily: 'Fredoka, sans-serif', fontSize: '18px', color: '#ffcc00' }).setOrigin(0.5).setDepth(301);
+        Icons.drawTrophy(trophyIcon, width / 2 - (isCompact ? 65 : 75), headerY, isCompact ? 16 : 18, 0xffcc00);
+        this.add.text(width / 2 + 5, headerY, 'LEADERBOARD', {
+            fontFamily: 'Fredoka, sans-serif',
+            fontSize: isCompact ? '15px' : '18px',
+            color: '#ffcc00'
+        }).setOrigin(0.5).setDepth(301);
 
-        const scores = await getLeaderboard();
-        if (scores.length === 0) {
-            this.add.text(width / 2, startY + 30, 'Be the first to set a high score!', { fontFamily: 'Outfit, sans-serif', fontSize: '14px', color: '#666' }).setOrigin(0.5).setDepth(301);
-        } else {
-            scores.forEach((s, i) => {
-                const medal = i === 0 ? '1st' : i === 1 ? '2nd' : i === 2 ? '3rd' : `${i + 1}th`;
-                this.add.text(width / 2, startY + 35 + (i * 22), `${medal}  ${s.player_name} - ${s.score}`, { fontFamily: 'Outfit, sans-serif', fontSize: '15px', color: '#ffffff' }).setOrigin(0.5).setDepth(301);
-            });
-        }
-    }
-
-    async refreshLeaderboard() {
-        // In multiplayer, never restart the scene — it destroys the channel, WebRTC audio, and all sync state.
-        // Instead, re-fetch and redraw the leaderboard in-place.
-        if (this.isMultiplayer) {
-            // Just re-draw the leaderboard section
-            const { width } = this.scale;
-            const startY = this.leaderboardY;
-            const scores = await getLeaderboard();
-            // Remove old leaderboard entries (they're just loose text children)
-            // We can't easily target them, so just overlay fresh ones
-            if (scores.length > 0) {
-                scores.forEach((s, i) => {
-                    const medal = i === 0 ? '1st' : i === 1 ? '2nd' : i === 2 ? '3rd' : `${i + 1}th`;
-                    this.add.text(width / 2, startY + 35 + (i * 22), `${medal}  ${s.player_name} - ${s.score}`, {
-                        fontFamily: 'Outfit, sans-serif', fontSize: '15px', color: '#ffffff'
-                    }).setOrigin(0.5).setDepth(303);
-                });
-            }
+        if (!supabaseClient || !submitted) {
+            const msg = !supabaseClient ? 'Leaderboard not available' : 'Could not save score';
+            this.add.text(width / 2, headerY + 30, msg, {
+                fontFamily: 'Outfit, sans-serif', fontSize: '13px', color: '#666'
+            }).setOrigin(0.5).setDepth(301);
             return;
         }
-        this.scene.restart();
+
+        // Fetch fresh leaderboard after our score was submitted
+        const scores = await getLeaderboard();
+        const entryHeight = isCompact ? 24 : 28;
+        const entryFont = isCompact ? 13 : 15;
+        const entriesStartY = headerY + (isCompact ? 22 : 28);
+
+        if (scores.length === 0) {
+            this.add.text(width / 2, entriesStartY + 10, 'You set the first high score!', {
+                fontFamily: 'Outfit, sans-serif', fontSize: '14px', color: '#00ff88'
+            }).setOrigin(0.5).setDepth(301);
+            return;
+        }
+
+        // Find if player made it into top 5
+        let playerRankInTop5 = -1;
+        for (let i = 0; i < scores.length; i++) {
+            if (scores[i].player_name === displayName && scores[i].score === playerScore) {
+                playerRankInTop5 = i;
+                break;
+            }
+        }
+
+        // Draw leaderboard box background
+        const lbBoxHeight = entryHeight * scores.length + 16;
+        const lbBg = this.add.graphics().setDepth(301);
+        lbBg.fillStyle(0x000000, 0.5);
+        lbBg.fillRoundedRect(width / 2 - boxWidth / 2, entriesStartY - 6, boxWidth, lbBoxHeight, 8);
+
+        // Render each score entry
+        scores.forEach((s, i) => {
+            const y = entriesStartY + (i * entryHeight) + 4;
+            const isPlayer = (i === playerRankInTop5);
+            const medal = i === 0 ? '1st' : i === 1 ? '2nd' : i === 2 ? '3rd' : `${i + 1}th`;
+            const medalColors = ['#ffd700', '#c0c0c0', '#cd7f32', '#888888', '#888888'];
+
+            // Highlight row for the player
+            if (isPlayer) {
+                const rowBg = this.add.graphics().setDepth(301);
+                rowBg.fillStyle(0x00ffff, 0.12);
+                rowBg.fillRoundedRect(width / 2 - boxWidth / 2 + 4, y - 4, boxWidth - 8, entryHeight - 2, 4);
+                rowBg.lineStyle(1, 0x00ffff, 0.5);
+                rowBg.strokeRoundedRect(width / 2 - boxWidth / 2 + 4, y - 4, boxWidth - 8, entryHeight - 2, 4);
+            }
+
+            // Rank medal
+            this.add.text(width / 2 - boxWidth / 2 + 16, y, medal, {
+                fontFamily: 'Fredoka, sans-serif',
+                fontSize: `${entryFont}px`,
+                color: medalColors[i] || '#888888',
+                fontStyle: isPlayer ? 'bold' : 'normal'
+            }).setOrigin(0, 0).setDepth(302);
+
+            // Player name
+            const nameColor = isPlayer ? '#00ffff' : '#ffffff';
+            const nameStr = s.player_name.length > 12 ? s.player_name.substring(0, 11) + '..' : s.player_name;
+            this.add.text(width / 2 - boxWidth / 2 + 56, y, nameStr, {
+                fontFamily: 'Outfit, sans-serif',
+                fontSize: `${entryFont}px`,
+                color: nameColor,
+                fontStyle: isPlayer ? 'bold' : 'normal'
+            }).setOrigin(0, 0).setDepth(302);
+
+            // Score
+            this.add.text(width / 2 + boxWidth / 2 - 16, y, `${s.score}`, {
+                fontFamily: 'Fredoka, sans-serif',
+                fontSize: `${entryFont}px`,
+                color: isPlayer ? '#00ffff' : '#aaaaaa',
+                fontStyle: isPlayer ? 'bold' : 'normal'
+            }).setOrigin(1, 0).setDepth(302);
+
+            // "YOU" tag
+            if (isPlayer) {
+                this.add.text(width / 2 + boxWidth / 2 - 16, y - (isCompact ? 10 : 12), 'YOU', {
+                    fontFamily: 'Fredoka, sans-serif',
+                    fontSize: '9px',
+                    color: '#00ffff',
+                    backgroundColor: 'rgba(0,255,255,0.15)',
+                    padding: { left: 4, right: 4, top: 1, bottom: 1 }
+                }).setOrigin(1, 0).setDepth(303);
+            }
+        });
+
+        // Result message below leaderboard
+        const messageY = entriesStartY + lbBoxHeight + (isCompact ? 6 : 10);
+        if (playerRankInTop5 >= 0) {
+            // Player made it to top 5
+            const rankWord = playerRankInTop5 === 0 ? '1st' : playerRankInTop5 === 1 ? '2nd' : playerRankInTop5 === 2 ? '3rd' : `${playerRankInTop5 + 1}th`;
+            const celebMsg = playerRankInTop5 === 0 ? 'NEW HIGH SCORE!' : `You made ${rankWord} place!`;
+            const celebColor = playerRankInTop5 === 0 ? '#ffd700' : '#00ff88';
+            this.add.text(width / 2, messageY, celebMsg, {
+                fontFamily: 'Fredoka, sans-serif',
+                fontSize: isCompact ? '15px' : '18px',
+                color: celebColor,
+                fontStyle: 'bold'
+            }).setOrigin(0.5).setDepth(301);
+        } else {
+            // Player didn't make top 5 - show their score context
+            const lowestTop5 = scores.length >= 5 ? scores[4].score : 0;
+            const diff = lowestTop5 - playerScore;
+            let missMsg = '';
+            if (scores.length >= 5 && diff > 0) {
+                missMsg = `${diff} points away from top 5 — keep going!`;
+            } else {
+                missMsg = 'Score saved! Keep playing to climb higher!';
+            }
+            this.add.text(width / 2, messageY, missMsg, {
+                fontFamily: 'Outfit, sans-serif',
+                fontSize: isCompact ? '12px' : '14px',
+                color: '#aaaaaa'
+            }).setOrigin(0.5).setDepth(301);
+        }
     }
 }
 
@@ -5515,12 +4076,12 @@ class CharacterSelectScene extends Phaser.Scene {
 
         // Character preview area - responsive positioning
         const charY = height * (isMobile ? 0.42 : 0.45);
-        const charSpacing = isMobile ? 85 : (isCompact ? 120 : 165);
+        const charSpacing = isMobile ? 70 : (isCompact ? 100 : 140);
         const charScale = isMobile ? 1.5 : (isCompact ? 1.8 : 2.2);
-        const boxWidth = isMobile ? 120 : (isCompact ? 145 : 180);
-        const boxHeight = isMobile ? 150 : (isCompact ? 175 : 210);
+        const boxWidth = isMobile ? 90 : (isCompact ? 110 : 130);
+        const boxHeight = isMobile ? 120 : (isCompact ? 140 : 170);
 
-        // Male character preview with animation
+        // Male character preview
         const maleX = width / 2 - charSpacing;
         const maleContainer = this.add.container(maleX, charY);
         const maleGraphics = this.add.graphics();
@@ -5528,28 +4089,14 @@ class CharacterSelectScene extends Phaser.Scene {
         maleContainer.add(maleGraphics);
         maleContainer.setScale(charScale);
 
-        // Male idle animation (gentle bounce)
-        this.tweens.add({
-            targets: maleContainer,
-            y: charY - 5,
-            duration: 800,
-            yoyo: true,
-            repeat: -1,
-            ease: 'Sine.easeInOut'
-        });
-
-        // Male selection box with glow effect
+        // Male selection box
         const maleBox = this.add.rectangle(maleX, charY, boxWidth, boxHeight, 0x000000, 0.3)
             .setStrokeStyle(3, 0x00ffff, 1)
             .setInteractive({ useHandCursor: true });
 
-        // Male glow effect (hidden initially)
-        const maleGlow = this.add.ellipse(maleX, charY, boxWidth + 20, boxHeight + 20, 0x00ffff, 0);
-        maleGlow.setDepth(-1);
-
         // Male label
         const labelSize = isMobile ? '14px' : (isCompact ? '16px' : '20px');
-        const labelOffset = isMobile ? 85 : (isCompact ? 100 : 125);
+        const labelOffset = isMobile ? 70 : (isCompact ? 85 : 105);
         this.add.text(maleX, charY + labelOffset, 'VOLUNTEER A', {
             fontFamily: 'Fredoka, sans-serif',
             fontSize: labelSize,
@@ -5558,9 +4105,9 @@ class CharacterSelectScene extends Phaser.Scene {
             strokeThickness: 2
         }).setOrigin(0.5);
 
-        // Male stats with animated bars
+        // Male stats
         const statsSize = isMobile ? '11px' : (isCompact ? '12px' : '14px');
-        const statsOffset = isMobile ? 105 : (isCompact ? 125 : 155);
+        const statsOffset = isMobile ? 88 : (isCompact ? 105 : 128);
         const statsStyle = {
             fontFamily: 'Outfit, sans-serif',
             fontSize: statsSize,
@@ -5591,7 +4138,7 @@ class CharacterSelectScene extends Phaser.Scene {
         const drawHeartIcon = (g, x, y, size, color) => {
             Icons.drawHeart(g, x, y, size, color);
         };
-        const maleStatsText = this.add.text(maleX + 10, charY + statsOffset, 'FAST | Carries 1', statsStyle)
+        const maleStatsText = this.add.text(maleX + 10, charY + statsOffset, 'FAST · Carries 1', statsStyle)
             .setOrigin(0.5)
             .setColor('#8feaff')
             .setShadow(0, 2, '#000000', 4, true, true);
@@ -5602,16 +4149,7 @@ class CharacterSelectScene extends Phaser.Scene {
         drawStatBadge(maleIcon, maleIconX, maleIconY, maleBadgeSize, 0x6de6ff);
         drawBoltIcon(maleIcon, maleIconX, maleIconY, maleBadgeSize * 0.7, 0x6de6ff);
 
-        // Male stat bars
-        const maleStatBarsY = charY + statsOffset + (isMobile ? 22 : 28);
-        const barWidth = isMobile ? 80 : 100;
-        const barHeight = isMobile ? 8 : 10;
-        const barSpacing = isMobile ? 18 : 22;
-        
-        this.createStatBar(maleX - barWidth/2, maleStatBarsY, barWidth, barHeight, 0.9, 0x00ffff, 'SPEED');
-        this.createStatBar(maleX - barWidth/2, maleStatBarsY + barSpacing, barWidth, barHeight, 0.5, 0x00ffff, 'CARRY');
-
-        // Female character preview with animation
+        // Female character preview
         const femaleX = width / 2 + charSpacing;
         const femaleContainer = this.add.container(femaleX, charY);
         const femaleGraphics = this.add.graphics();
@@ -5619,25 +4157,10 @@ class CharacterSelectScene extends Phaser.Scene {
         femaleContainer.add(femaleGraphics);
         femaleContainer.setScale(charScale);
 
-        // Female idle animation (gentle sway)
-        this.tweens.add({
-            targets: femaleContainer,
-            y: charY - 3,
-            x: femaleX + 3,
-            duration: 1000,
-            yoyo: true,
-            repeat: -1,
-            ease: 'Sine.easeInOut'
-        });
-
-        // Female selection box with glow effect
+        // Female selection box
         const femaleBox = this.add.rectangle(femaleX, charY, boxWidth, boxHeight, 0x000000, 0.3)
             .setStrokeStyle(3, 0xff00ff, 1)
             .setInteractive({ useHandCursor: true });
-
-        // Female glow effect (hidden initially)
-        const femaleGlow = this.add.ellipse(femaleX, charY, boxWidth + 20, boxHeight + 20, 0xff00ff, 0);
-        femaleGlow.setDepth(-1);
 
         // Female label
         this.add.text(femaleX, charY + labelOffset, 'VOLUNTEER B', {
@@ -5649,7 +4172,7 @@ class CharacterSelectScene extends Phaser.Scene {
         }).setOrigin(0.5);
 
         // Female stats
-        const femaleStatsText = this.add.text(femaleX + 10, charY + statsOffset, 'STEADY | Carries 2', statsStyle)
+        const femaleStatsText = this.add.text(femaleX + 10, charY + statsOffset, 'STEADY · Carries 2', statsStyle)
             .setOrigin(0.5)
             .setColor('#ffb6de')
             .setShadow(0, 2, '#000000', 4, true, true);
@@ -5660,11 +4183,7 @@ class CharacterSelectScene extends Phaser.Scene {
         drawStatBadge(femaleIcon, femaleIconX, femaleIconY, femaleBadgeSize, 0xffa1d4, 0x1a0b1b);
         drawHeartIcon(femaleIcon, femaleIconX, femaleIconY, femaleBadgeSize * 0.75, 0xffa1d4);
 
-        // Female stat bars
-        this.createStatBar(femaleX - barWidth/2, maleStatBarsY, barWidth, barHeight, 0.6, 0xff00ff, 'SPEED');
-        this.createStatBar(femaleX - barWidth/2, maleStatBarsY + barSpacing, barWidth, barHeight, 1.0, 0xff00ff, 'CARRY');
-
-        // Selection indicator with glow animation
+        // Selection indicator
         const selectIndicator = this.add.graphics();
         const updateSelection = (selected) => {
             selectIndicator.clear();
@@ -5677,75 +4196,24 @@ class CharacterSelectScene extends Phaser.Scene {
             // Update box styles
             maleBox.setStrokeStyle(selected === 'male' ? 4 : 2, 0x00ffff, selected === 'male' ? 1 : 0.5);
             femaleBox.setStrokeStyle(selected === 'female' ? 4 : 2, 0xff00ff, selected === 'female' ? 1 : 0.5);
-            
-            // Update glow effects
-            maleGlow.setFillStyle(0x00ffff, selected === 'male' ? 0.3 : 0);
-            femaleGlow.setFillStyle(0xff00ff, selected === 'female' ? 0.3 : 0);
-            
-            // Pulse animation for selected glow
-            if (selected === 'male') {
-                this.tweens.add({
-                    targets: maleGlow,
-                    alpha: { from: 0.3, to: 0.5 },
-                    scaleX: { from: 1, to: 1.05 },
-                    scaleY: { from: 1, to: 1.05 },
-                    duration: 800,
-                    yoyo: true,
-                    repeat: -1,
-                    ease: 'Sine.easeInOut'
-                });
-                this.tweens.killTweensOf(femaleGlow);
-                femaleGlow.setScale(1);
-            } else {
-                this.tweens.add({
-                    targets: femaleGlow,
-                    alpha: { from: 0.3, to: 0.5 },
-                    scaleX: { from: 1, to: 1.05 },
-                    scaleY: { from: 1, to: 1.05 },
-                    duration: 800,
-                    yoyo: true,
-                    repeat: -1,
-                    ease: 'Sine.easeInOut'
-                });
-                this.tweens.killTweensOf(maleGlow);
-                maleGlow.setScale(1);
-            }
         };
 
         // Initial selection
         updateSelection(selectedCharacter);
 
-        // Click handlers with visual feedback and character animation
+        // Click handlers with visual feedback
         maleBox.on('pointerdown', () => {
             selectedCharacter = 'male';
             updateSelection('male');
-            // Bounce animation on selection
-            this.tweens.add({
-                targets: maleContainer,
-                scaleX: charScale * 1.15,
-                scaleY: charScale * 1.15,
-                duration: 100,
-                yoyo: true,
-                ease: 'Back.easeOut'
-            });
-            // Particle burst effect
-            this.createSelectionParticles(maleX, charY, 0x00ffff);
+            maleContainer.setScale(charScale * 1.05);
+            this.time.delayedCall(100, () => maleContainer.setScale(charScale));
         });
 
         femaleBox.on('pointerdown', () => {
             selectedCharacter = 'female';
             updateSelection('female');
-            // Bounce animation on selection
-            this.tweens.add({
-                targets: femaleContainer,
-                scaleX: charScale * 1.15,
-                scaleY: charScale * 1.15,
-                duration: 100,
-                yoyo: true,
-                ease: 'Back.easeOut'
-            });
-            // Particle burst effect
-            this.createSelectionParticles(femaleX, charY, 0xff00ff);
+            femaleContainer.setScale(charScale * 1.05);
+            this.time.delayedCall(100, () => femaleContainer.setScale(charScale));
         });
 
         // Tap instruction for mobile
@@ -5800,68 +4268,6 @@ class CharacterSelectScene extends Phaser.Scene {
         });
 
         this.cameras.main.fadeIn(300);
-    }
-
-    createStatBar(x, y, width, height, fillPercent, color, label) {
-        // Background bar with a slight outer glow/stroke for depth
-        const bgBar = this.add.graphics();
-        bgBar.fillStyle(0x000000, 0.6);
-        bgBar.fillRoundedRect(x, y, width, height, height / 2);
-        bgBar.lineStyle(2, color, 0.2);
-        bgBar.strokeRoundedRect(x - 1, y - 1, width + 2, height + 2, (height + 2) / 2);
-
-        // Fill bar with animation and a brighter gradient-like look
-        const fillBar = this.add.graphics();
-        const fillWidth = width * fillPercent;
-        
-        // Animate fill
-        this.tweens.add({
-            targets: { progress: 0 },
-            progress: 1,
-            duration: 800,
-            ease: 'Cubic.easeOut',
-            onUpdate: (tween, target) => {
-                fillBar.clear();
-                // Main fill
-                fillBar.fillStyle(color, 0.9);
-                fillBar.fillRoundedRect(x, y, fillWidth * target.progress, height, height / 2);
-                
-                // Brighter top highlight for 3D effect
-                fillBar.fillStyle(0xffffff, 0.3);
-                fillBar.fillRoundedRect(x + 2, y + 1, Math.max(0, (fillWidth * target.progress) - 4), height / 2.5, height / 5);
-            }
-        });
-
-        // Label - larger, brighter, and better font weight
-        this.add.text(x + width / 2, y - 4, label, {
-            fontFamily: 'Fredoka, sans-serif',
-            fontSize: '11px',
-            color: '#ffffff',
-            fontWeight: '600',
-            stroke: '#000000',
-            strokeThickness: 2
-        }).setOrigin(0.5, 1).setAlpha(0.9);
-
-        return { bgBar, fillBar };
-    }
-
-    createSelectionParticles(x, y, color) {
-        for (let i = 0; i < 15; i++) {
-            const angle = (i / 15) * Math.PI * 2;
-            const distance = Phaser.Math.Between(30, 60);
-            const particle = this.add.circle(x, y, Phaser.Math.Between(3, 6), color, 0.8);
-            
-            this.tweens.add({
-                targets: particle,
-                x: x + Math.cos(angle) * distance,
-                y: y + Math.sin(angle) * distance,
-                alpha: 0,
-                scale: 0.3,
-                duration: 400 + Math.random() * 200,
-                ease: 'Power2',
-                onComplete: () => particle.destroy()
-            });
-        }
     }
 
     drawMaleCharacter(g) {
@@ -5983,12 +4389,6 @@ class CharacterSelectScene extends Phaser.Scene {
 
 const config = {
     type: Phaser.AUTO, backgroundColor: '#000000', scale: { mode: Phaser.Scale.RESIZE, parent: 'game-container' },
-    dom: { createContainer: true }, scene: [SplashScene, ModeSelectScene, LobbyScene, CharacterSelectScene, GameScene]
+    dom: { createContainer: true }, scene: [SplashScene, NameEntryScene, ModeSelectScene, LobbyScene, CharacterSelectScene, GameScene]
 };
-window.addEventListener('load', () => {
-    new Phaser.Game(config);
-    // Add global promise error handling to catch Supabase/WebRTC rogue errors
-    window.addEventListener('unhandledrejection', (event) => {
-        console.warn('Unhandled promise rejection:', event.reason);
-    });
-});
+window.addEventListener('load', () => new Phaser.Game(config));
