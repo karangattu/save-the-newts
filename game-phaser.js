@@ -2193,8 +2193,11 @@ class GameScene extends Phaser.Scene {
             this.sound.play('sfx_hit', { volume: 0.7 });
         }
 
-        // Screen shake for impact
-        this.cameras.main.shake(300, 0.02);
+        // Screen shake for impact - dramatic shake on collision
+        this.cameras.main.shake(400, 0.03);
+        
+        // Add camera flash for extra punch
+        this.cameras.main.flash(100, 255, 80, 80, false);
 
         // Haptic feedback for mobile (strong vibration pattern)
         if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
