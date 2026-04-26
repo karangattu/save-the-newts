@@ -37,7 +37,7 @@ async function getLeaderboard() {
     try {
         const { data, error } = await supabaseClient
             .from('leaderboard')
-            .select('*')
+            .select('player_name, score, is_multiplayer')
             .order('score', { ascending: false })
             .limit(5);
         if (error) return [];
@@ -85,32 +85,39 @@ function generateRoomCode() {
 // Room management functions
 async function createRoom(hostCharacter) {
     if (!supabaseClient) return null;
-    const code = generateRoomCode();
     const hostId = generatePlayerId();
     
     try {
-        const { data, error } = await supabaseClient
-            .from('game_rooms')
-            .insert([{ 
-                room_code: code, 
-                host_id: hostId,
-                host_character: hostCharacter,
-                status: 'waiting'
-            }])
-            .select()
-            .single();
-        
-        if (error) {
+        for (let attempt = 0; attempt < 5; attempt++) {
+            const code = generateRoomCode();
+            const { data, error } = await supabaseClient
+                .from('game_rooms')
+                .insert([{
+                    room_code: code,
+                    host_id: hostId,
+                    host_character: hostCharacter,
+                    status: 'waiting'
+                }])
+                .select('id, room_code, host_id, host_character, guest_id, guest_character, status')
+                .single();
+
+            if (!error && data) {
+                playerId = hostId;
+                roomCode = data.room_code;
+                roomId = data.id;
+                isHost = true;
+
+                return data;
+            }
+
+            if (error && error.code === '23505') continue;
+
             console.error("Error creating room:", error);
             return null;
         }
-        
-        playerId = hostId;
-        roomCode = code;
-        roomId = data.id;
-        isHost = true;
-        
-        return data;
+
+        console.error("Unable to create a unique room code after several attempts");
+        return null;
     } catch (e) {
         console.error("Exception creating room:", e);
         return null;
@@ -125,7 +132,7 @@ async function joinRoom(code, guestCharacter) {
         // First check if room exists and is waiting
         const { data: room, error: fetchError } = await supabaseClient
             .from('game_rooms')
-            .select('*')
+            .select('id, room_code, host_id, host_character')
             .eq('room_code', code)
             .eq('status', 'waiting')
             .is('guest_id', null)
@@ -145,10 +152,12 @@ async function joinRoom(code, guestCharacter) {
                 status: 'playing'
             })
             .eq('id', room.id)
-            .select()
+            .eq('status', 'waiting')
+            .is('guest_id', null)
+            .select('id, room_code, host_id, host_character, guest_id, guest_character, status')
             .single();
         
-        if (error) {
+        if (error || !data) {
             console.error("Error joining room:", error);
             return null;
         }
@@ -211,7 +220,7 @@ function cleanupVoiceChat() {
 
 function cleanupMultiplayerState() {
     cleanupVoiceChat();
-    if (multiplayerChannel) {
+    if (multiplayerChannel && supabaseClient) {
         supabaseClient.removeChannel(multiplayerChannel);
         multiplayerChannel = null;
     }
@@ -402,6 +411,23 @@ const GAME_CONFIG = {
         neonPink: 0xff00ff
     }
 };
+
+const MULTIPLAYER_CONFIG = {
+    PLAYER_UPDATE_MS: 125,
+    WORLD_UPDATE_MS: 250,
+    IDLE_HEARTBEAT_MS: 1500,
+    RATIO_PRECISION: 1000,
+    REMOTE_INTERPOLATION: 0.22,
+    CAR_CORRECTION: 0.12
+};
+
+function quantizeRatio(value) {
+    return Math.round(value * MULTIPLAYER_CONFIG.RATIO_PRECISION) / MULTIPLAYER_CONFIG.RATIO_PRECISION;
+}
+
+function frameAdjustedLerp(baseAmount, delta) {
+    return 1 - Math.pow(1 - baseAmount, delta / 16.67);
+}
 
 const isCompactViewport = (width, height) => Math.min(width, height) < 600;
 
@@ -1358,7 +1384,9 @@ class GameScene extends Phaser.Scene {
         this.remotePlayer = null;
         this.remotePlayerGraphics = null;
         this.remoteCarried = [];
-        this.lastBroadcastTime = 0;
+        this.remoteCarriedCount = 0;
+        this.lastSentPlayerState = null;
+        this.lastPlayerBroadcastAt = 0;
         this.disconnectTimer = null;
         this.partnerDisconnected = false;
         this.partnerName = '';
@@ -1650,6 +1678,9 @@ class GameScene extends Phaser.Scene {
         
         this.remotePlayer.add(g);
         this.remotePlayer.graphics = g;
+        this.remotePlayer.netTargetX = startX;
+        this.remotePlayer.netTargetY = this.botSafe + 60;
+        this.remotePlayer.lastNetUpdateAt = 0;
         
         // Apply remote character stats
         const remoteStats = CHARACTER_STATS[remoteCharacter] || CHARACTER_STATS['male'];
@@ -1681,6 +1712,11 @@ class GameScene extends Phaser.Scene {
 
     setupMultiplayerSync() {
         if (!supabaseClient || !roomCode) return;
+
+        if (multiplayerChannel) {
+            supabaseClient.removeChannel(multiplayerChannel);
+            multiplayerChannel = null;
+        }
         
         // Create broadcast channel for real-time sync
         multiplayerChannel = supabaseClient.channel(`game-${roomCode}`, {
@@ -1777,13 +1813,28 @@ class GameScene extends Phaser.Scene {
                 // Broadcast our name to the partner
                 this.broadcastPlayerName(playerName);
 
+                this.broadcastPlayerState(true);
+                if (isHost) this.broadcastGameState();
+
+                if (this.broadcastTimer) this.broadcastTimer.destroy();
+                if (this.gameStateBroadcastTimer) this.gameStateBroadcastTimer.destroy();
+
                 // Start broadcasting position
                 this.broadcastTimer = this.time.addEvent({
-                    delay: 50, // 20Hz broadcast rate
+                    delay: MULTIPLAYER_CONFIG.PLAYER_UPDATE_MS,
                     callback: this.broadcastPlayerState,
                     callbackScope: this,
                     loop: true
                 });
+
+                if (isHost) {
+                    this.gameStateBroadcastTimer = this.time.addEvent({
+                        delay: MULTIPLAYER_CONFIG.WORLD_UPDATE_MS,
+                        callback: this.broadcastGameState,
+                        callbackScope: this,
+                        loop: true
+                    });
+                }
                 
                 // Start disconnect detection
                 lastRemoteUpdate = Date.now();
@@ -1794,26 +1845,28 @@ class GameScene extends Phaser.Scene {
                     loop: true
                 });
 
-                // Start voice chat
-                this.setupVoiceChat();
+                this.updateMicButton();
             }
         });
     }
 
-    broadcastPlayerState() {
+    broadcastPlayerState(force = false) {
         if (!multiplayerChannel || this.gameOver) return;
         
-        const w = this.scale.width;
-        const h = this.scale.height;
+        const width = this.scale.width;
+        const height = this.scale.height;
+        const now = Date.now();
         
         const payload = {
             playerId: playerId,
-            xRatio: this.player.x / w,  // Normalized 0-1
-            yRatio: this.player.y / h,
+            xRatio: quantizeRatio(this.player.x / width),
+            yRatio: quantizeRatio(this.player.y / height),
             scaleX: this.player.scaleX,
             carriedCount: this.player.carried.length,
-            timestamp: Date.now()
+            timestamp: now
         };
+
+        if (!this.shouldBroadcastPlayerState(payload, force)) return;
 
         multiplayerChannel.send({
             type: 'broadcast',
@@ -1821,22 +1874,30 @@ class GameScene extends Phaser.Scene {
             payload: payload
         });
 
-        // Host also broadcasts game state
-        if (isHost) {
-            this.broadcastGameState();
-        }
+        this.lastSentPlayerState = payload;
+        this.lastPlayerBroadcastAt = now;
+    }
+
+    shouldBroadcastPlayerState(payload, force = false) {
+        if (force || !this.lastSentPlayerState) return true;
+        if (payload.timestamp - this.lastPlayerBroadcastAt >= MULTIPLAYER_CONFIG.IDLE_HEARTBEAT_MS) return true;
+
+        return payload.xRatio !== this.lastSentPlayerState.xRatio ||
+            payload.yRatio !== this.lastSentPlayerState.yRatio ||
+            payload.scaleX !== this.lastSentPlayerState.scaleX ||
+            payload.carriedCount !== this.lastSentPlayerState.carriedCount;
     }
 
     broadcastGameState() {
-        if (!multiplayerChannel || !isHost) return;
+        if (!multiplayerChannel || !isHost || this.gameOver) return;
         
-        const w = this.scale.width;
-        const h = this.scale.height;
+        const width = this.scale.width;
+        const height = this.scale.height;
         
         const newtsData = this.newts.getChildren().map(n => ({
             id: n.newtId,
-            xRatio: n.x / w,  // Normalized 0-1
-            yRatio: n.y / h,
+            xRatio: quantizeRatio(n.x / width),
+            yRatio: quantizeRatio(n.y / height),
             dest: n.dest,
             dir: n.dir,
             isCarried: n.isCarried,
@@ -1845,10 +1906,9 @@ class GameScene extends Phaser.Scene {
 
         const carsData = this.cars.getChildren().map(c => ({
             id: c.carId,
-            xRatio: c.x / w,  // Normalized 0-1
-            yRatio: c.y / h,
-            speed: c.speed,
-            speedRatio: c.speed / w,  // Speed relative to screen width
+            xRatio: quantizeRatio(c.x / width),
+            yRatio: quantizeRatio(c.y / height),
+            speedRatio: quantizeRatio(c.speed / width),
             type: c.type,
             color: c.carColor,
             dir: c.dir,
@@ -1887,20 +1947,22 @@ class GameScene extends Phaser.Scene {
         // Convert normalized coordinates to local screen coordinates
         const targetX = data.xRatio * w;
         const targetY = data.yRatio * h;
-        
-        // Smoothly interpolate to new position
-        this.tweens.add({
-            targets: this.remotePlayer,
-            x: targetX,
-            y: targetY,
-            duration: 50,
-            ease: 'Linear'
-        });
+
+        const previousUpdateAt = this.remotePlayer.lastNetUpdateAt || 0;
+        this.remotePlayer.netTargetX = targetX;
+        this.remotePlayer.netTargetY = targetY;
+        this.remotePlayer.lastNetUpdateAt = Date.now();
+
+        if (!previousUpdateAt || this.remotePlayer.lastNetUpdateAt - previousUpdateAt > 1000) {
+            this.remotePlayer.x = targetX;
+            this.remotePlayer.y = targetY;
+        }
         
         this.remotePlayer.scaleX = data.scaleX;
         
         // Update remote carried count for display
-        this.remoteCarriedCount = data.carriedCount;
+        const previousCarriedCount = this.remoteCarriedCount || 0;
+        this.remoteCarriedCount = data.carriedCount || 0;
         if (this.remotePlayer && this.remotePlayer.carried) {
             while (this.remotePlayer.carried.length > this.remoteCarriedCount) {
                 const extra = this.remotePlayer.carried.pop();
@@ -1911,7 +1973,32 @@ class GameScene extends Phaser.Scene {
                 }
             }
         }
-        this.updateHUD();
+        if (previousCarriedCount !== this.remoteCarriedCount) this.updateHUD();
+    }
+
+    interpolateRemotePlayer(delta) {
+        if (!this.remotePlayer || this.gameOver) return;
+        if (this.remotePlayer.netTargetX === undefined || this.remotePlayer.netTargetY === undefined) return;
+
+        const correction = frameAdjustedLerp(MULTIPLAYER_CONFIG.REMOTE_INTERPOLATION, delta);
+        const previousX = this.remotePlayer.x;
+        const previousY = this.remotePlayer.y;
+        this.remotePlayer.x = Phaser.Math.Linear(this.remotePlayer.x, this.remotePlayer.netTargetX, correction);
+        this.remotePlayer.y = Phaser.Math.Linear(this.remotePlayer.y, this.remotePlayer.netTargetY, correction);
+
+        if (Math.abs(this.remotePlayer.x - this.remotePlayer.netTargetX) < 0.5) this.remotePlayer.x = this.remotePlayer.netTargetX;
+        if (Math.abs(this.remotePlayer.y - this.remotePlayer.netTargetY) < 0.5) this.remotePlayer.y = this.remotePlayer.netTargetY;
+
+        const moved = Math.abs(this.remotePlayer.x - previousX) + Math.abs(this.remotePlayer.y - previousY) > 0.25;
+        this.remoteWalkTime = (this.remoteWalkTime || 0) + delta * 0.015;
+        this.remotePlayer.graphics.y = moved ? Math.sin(this.remoteWalkTime) * 3 : Math.sin(this.time.now * 0.003) * 1.5;
+
+        if (this.remotePlayer.carried) {
+            this.remotePlayer.carried.forEach((newt, index) => {
+                newt.x = this.remotePlayer.x + (index === 0 ? -22 : 22);
+                newt.y = this.remotePlayer.y - 18;
+            });
+        }
     }
 
     handleGameStateUpdate(data) {
@@ -2319,7 +2406,22 @@ class GameScene extends Phaser.Scene {
 
     async setupVoiceChat() {
         if (!this.isMultiplayer) return;
-        if (peerConnection) return; // Already connected (survives scene restart)
+        if (this.voiceChatStarting) return;
+        if (peerConnection) {
+            this.voiceChatAvailable = true;
+            this.updateMicButton();
+            return;
+        }
+
+        this.voiceChatStarting = true;
+        this.voiceChatAvailable = Boolean(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.RTCPeerConnection);
+        this.updateMicButton();
+
+        if (!this.voiceChatAvailable) {
+            this.voiceChatStarting = false;
+            this.updateMicButton();
+            return;
+        }
 
         this._bufferedOffer = null;
         this._bufferedIceCandidates = [];
@@ -2337,6 +2439,7 @@ class GameScene extends Phaser.Scene {
         } catch (err) {
             console.warn('Voice chat: WebRTC not supported -', err.message);
             this.voiceChatAvailable = false;
+            this.voiceChatStarting = false;
             this.updateMicButton();
             return;
         }
@@ -2382,6 +2485,7 @@ class GameScene extends Phaser.Scene {
         } catch (err) {
             console.warn('Voice chat: mic unavailable -', err.message);
             this.voiceChatAvailable = false;
+            this.voiceChatStarting = false;
             peerConnection.close();
             peerConnection = null;
             this.updateMicButton();
@@ -2395,6 +2499,7 @@ class GameScene extends Phaser.Scene {
 
         this.voiceChatReady = true;
         this.voiceChatAvailable = true;
+        this.voiceChatStarting = false;
 
         // Host creates offer after a short delay to ensure guest has subscribed
         if (isHost) {
@@ -2515,7 +2620,12 @@ class GameScene extends Phaser.Scene {
     }
 
     toggleMute() {
-        if (!localStream || !this.voiceChatAvailable) return;
+        if (!this.isMultiplayer || this.voiceChatStarting) return;
+        if (!peerConnection || !localStream) {
+            this.setupVoiceChat();
+            return;
+        }
+        if (!this.voiceChatAvailable) return;
         isMuted = !isMuted;
         localStream.getAudioTracks().forEach(track => {
             track.enabled = !isMuted;
@@ -2532,11 +2642,23 @@ class GameScene extends Phaser.Scene {
         const size = this.isCompact ? 16 : 20;
         const btnRadius = this.isCompact ? 18 : 22;
 
-        if (!this.voiceChatAvailable) {
+        if (this.voiceChatStarting) {
+            this.micBtnGraphics.fillStyle(0x1a3344, 0.8);
+            this.micBtnGraphics.fillCircle(x, y, btnRadius);
+            this.micBtnGraphics.lineStyle(2, 0x00ccff, 0.8);
+            this.micBtnGraphics.strokeCircle(x, y, btnRadius);
+            Icons.drawMic(this.micBtnGraphics, x, y, size, 0x00ccff);
+        } else if (!this.voiceChatAvailable) {
             // Unavailable: dark gray circle, gray mic-off icon
             this.micBtnGraphics.fillStyle(0x333333, 0.7);
             this.micBtnGraphics.fillCircle(x, y, btnRadius);
             Icons.drawMicOff(this.micBtnGraphics, x, y, size, 0x666666);
+        } else if (!localStream || !peerConnection) {
+            this.micBtnGraphics.fillStyle(0x223344, 0.8);
+            this.micBtnGraphics.fillCircle(x, y, btnRadius);
+            this.micBtnGraphics.lineStyle(2, 0x00ccff, 0.8);
+            this.micBtnGraphics.strokeCircle(x, y, btnRadius);
+            Icons.drawMic(this.micBtnGraphics, x, y, size, 0x00ccff);
         } else if (isMuted) {
             // Muted: dark red circle, red border, red mic-off icon
             this.micBtnGraphics.fillStyle(0x442222, 0.8);
@@ -2780,7 +2902,8 @@ class GameScene extends Phaser.Scene {
 
         // Voice chat mic button (multiplayer only)
         if (this.isMultiplayer) {
-            this.voiceChatAvailable = false; // Updated by setupVoiceChat
+            this.voiceChatAvailable = Boolean(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.RTCPeerConnection);
+            this.voiceChatStarting = false;
             const btnRadius = this.isCompact ? 18 : 22;
             this.micBtnX = this.scale.width - padding - btnRadius;
             this.micBtnY = this.isCompact ? 56 : 68;
@@ -2920,6 +3043,7 @@ class GameScene extends Phaser.Scene {
     update(time, delta) {
         if (this.gameOver) return;
         this.updatePlayer(time, delta);
+        if (this.isMultiplayer) this.interpolateRemotePlayer(delta);
         // Host moves cars locally; guest interpolates from synced data
         if (!this.isMultiplayer || isHost) {
             this.updateCars(delta);
@@ -3049,6 +3173,7 @@ class GameScene extends Phaser.Scene {
     interpolateCars(delta) {
         const dt = delta / 1000;
         const cars = this.cars.getChildren();
+        const correction = frameAdjustedLerp(MULTIPLAYER_CONFIG.CAR_CORRECTION, delta);
         
         cars.forEach(car => {
             // Move car locally based on speed for smooth animation
@@ -3059,7 +3184,14 @@ class GameScene extends Phaser.Scene {
                 const diff = car.targetX - car.x;
                 // Only correct if we're drifting too far from expected position
                 if (Math.abs(diff) > 5) {
-                    car.x += diff * 0.15; // Smooth correction
+                    car.x += diff * correction;
+                }
+            }
+
+            if (car.targetY !== undefined) {
+                const laneDrift = car.targetY - car.y;
+                if (Math.abs(laneDrift) > 1) {
+                    car.y += laneDrift * correction;
                 }
             }
             
@@ -3759,6 +3891,7 @@ class GameScene extends Phaser.Scene {
             // Broadcast game over to partner (not disconnect)
             this.broadcastGameOver();
             if (this.broadcastTimer) this.broadcastTimer.destroy();
+            if (this.gameStateBroadcastTimer) this.gameStateBroadcastTimer.destroy();
             if (this.disconnectCheckTimer) this.disconnectCheckTimer.destroy();
             if (this._offerRetryTimer) { this._offerRetryTimer.destroy(); this._offerRetryTimer = null; }
             await updateRoomStatus('finished');

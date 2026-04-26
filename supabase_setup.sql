@@ -34,6 +34,10 @@ create policy "Enable insert access for all users"
 on leaderboard for insert 
 with check (true);
 
+-- 4a. Keep the top-score leaderboard query cheap as the table grows
+create index if not exists idx_leaderboard_score_desc
+on leaderboard(score desc, created_at asc);
+
 -- =====================================================
 -- MULTIPLAYER SUPPORT - Game Rooms Table
 -- =====================================================
@@ -88,6 +92,9 @@ end $$;
 -- 9. Create indexes for faster lookups (if not exists)
 create index if not exists idx_game_rooms_room_code on game_rooms(room_code);
 create index if not exists idx_game_rooms_status on game_rooms(status);
+create index if not exists idx_game_rooms_cleanup
+on game_rooms(status, created_at, updated_at)
+where status in ('waiting', 'finished');
 
 -- 10. Function to auto-update the updated_at timestamp
 create or replace function update_updated_at_column()
