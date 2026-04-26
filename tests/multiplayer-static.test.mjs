@@ -21,17 +21,25 @@ function assertSourceDoesNotMatch(source, pattern, label) {
     assert.ok(!pattern.test(source), label);
 }
 
-test('multiplayer sync is tuned for Supabase Realtime free-tier limits', () => {
-    assertSourceMatches(gameSource, /PLAYER_UPDATE_MS:\s*125/, 'player updates should be capped at 8Hz');
-    assertSourceMatches(gameSource, /WORLD_UPDATE_MS:\s*250/, 'world snapshots should be capped at 4Hz');
+test('multiplayer sync uses 60Hz peer transport with a Supabase-safe fallback', () => {
+    assertSourceMatches(gameSource, /PLAYER_UPDATE_MS:\s*1000\s*\/\s*60/, 'peer player updates should run at 60Hz');
+    assertSourceMatches(gameSource, /WORLD_UPDATE_MS:\s*1000\s*\/\s*20/, 'peer world snapshots should run at 20Hz');
+    assertSourceMatches(gameSource, /SUPABASE_FALLBACK_PLAYER_UPDATE_MS:\s*125/, 'Supabase fallback player updates should stay capped at 8Hz');
+    assertSourceMatches(gameSource, /SUPABASE_FALLBACK_WORLD_UPDATE_MS:\s*250/, 'Supabase fallback world snapshots should stay capped at 4Hz');
     assertSourceMatches(gameSource, /IDLE_HEARTBEAT_MS:\s*1500/, 'idle players should use a heartbeat instead of constant packets');
     assertSourceMatches(gameSource, /function quantizeRatio/, 'ratios should be quantized before broadcast');
     assertSourceMatches(gameSource, /shouldBroadcastPlayerState\(payload, force/, 'unchanged player states should be skipped');
+    assertSourceMatches(gameSource, /setupGameDataChannel\(\)/, 'game sync should establish a WebRTC data channel');
+    assertSourceMatches(gameSource, /createDataChannel\('game-sync'/, 'host should create a dedicated game-sync data channel');
+    assertSourceMatches(gameSource, /sendMultiplayerMessage\(event, payload, options = \{\}\)/, 'volatile sync should route through a shared transport helper');
+    assertSourceMatches(gameSource, /volatile && this\.isGameDataChannelReady\(\)/, 'volatile sync should prefer the peer data channel');
 
     const playerBroadcast = sourceBetween('    broadcastPlayerState', '    broadcastGameState');
     assertSourceDoesNotMatch(playerBroadcast, /broadcastGameState\(/, 'player packets should not trigger full world snapshots');
+    assertSourceMatches(playerBroadcast, /sendMultiplayerMessage\('player_update', payload, \{ volatile: true \}\)/, 'player movement should use the volatile transport');
 
-    assertSourceMatches(gameSource, /gameStateBroadcastTimer[\s\S]*WORLD_UPDATE_MS/, 'host world snapshots should use their own lower-rate timer');
+    assertSourceMatches(gameSource, /getWorldUpdateDelay\(\)[\s\S]*WORLD_UPDATE_MS/, 'world timer helper should choose the peer world rate');
+    assertSourceMatches(gameSource, /gameStateBroadcastTimer[\s\S]*getWorldUpdateDelay\(\)/, 'host world snapshots should use their own lower-rate timer helper');
 });
 
 test('multiplayer avoids avoidable realtime events and lobby races', () => {

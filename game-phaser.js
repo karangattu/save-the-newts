@@ -71,6 +71,11 @@ let remoteAudioEl = null;
 let voiceChatActive = false;
 let isMuted = false;
 
+// ===== GAME DATA CHANNEL STATE =====
+let gameDataPeerConnection = null;
+let gameDataChannel = null;
+let gameDataChannelReady = false;
+
 // Generate unique player ID
 function generatePlayerId() {
     return 'player_' + Math.random().toString(36).substring(2, 15);
@@ -218,8 +223,25 @@ function cleanupVoiceChat() {
     isMuted = false;
 }
 
+function cleanupGameDataChannel() {
+    gameDataChannelReady = false;
+    if (gameDataChannel) {
+        gameDataChannel.onopen = null;
+        gameDataChannel.onclose = null;
+        gameDataChannel.onerror = null;
+        gameDataChannel.onmessage = null;
+        gameDataChannel.close();
+        gameDataChannel = null;
+    }
+    if (gameDataPeerConnection) {
+        gameDataPeerConnection.close();
+        gameDataPeerConnection = null;
+    }
+}
+
 function cleanupMultiplayerState() {
     cleanupVoiceChat();
+    cleanupGameDataChannel();
     if (multiplayerChannel && supabaseClient) {
         supabaseClient.removeChannel(multiplayerChannel);
         multiplayerChannel = null;
@@ -413,12 +435,15 @@ const GAME_CONFIG = {
 };
 
 const MULTIPLAYER_CONFIG = {
-    PLAYER_UPDATE_MS: 125,
-    WORLD_UPDATE_MS: 250,
+    PLAYER_UPDATE_MS: 1000 / 60,
+    WORLD_UPDATE_MS: 1000 / 20,
+    SUPABASE_FALLBACK_PLAYER_UPDATE_MS: 125,
+    SUPABASE_FALLBACK_WORLD_UPDATE_MS: 250,
     IDLE_HEARTBEAT_MS: 1500,
     RATIO_PRECISION: 1000,
-    REMOTE_INTERPOLATION: 0.22,
-    CAR_CORRECTION: 0.12
+    REMOTE_INTERPOLATION: 0.35,
+    CAR_CORRECTION: 0.2,
+    DATA_CHANNEL_RETRY_MS: 2500
 };
 
 function quantizeRatio(value) {
@@ -1394,6 +1419,9 @@ class GameScene extends Phaser.Scene {
         this.lastHitByPlayer = new Map();
         this.gameStateSeq = 0;
         this.lastReceivedSeq = -1;
+        this.gameDataConnecting = false;
+        this.bufferedGameDataOffer = null;
+        this.bufferedGameDataIceCandidates = [];
 
         // Achievement tracking
         this.streak = 0;
@@ -1727,65 +1755,69 @@ class GameScene extends Phaser.Scene {
 
         // Listen for remote player updates
         multiplayerChannel.on('broadcast', { event: 'player_update' }, (payload) => {
-            if (payload.payload.playerId !== playerId) {
-                this.handleRemotePlayerUpdate(payload.payload);
-            }
+            this.handleMultiplayerMessage('player_update', payload.payload);
         });
 
         // Listen for game state updates (from host)
         multiplayerChannel.on('broadcast', { event: 'game_state' }, (payload) => {
-            if (!isHost) {
-                this.handleGameStateUpdate(payload.payload);
-            }
+            this.handleMultiplayerMessage('game_state', payload.payload);
         });
 
         // Note: newt_spawn events removed - newts are synced via game_state broadcast
 
         // Listen for newt pickup events
         multiplayerChannel.on('broadcast', { event: 'newt_pickup' }, (payload) => {
-            if (payload.payload.playerId !== playerId) {
-                this.handleRemoteNewtPickup(payload.payload);
-            }
+            this.handleMultiplayerMessage('newt_pickup', payload.payload);
         });
 
         // Listen for newt save events
         multiplayerChannel.on('broadcast', { event: 'newt_save' }, (payload) => {
-            if (isHost || payload.payload.playerId !== playerId) {
-                this.handleNewtSave(payload.payload);
-            }
+            this.handleMultiplayerMessage('newt_save', payload.payload);
         });
 
         // Listen for partner disconnect
         multiplayerChannel.on('broadcast', { event: 'player_disconnect' }, (payload) => {
-            if (payload.payload.playerId !== playerId) {
-                this.handlePartnerDisconnect();
-            }
+            this.handleMultiplayerMessage('player_disconnect', payload.payload);
         });
 
         // Listen for game over event (normal end of game)
         multiplayerChannel.on('broadcast', { event: 'game_over' }, (payload) => {
-            if (payload.payload.playerId !== playerId && !this.gameOver) {
-                this.handleRemoteGameOver(payload.payload);
-            }
+            this.handleMultiplayerMessage('game_over', payload.payload);
         });
 
         // Listen for partner's name during game over screen
         multiplayerChannel.on('broadcast', { event: 'player_name' }, (payload) => {
-            if (payload.payload.playerId !== playerId) {
-                this.handlePartnerName(payload.payload);
-            }
+            this.handleMultiplayerMessage('player_name', payload.payload);
         });
 
 
         // Guest -> host hit intent, host -> guest hit outcome
         multiplayerChannel.on('broadcast', { event: 'player_hit_intent' }, (payload) => {
-            if (isHost) {
-                this.handlePlayerHitIntent(payload.payload);
-            }
+            this.handleMultiplayerMessage('player_hit_intent', payload.payload);
         });
 
         multiplayerChannel.on('broadcast', { event: 'player_hit' }, (payload) => {
-            this.handlePlayerHitOutcome(payload.payload);
+            this.handleMultiplayerMessage('player_hit', payload.payload);
+        });
+
+        // WebRTC game data-channel signaling. Continuous gameplay packets use the
+        // data channel after this handshake, keeping Supabase on the low-rate fallback.
+        multiplayerChannel.on('broadcast', { event: 'game_data_offer' }, (payload) => {
+            if (payload.payload.playerId !== playerId) {
+                this.handleGameDataOffer(payload.payload);
+            }
+        });
+
+        multiplayerChannel.on('broadcast', { event: 'game_data_answer' }, (payload) => {
+            if (payload.payload.playerId !== playerId) {
+                this.handleGameDataAnswer(payload.payload);
+            }
+        });
+
+        multiplayerChannel.on('broadcast', { event: 'game_data_ice' }, (payload) => {
+            if (payload.payload.playerId !== playerId) {
+                this.handleGameDataIce(payload.payload);
+            }
         });
 
         // WebRTC voice chat signaling
@@ -1813,28 +1845,8 @@ class GameScene extends Phaser.Scene {
                 // Broadcast our name to the partner
                 this.broadcastPlayerName(playerName);
 
-                this.broadcastPlayerState(true);
-                if (isHost) this.broadcastGameState();
-
-                if (this.broadcastTimer) this.broadcastTimer.destroy();
-                if (this.gameStateBroadcastTimer) this.gameStateBroadcastTimer.destroy();
-
-                // Start broadcasting position
-                this.broadcastTimer = this.time.addEvent({
-                    delay: MULTIPLAYER_CONFIG.PLAYER_UPDATE_MS,
-                    callback: this.broadcastPlayerState,
-                    callbackScope: this,
-                    loop: true
-                });
-
-                if (isHost) {
-                    this.gameStateBroadcastTimer = this.time.addEvent({
-                        delay: MULTIPLAYER_CONFIG.WORLD_UPDATE_MS,
-                        callback: this.broadcastGameState,
-                        callbackScope: this,
-                        loop: true
-                    });
-                }
+                this.configureMultiplayerTimers(true);
+                this.setupGameDataChannel();
                 
                 // Start disconnect detection
                 lastRemoteUpdate = Date.now();
@@ -1850,8 +1862,321 @@ class GameScene extends Phaser.Scene {
         });
     }
 
+    handleMultiplayerMessage(event, payload) {
+        if (!payload) return;
+
+        switch (event) {
+            case 'player_update':
+                if (payload.playerId !== playerId) this.handleRemotePlayerUpdate(payload);
+                break;
+            case 'game_state':
+                if (!isHost) this.handleGameStateUpdate(payload);
+                break;
+            case 'newt_pickup':
+                if (payload.playerId !== playerId) this.handleRemoteNewtPickup(payload);
+                break;
+            case 'newt_save':
+                if (isHost || payload.playerId !== playerId) this.handleNewtSave(payload);
+                break;
+            case 'player_disconnect':
+                if (payload.playerId !== playerId) this.handlePartnerDisconnect();
+                break;
+            case 'game_over':
+                if (payload.playerId !== playerId && !this.gameOver) this.handleRemoteGameOver(payload);
+                break;
+            case 'player_name':
+                if (payload.playerId !== playerId) this.handlePartnerName(payload);
+                break;
+            case 'player_hit_intent':
+                if (isHost) this.handlePlayerHitIntent(payload);
+                break;
+            case 'player_hit':
+                this.handlePlayerHitOutcome(payload);
+                break;
+            default:
+                break;
+        }
+    }
+
+    isGameDataChannelReady() {
+        return gameDataChannelReady && gameDataChannel && gameDataChannel.readyState === 'open';
+    }
+
+    getPlayerUpdateDelay() {
+        return this.isGameDataChannelReady()
+            ? MULTIPLAYER_CONFIG.PLAYER_UPDATE_MS
+            : MULTIPLAYER_CONFIG.SUPABASE_FALLBACK_PLAYER_UPDATE_MS;
+    }
+
+    getWorldUpdateDelay() {
+        return this.isGameDataChannelReady()
+            ? MULTIPLAYER_CONFIG.WORLD_UPDATE_MS
+            : MULTIPLAYER_CONFIG.SUPABASE_FALLBACK_WORLD_UPDATE_MS;
+    }
+
+    configureMultiplayerTimers(forceBroadcast = false) {
+        if (this.gameOver) return;
+
+        if (this.broadcastTimer) this.broadcastTimer.destroy();
+        if (this.gameStateBroadcastTimer) this.gameStateBroadcastTimer.destroy();
+
+        this.broadcastTimer = this.time.addEvent({
+            delay: this.getPlayerUpdateDelay(),
+            callback: this.broadcastPlayerState,
+            callbackScope: this,
+            loop: true
+        });
+
+        if (isHost) {
+            this.gameStateBroadcastTimer = this.time.addEvent({
+                delay: this.getWorldUpdateDelay(),
+                callback: this.broadcastGameState,
+                callbackScope: this,
+                loop: true
+            });
+        }
+
+        if (forceBroadcast) {
+            this.broadcastPlayerState(true);
+            if (isHost) this.broadcastGameState();
+        }
+    }
+
+    sendMultiplayerMessage(event, payload, options = {}) {
+        const volatile = Boolean(options.volatile);
+
+        if (volatile && this.isGameDataChannelReady()) {
+            try {
+                gameDataChannel.send(JSON.stringify({ event, payload }));
+                return true;
+            } catch (err) {
+                console.warn('Game data channel send failed, falling back to Supabase:', err);
+                gameDataChannelReady = false;
+                this.configureMultiplayerTimers(false);
+            }
+        }
+
+        if (!multiplayerChannel) return false;
+        multiplayerChannel.send({
+            type: 'broadcast',
+            event,
+            payload
+        });
+        return true;
+    }
+
+    setupGameDataChannel() {
+        if (!this.isMultiplayer || !multiplayerChannel || gameDataPeerConnection || this.gameDataConnecting) return;
+        if (!window.RTCPeerConnection) return;
+
+        this.gameDataConnecting = true;
+        if (!this.bufferedGameDataIceCandidates) this.bufferedGameDataIceCandidates = [];
+
+        const rtcConfig = {
+            iceServers: [
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:stun1.l.google.com:19302' }
+            ]
+        };
+
+        try {
+            gameDataPeerConnection = new RTCPeerConnection(rtcConfig);
+        } catch (err) {
+            console.warn('Game data channel unavailable:', err.message);
+            this.gameDataConnecting = false;
+            return;
+        }
+
+        gameDataPeerConnection.onicecandidate = (event) => {
+            if (event.candidate && multiplayerChannel) {
+                multiplayerChannel.send({
+                    type: 'broadcast',
+                    event: 'game_data_ice',
+                    payload: { playerId: playerId, candidate: event.candidate.toJSON() }
+                });
+            }
+        };
+
+        gameDataPeerConnection.oniceconnectionstatechange = () => {
+            if (!gameDataPeerConnection) return;
+            const state = gameDataPeerConnection.iceConnectionState;
+            if (state === 'failed' || state === 'disconnected' || state === 'closed') {
+                gameDataChannelReady = false;
+                this.gameDataConnecting = false;
+                this.configureMultiplayerTimers(true);
+            }
+        };
+
+        if (isHost) {
+            const channel = gameDataPeerConnection.createDataChannel('game-sync', {
+                ordered: false,
+                maxRetransmits: 0
+            });
+            this.attachGameDataChannel(channel);
+            this.time.delayedCall(500, () => this.createAndSendGameDataOffer());
+        } else {
+            gameDataPeerConnection.ondatachannel = (event) => {
+                this.attachGameDataChannel(event.channel);
+            };
+
+            if (this.bufferedGameDataOffer) {
+                const offer = this.bufferedGameDataOffer;
+                this.bufferedGameDataOffer = null;
+                this.handleGameDataOffer(offer);
+            }
+        }
+    }
+
+    attachGameDataChannel(channel) {
+        gameDataChannel = channel;
+        gameDataChannel.binaryType = 'arraybuffer';
+
+        gameDataChannel.onopen = () => {
+            gameDataChannelReady = true;
+            this.gameDataConnecting = false;
+            this.configureMultiplayerTimers(true);
+        };
+
+        gameDataChannel.onclose = () => {
+            gameDataChannelReady = false;
+            this.gameDataConnecting = false;
+            this.configureMultiplayerTimers(true);
+        };
+
+        gameDataChannel.onerror = (event) => {
+            console.warn('Game data channel error:', event);
+            gameDataChannelReady = false;
+            this.gameDataConnecting = false;
+            this.configureMultiplayerTimers(true);
+        };
+
+        gameDataChannel.onmessage = (event) => {
+            try {
+                const message = JSON.parse(event.data);
+                if (message && message.event) {
+                    this.handleMultiplayerMessage(message.event, message.payload);
+                }
+            } catch (err) {
+                console.warn('Ignored malformed game data message:', err);
+            }
+        };
+
+        if (gameDataChannel.readyState === 'open') {
+            gameDataChannelReady = true;
+            this.gameDataConnecting = false;
+            this.configureMultiplayerTimers(true);
+        }
+    }
+
+    async createAndSendGameDataOffer() {
+        if (!isHost || !gameDataPeerConnection || !multiplayerChannel) return;
+        if (gameDataPeerConnection.signalingState === 'have-local-offer' && gameDataPeerConnection.localDescription) {
+            multiplayerChannel.send({
+                type: 'broadcast',
+                event: 'game_data_offer',
+                payload: {
+                    playerId: playerId,
+                    sdp: gameDataPeerConnection.localDescription.toJSON()
+                }
+            });
+            return;
+        }
+        if (gameDataPeerConnection.signalingState !== 'stable') return;
+
+        try {
+            const offer = await gameDataPeerConnection.createOffer();
+            await gameDataPeerConnection.setLocalDescription(offer);
+            multiplayerChannel.send({
+                type: 'broadcast',
+                event: 'game_data_offer',
+                payload: {
+                    playerId: playerId,
+                    sdp: gameDataPeerConnection.localDescription.toJSON()
+                }
+            });
+
+            this._gameDataOfferRetryTimer = this.time.delayedCall(MULTIPLAYER_CONFIG.DATA_CHANNEL_RETRY_MS, () => {
+                if (gameDataPeerConnection && !this.isGameDataChannelReady()) {
+                    this.createAndSendGameDataOffer();
+                }
+            });
+        } catch (err) {
+            console.warn('Game data channel offer failed:', err);
+            this.gameDataConnecting = false;
+        }
+    }
+
+    async handleGameDataOffer(data) {
+        if (isHost || !data || !data.sdp) return;
+        if (!gameDataPeerConnection) {
+            this.bufferedGameDataOffer = data;
+            this.setupGameDataChannel();
+            return;
+        }
+
+        try {
+            await gameDataPeerConnection.setRemoteDescription(new RTCSessionDescription(data.sdp));
+            const answer = await gameDataPeerConnection.createAnswer();
+            await gameDataPeerConnection.setLocalDescription(answer);
+            multiplayerChannel.send({
+                type: 'broadcast',
+                event: 'game_data_answer',
+                payload: {
+                    playerId: playerId,
+                    sdp: gameDataPeerConnection.localDescription.toJSON()
+                }
+            });
+            await this.processBufferedGameDataIce();
+        } catch (err) {
+            console.warn('Game data channel answer failed:', err);
+            this.gameDataConnecting = false;
+        }
+    }
+
+    async handleGameDataAnswer(data) {
+        if (!isHost || !gameDataPeerConnection || !data || !data.sdp) return;
+
+        try {
+            await gameDataPeerConnection.setRemoteDescription(new RTCSessionDescription(data.sdp));
+            if (this._gameDataOfferRetryTimer) {
+                this._gameDataOfferRetryTimer.destroy();
+                this._gameDataOfferRetryTimer = null;
+            }
+            await this.processBufferedGameDataIce();
+        } catch (err) {
+            console.warn('Game data channel remote answer failed:', err);
+        }
+    }
+
+    async handleGameDataIce(data) {
+        if (!data || !data.candidate) return;
+        if (!gameDataPeerConnection) {
+            this.bufferedGameDataIceCandidates.push(data);
+            this.setupGameDataChannel();
+            return;
+        }
+        if (!gameDataPeerConnection.remoteDescription) {
+            this.bufferedGameDataIceCandidates.push(data);
+            return;
+        }
+
+        try {
+            await gameDataPeerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
+        } catch (err) {
+            console.warn('Game data channel ICE candidate failed:', err);
+        }
+    }
+
+    async processBufferedGameDataIce() {
+        if (!gameDataPeerConnection || !gameDataPeerConnection.remoteDescription) return;
+        const candidates = this.bufferedGameDataIceCandidates.splice(0);
+        for (const ice of candidates) {
+            await this.handleGameDataIce(ice);
+        }
+    }
+
     broadcastPlayerState(force = false) {
-        if (!multiplayerChannel || this.gameOver) return;
+        if ((!multiplayerChannel && !this.isGameDataChannelReady()) || this.gameOver) return;
         
         const width = this.scale.width;
         const height = this.scale.height;
@@ -1868,11 +2193,7 @@ class GameScene extends Phaser.Scene {
 
         if (!this.shouldBroadcastPlayerState(payload, force)) return;
 
-        multiplayerChannel.send({
-            type: 'broadcast',
-            event: 'player_update',
-            payload: payload
-        });
+        this.sendMultiplayerMessage('player_update', payload, { volatile: true });
 
         this.lastSentPlayerState = payload;
         this.lastPlayerBroadcastAt = now;
@@ -1889,7 +2210,7 @@ class GameScene extends Phaser.Scene {
     }
 
     broadcastGameState() {
-        if (!multiplayerChannel || !isHost || this.gameOver) return;
+        if ((!multiplayerChannel && !this.isGameDataChannelReady()) || !isHost || this.gameOver) return;
         
         const width = this.scale.width;
         const height = this.scale.height;
@@ -1929,11 +2250,7 @@ class GameScene extends Phaser.Scene {
             cars: carsData
         };
 
-        multiplayerChannel.send({
-            type: 'broadcast',
-            event: 'game_state',
-            payload: payload
-        });
+        this.sendMultiplayerMessage('game_state', payload, { volatile: true });
     }
 
     handleRemotePlayerUpdate(data) {
@@ -3894,6 +4211,7 @@ class GameScene extends Phaser.Scene {
             if (this.gameStateBroadcastTimer) this.gameStateBroadcastTimer.destroy();
             if (this.disconnectCheckTimer) this.disconnectCheckTimer.destroy();
             if (this._offerRetryTimer) { this._offerRetryTimer.destroy(); this._offerRetryTimer = null; }
+            if (this._gameDataOfferRetryTimer) { this._gameDataOfferRetryTimer.destroy(); this._gameDataOfferRetryTimer = null; }
             await updateRoomStatus('finished');
         }
 
