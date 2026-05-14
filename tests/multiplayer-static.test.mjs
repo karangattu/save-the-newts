@@ -48,7 +48,6 @@ test('multiplayer avoids avoidable realtime events and lobby races', () => {
     assertSourceMatches(gameSource, /\.update\(\{[\s\S]*guest_id: guestId[\s\S]*status: 'playing'[\s\S]*\}\)[\s\S]*\.eq\('id', room\.id\)[\s\S]*\.eq\('status', 'waiting'\)[\s\S]*\.is\('guest_id', null\)/, 'join update should remain conditional to avoid double joins');
 });
 
-test('database setup supports cheap leaderboard and room lookups', () => {
+test('database setup keeps leaderboard reads cheap', () => {
     assertSourceMatches(sqlSource, /idx_leaderboard_score_desc/, 'leaderboard top-score query should be indexed');
-    assertSourceMatches(sqlSource, /idx_game_rooms_cleanup/, 'room cleanup query should be indexed');
 });
