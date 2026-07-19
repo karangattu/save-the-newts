@@ -1391,6 +1391,7 @@ class GameScene extends Phaser.Scene {
         this.load.audio('sfx_hit', 'assets/sfx_hit.mp3');
         this.load.audio('sfx_crash', 'assets/sfx_crash.mp3');
         this.load.audio('bgm_end', 'assets/bgm_end.mp3');
+        this.load.audio('light_rain_sound', 'assets/light_rain_sound.mp3');
     }
 
     create() {
@@ -1490,6 +1491,10 @@ class GameScene extends Phaser.Scene {
         this.rainGraphics = this.add.graphics().setDepth(100);
         if (this.isCompact) {
             this.rainGraphics.setAlpha(0.8);
+        }
+        if (this.cache.audio.exists('light_rain_sound')) {
+            this.rainBgm = this.sound.add('light_rain_sound', { loop: true, volume: 0.15 });
+            this.rainBgm.play();
         }
     }
 
@@ -4203,6 +4208,11 @@ class GameScene extends Phaser.Scene {
     }
 
     async showGameOver() {
+        if (this.rainBgm) {
+            this.rainBgm.stop();
+            this.rainBgm.destroy();
+            this.rainBgm = null;
+        }
         // Cleanup multiplayer
         if (this.isMultiplayer) {
             // Broadcast game over to partner (not disconnect)
@@ -4225,6 +4235,11 @@ class GameScene extends Phaser.Scene {
             if (this.bgmEnd) {
                 this.bgmEnd.stop();
                 this.bgmEnd.destroy();
+            }
+            if (this.rainBgm) {
+                this.rainBgm.stop();
+                this.rainBgm.destroy();
+                this.rainBgm = null;
             }
             if (this.isMultiplayer) {
                 cleanupMultiplayerState();
