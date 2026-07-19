@@ -23,4 +23,21 @@ test('character graphics and expression logic are implemented correctly', () => 
     // Check if CharacterSelectScene delegates to the global draw functions
     assertSourceMatches(gameSource, /drawMaleCharacter\([\s\S]*drawMalePlayerGlobal\(/, 'drawMaleCharacter should call drawMalePlayerGlobal');
     assertSourceMatches(gameSource, /drawFemaleCharacter\([\s\S]*drawFemalePlayerGlobal\(/, 'drawFemaleCharacter should call drawFemalePlayerGlobal');
+
+    // Check if updateSelection updates facial expressions dynamically
+    assertSourceMatches(
+        gameSource,
+        /updateSelection\s*=\s*\([^)]*\)\s*=>\s*\{[\s\S]*maleGraphics\.clear\(\);[\s\S]*femaleGraphics\.clear\(\);/m,
+        'updateSelection should clear and redraw both character graphics objects'
+    );
+    assertSourceMatches(
+        gameSource,
+        /this\.drawMaleCharacter\(maleGraphics,\s*selected\s*===\s*'male'\s*\?\s*'smiley'\s*:\s*'frowny'\)/,
+        'updateSelection should draw male character with smiley/frowny depending on selection'
+    );
+    assertSourceMatches(
+        gameSource,
+        /this\.drawFemaleCharacter\(femaleGraphics,\s*selected\s*===\s*'female'\s*\?\s*'smiley'\s*:\s*'frowny'\)/,
+        'updateSelection should draw female character with smiley/frowny depending on selection'
+    );
 });

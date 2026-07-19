@@ -4699,6 +4699,12 @@ class CharacterSelectScene extends Phaser.Scene {
             // Update box styles
             maleBox.setStrokeStyle(selected === 'male' ? 4 : 2, 0x00ffff, selected === 'male' ? 1 : 0.5);
             femaleBox.setStrokeStyle(selected === 'female' ? 4 : 2, 0xff00ff, selected === 'female' ? 1 : 0.5);
+
+            // Update facial expressions
+            maleGraphics.clear();
+            this.drawMaleCharacter(maleGraphics, selected === 'male' ? 'smiley' : 'frowny');
+            femaleGraphics.clear();
+            this.drawFemaleCharacter(femaleGraphics, selected === 'female' ? 'smiley' : 'frowny');
         };
 
         // Initial selection
@@ -4787,3 +4793,19 @@ const config = {
     dom: { createContainer: true }, scene: [SplashScene, NameEntryScene, ModeSelectScene, LobbyScene, CharacterSelectScene, GameScene]
 };
 window.addEventListener('load', () => new Phaser.Game(config));
+
+window.addEventListener('pointerdown', () => {
+    if (window.innerWidth > window.innerHeight) {
+        if (!document.fullscreenElement) {
+            document.documentElement.requestFullscreen().catch(() => {});
+        }
+    }
+});
+
+window.addEventListener('resize', () => {
+    if (window.innerWidth < window.innerHeight) {
+        if (document.fullscreenElement) {
+            document.exitFullscreen().catch(() => {});
+        }
+    }
+});
