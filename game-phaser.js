@@ -4579,8 +4579,8 @@ class CharacterSelectScene extends Phaser.Scene {
         const charY = height * (isMobile ? 0.42 : 0.45);
         const charSpacing = isMobile ? 70 : (isCompact ? 100 : 140);
         const charScale = isMobile ? 1.5 : (isCompact ? 1.8 : 2.2);
-        const boxWidth = isMobile ? 90 : (isCompact ? 110 : 130);
-        const boxHeight = isMobile ? 120 : (isCompact ? 140 : 170);
+        const boxWidth = isMobile ? 100 : (isCompact ? 120 : 150);
+        const boxHeight = isMobile ? 135 : (isCompact ? 160 : 200);
 
         // Male character preview
         const maleX = width / 2 - charSpacing;
@@ -4588,6 +4588,7 @@ class CharacterSelectScene extends Phaser.Scene {
         const maleGraphics = this.add.graphics();
         this.drawMaleCharacter(maleGraphics);
         maleContainer.add(maleGraphics);
+        maleGraphics.y = 8;
         maleContainer.setScale(charScale);
 
         // Male selection box
@@ -4597,7 +4598,7 @@ class CharacterSelectScene extends Phaser.Scene {
 
         // Male label
         const labelSize = isMobile ? '14px' : (isCompact ? '16px' : '20px');
-        const labelOffset = isMobile ? 70 : (isCompact ? 85 : 105);
+        const labelOffset = isMobile ? 80 : (isCompact ? 95 : 120);
         this.add.text(maleX, charY + labelOffset, 'VOLUNTEER A', {
             fontFamily: 'Fredoka, sans-serif',
             fontSize: labelSize,
@@ -4608,7 +4609,7 @@ class CharacterSelectScene extends Phaser.Scene {
 
         // Male stats
         const statsSize = isMobile ? '11px' : (isCompact ? '12px' : '14px');
-        const statsOffset = isMobile ? 88 : (isCompact ? 105 : 128);
+        const statsOffset = isMobile ? 98 : (isCompact ? 115 : 143);
         const statsStyle = {
             fontFamily: 'Outfit, sans-serif',
             fontSize: statsSize,
@@ -4656,6 +4657,7 @@ class CharacterSelectScene extends Phaser.Scene {
         const femaleGraphics = this.add.graphics();
         this.drawFemaleCharacter(femaleGraphics);
         femaleContainer.add(femaleGraphics);
+        femaleGraphics.y = 8;
         femaleContainer.setScale(charScale);
 
         // Female selection box
