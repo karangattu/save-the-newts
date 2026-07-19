@@ -456,6 +456,163 @@ function frameAdjustedLerp(baseAmount, delta) {
 
 const isCompactViewport = (width, height) => Math.min(width, height) < 600;
 
+function drawMalePlayerGlobal(g, isPlayer2 = false, expression = 'frowny') {
+    g.fillStyle(0x000000, 0.4); g.fillEllipse(0, 28, 35, 12);
+    g.fillStyle(0x2c3e50); g.fillRoundedRect(-12, 8, 10, 22, 3); g.fillRoundedRect(2, 8, 10, 22, 3);
+    const skinColor = isPlayer2 ? 0xd4a574 : 0xfce4d6;
+    g.fillStyle(skinColor);
+    g.fillCircle(-20, -5, 6);
+    g.fillCircle(20, -5, 6);
+    const vestColor = isPlayer2 ? 0xff8800 : 0xccff00;
+    const reflectiveSilver = 0xdddddd;
+    const accentColor = isPlayer2 ? 0xffcc00 : 0xff6b00;
+
+    g.fillStyle(vestColor);
+    g.fillRoundedRect(-18, -18, 36, 32, 5);
+
+    g.fillStyle(accentColor);
+    g.fillRect(-14, -18, 12, 32);
+    g.fillRect(2, -18, 12, 32);
+    g.fillRect(-18, -4, 36, 12);
+
+    g.fillStyle(reflectiveSilver);
+    g.fillRect(-12, -18, 8, 32);
+    g.fillRect(4, -18, 8, 32);
+    g.fillRect(-18, -2, 36, 8);
+    g.fillStyle(0x3d2314);
+    g.fillEllipse(-12, -26, 6, 12);
+    g.fillEllipse(12, -26, 6, 12);
+    g.fillStyle(skinColor); g.fillCircle(0, -26, 14);
+    g.fillStyle(0xffcccc, 0.4);
+    g.fillCircle(-8, -23, 3);
+    g.fillCircle(8, -23, 3);
+    g.fillStyle(0xffffff);
+    g.fillEllipse(-5, -28, 4, 3.5);
+    g.fillEllipse(5, -28, 4, 3.5);
+    const irisColor = isPlayer2 ? 0x0066cc : 0x4a3728;
+    g.fillStyle(irisColor);
+    g.fillCircle(-5, -28, 2.2);
+    g.fillCircle(5, -28, 2.2);
+    g.fillStyle(0x000000);
+    g.fillCircle(-5, -28, 1.2);
+    g.fillCircle(5, -28, 1.2);
+    g.fillStyle(0xffffff);
+    g.fillCircle(-4, -29, 0.8);
+    g.fillCircle(6, -29, 0.8);
+    g.lineStyle(1.5, 0x3d2314);
+    g.beginPath();
+    g.arc(-5, -34, 4, Math.PI * 0.15, Math.PI * 0.85, false);
+    g.strokePath();
+    g.beginPath();
+    g.arc(5, -34, 4, Math.PI * 0.15, Math.PI * 0.85, false);
+    g.strokePath();
+    const noseColor = isPlayer2 ? 0xb8906a : 0xcc9988;
+    g.fillStyle(noseColor); g.fillEllipse(0, -22, 4, 2);
+    g.lineStyle(2, 0x2c3e50);
+    g.beginPath();
+    if (expression === 'smiley') {
+        g.arc(0, -21, 5, 0.1 * Math.PI, 0.9 * Math.PI, false);
+    } else {
+        g.arc(0, -13, 5, 1.1 * Math.PI, 1.9 * Math.PI, false);
+    }
+    g.strokePath();
+    const capColor = isPlayer2 ? 0x0066cc : 0xff0000;
+    const capDarkColor = isPlayer2 ? 0x004499 : 0xcc0000;
+    g.fillStyle(capColor); g.fillEllipse(0, -40, 26, 14);
+    g.fillStyle(capDarkColor); g.fillRect(-13, -42, 26, 6);
+}
+
+function drawFemalePlayerGlobal(g, isPlayer2 = false, expression = 'frowny') {
+    g.fillStyle(0x000000, 0.4); g.fillEllipse(0, 28, 35, 12);
+    g.fillStyle(0x2c3e50); g.fillRoundedRect(-12, 8, 10, 22, 3); g.fillRoundedRect(2, 8, 10, 22, 3);
+    const skinColor = isPlayer2 ? 0xd4a574 : 0xfce4d6;
+    g.fillStyle(skinColor);
+    g.fillCircle(-20, -5, 6);
+    g.fillCircle(20, -5, 6);
+    const vestColor = isPlayer2 ? 0x00ccaa : 0xccff00;
+    const reflectiveSilver = 0xdddddd;
+    const accentColor = isPlayer2 ? 0x00ffcc : 0xff6b00;
+
+    g.fillStyle(vestColor);
+    g.fillRoundedRect(-18, -18, 36, 32, 5);
+
+    g.fillStyle(accentColor);
+    g.fillRect(-14, -18, 12, 32);
+    g.fillRect(2, -18, 12, 32);
+    g.fillRect(-18, -4, 36, 12);
+
+    g.fillStyle(reflectiveSilver);
+    g.fillRect(-12, -18, 8, 32);
+    g.fillRect(4, -18, 8, 32);
+    g.fillRect(-18, -2, 36, 8);
+    const hairColor = isPlayer2 ? 0x8b2500 : 0x3d2314;
+    const hairHighlight = isPlayer2 ? 0xa83c14 : 0x5a3d2b;
+    g.fillStyle(hairColor);
+    g.fillEllipse(0, -30, 22, 18);
+    g.fillEllipse(-14, -15, 12, 34);
+    g.fillEllipse(14, -15, 12, 34);
+    g.fillEllipse(-12, 5, 9, 16);
+    g.fillEllipse(12, 5, 9, 16);
+    g.fillStyle(hairHighlight);
+    g.fillEllipse(-10, -22, 4, 20);
+    g.fillEllipse(10, -22, 4, 20);
+    g.fillStyle(skinColor); g.fillCircle(0, -26, 13);
+    g.fillStyle(hairColor);
+    g.fillEllipse(0, -34, 18, 8);
+    g.fillEllipse(-6, -33, 8, 6);
+    g.fillEllipse(6, -33, 8, 6);
+    g.fillEllipse(0, -38, 20, 10);
+    g.fillEllipse(0, -34, 18, 8);
+    g.fillEllipse(-6, -33, 8, 6);
+    g.fillEllipse(6, -33, 8, 6);
+    g.fillEllipse(0, -38, 20, 10);
+    g.fillEllipse(0, -34, 18, 8);
+    g.fillEllipse(-6, -33, 8, 6);
+    g.fillEllipse(6, -33, 8, 6);
+    if (isPlayer2) {
+        g.fillStyle(0x9933ff);
+        g.fillRoundedRect(-14, -38, 28, 5, 2);
+    }
+    g.fillStyle(0xffcccc, 0.5);
+    g.fillCircle(-8, -23, 4);
+    g.fillCircle(8, -23, 4);
+    g.fillStyle(0xffffff);
+    g.fillEllipse(-5, -28, 4, 3.5);
+    g.fillEllipse(5, -28, 4, 3.5);
+    const irisColor = isPlayer2 ? 0x2e8b57 : 0x4a3728;
+    g.fillStyle(irisColor);
+    g.fillCircle(-5, -28, 2.2);
+    g.fillCircle(5, -28, 2.2);
+    g.fillStyle(0x000000);
+    g.fillCircle(-5, -28, 1.2);
+    g.fillCircle(5, -28, 1.2);
+    g.fillStyle(0xffffff);
+    g.fillCircle(-4, -29, 0.8);
+    g.fillCircle(6, -29, 0.8);
+    g.lineStyle(1.5, 0x000000);
+    g.lineBetween(-7, -30, -8, -33);
+    g.lineBetween(-5, -31, -5, -34);
+    g.lineBetween(5, -31, 5, -34);
+    g.lineBetween(7, -30, 8, -33);
+    g.lineStyle(1.5, hairColor);
+    g.beginPath();
+    g.arc(-5, -34, 5, Math.PI * 0.15, Math.PI * 0.85, false);
+    g.strokePath();
+    g.beginPath();
+    g.arc(5, -34, 5, Math.PI * 0.15, Math.PI * 0.85, false);
+    g.strokePath();
+    const noseColor = isPlayer2 ? 0xc4a088 : 0xe8c4b8;
+    g.fillStyle(noseColor); g.fillEllipse(0, -24, 2.5, 1.5);
+    g.lineStyle(2.5, 0xe07070);
+    g.beginPath();
+    if (expression === 'smiley') {
+        g.arc(0, -21, 5, 0.1 * Math.PI, 0.9 * Math.PI, false);
+    } else {
+        g.arc(0, -13, 5, 1.1 * Math.PI, 1.9 * Math.PI, false);
+    }
+    g.strokePath();
+}
+
 // ===== SPLASH SCENE =====
 class SplashScene extends Phaser.Scene {
     constructor() { super({ key: 'SplashScene' }); }
@@ -1689,6 +1846,21 @@ class GameScene extends Phaser.Scene {
         this.player.carried = [];
         this.player.invincible = false;
         this.walkTime = 0;
+    }
+
+    updatePlayerExpression(playerObj, characterType, isPlayer2 = false) {
+        if (!playerObj || !playerObj.graphics) return;
+        const carriedCount = playerObj.carried ? playerObj.carried.length : 0;
+        const expression = carriedCount > 0 ? 'smiley' : 'frowny';
+        if (playerObj.lastExpression !== expression) {
+            playerObj.lastExpression = expression;
+            playerObj.graphics.clear();
+            if (characterType === 'female') {
+                this.drawFemalePlayer(playerObj.graphics, isPlayer2, expression);
+            } else {
+                this.drawMalePlayer(playerObj.graphics, isPlayer2, expression);
+            }
+        }
     }
 
     createRemotePlayer() {
@@ -2998,156 +3170,12 @@ class GameScene extends Phaser.Scene {
         }
     }
 
-    drawMalePlayer(g, isPlayer2 = false) {
-        // Shadow
-        g.fillStyle(0x000000, 0.4); g.fillEllipse(0, 28, 35, 12);
-        // Legs
-        g.fillStyle(0x2c3e50); g.fillRoundedRect(-12, 8, 10, 22, 3); g.fillRoundedRect(2, 8, 10, 22, 3);
-        // Hands - different skin tone for P2
-        const skinColor = isPlayer2 ? 0xd4a574 : 0xfce4d6;
-        g.fillStyle(skinColor);
-        g.fillCircle(-20, -5, 6); // Left hand
-        g.fillCircle(20, -5, 6);  // Right hand
-        // Safety Vest - P2 gets orange vest instead of green
-        const vestColor = isPlayer2 ? 0xff8800 : 0xccff00;
-        const reflectiveSilver = 0xdddddd;
-        const accentColor = isPlayer2 ? 0xffcc00 : 0xff6b00;
-
-        g.fillStyle(vestColor);
-        g.fillRoundedRect(-18, -18, 36, 32, 5); // Main vest body
-
-        // Reflective Strips - accent color borders
-        g.fillStyle(accentColor);
-        g.fillRect(-14, -18, 12, 32); // Left vertical border
-        g.fillRect(2, -18, 12, 32);   // Right vertical border
-        g.fillRect(-18, -4, 36, 12);  // Horizontal waist band border
-
-        // Reflective Strips - Silver 
-        g.fillStyle(reflectiveSilver);
-        g.fillRect(-12, -18, 8, 32); // Left vertical
-        g.fillRect(4, -18, 8, 32);   // Right vertical
-        g.fillRect(-18, -2, 36, 8);  // Horizontal waist band
-        // Head - different skin tone for P2
-        g.fillStyle(skinColor); g.fillCircle(0, -26, 14);
-        // Eyes
-        g.fillStyle(0x000000); g.fillCircle(-5, -28, 2.5); g.fillCircle(5, -28, 2.5);
-        // Nose
-        const noseColor = isPlayer2 ? 0xb8906a : 0xcc9988;
-        g.fillStyle(noseColor); g.fillEllipse(0, -22, 4, 2);
-        // Cap - P2 gets blue cap instead of red
-        const capColor = isPlayer2 ? 0x0066cc : 0xff0000;
-        const capDarkColor = isPlayer2 ? 0x004499 : 0xcc0000;
-        g.fillStyle(capColor); g.fillEllipse(0, -40, 26, 14); // Main cap
-        g.fillStyle(capDarkColor); g.fillRect(-13, -42, 26, 6); // Cap brim
+    drawMalePlayer(g, isPlayer2 = false, expression = 'frowny') {
+        drawMalePlayerGlobal(g, isPlayer2, expression);
     }
 
-    drawFemalePlayer(g, isPlayer2 = false) {
-        // Shadow
-        g.fillStyle(0x000000, 0.4); g.fillEllipse(0, 28, 35, 12);
-        // Legs
-        g.fillStyle(0x2c3e50); g.fillRoundedRect(-12, 8, 10, 22, 3); g.fillRoundedRect(2, 8, 10, 22, 3);
-        // Hands - different skin tone for P2
-        const skinColor = isPlayer2 ? 0xd4a574 : 0xfce4d6;
-        g.fillStyle(skinColor);
-        g.fillCircle(-20, -5, 6); // Left hand
-        g.fillCircle(20, -5, 6);  // Right hand
-        // Safety Vest - P2 gets teal vest instead of green
-        const vestColor = isPlayer2 ? 0x00ccaa : 0xccff00;
-        const reflectiveSilver = 0xdddddd;
-        const accentColor = isPlayer2 ? 0x00ffcc : 0xff6b00;
-
-        g.fillStyle(vestColor);
-        g.fillRoundedRect(-18, -18, 36, 32, 5); // Main vest body
-
-        // Reflective Strips - accent color borders
-        g.fillStyle(accentColor);
-        g.fillRect(-14, -18, 12, 32); // Left vertical border
-        g.fillRect(2, -18, 12, 32);   // Right vertical border
-        g.fillRect(-18, -4, 36, 12);  // Horizontal waist band border
-
-        // Reflective Strips - Silver 
-        g.fillStyle(reflectiveSilver);
-        g.fillRect(-12, -18, 8, 32); // Left vertical
-        g.fillRect(4, -18, 8, 32);   // Right vertical
-        g.fillRect(-18, -2, 36, 8);  // Horizontal waist band
-        // Hair base - P2 gets different hair color (auburn/red)
-        const hairColor = isPlayer2 ? 0x8b2500 : 0x3d2314;
-        const hairHighlight = isPlayer2 ? 0xa83c14 : 0x5a3d2b;
-        g.fillStyle(hairColor); // Hair base
-        g.fillEllipse(0, -30, 22, 18); // Scalp coverage
-        g.fillEllipse(-14, -15, 12, 34); // Left side hair
-        g.fillEllipse(14, -15, 12, 34); // Right side hair
-        g.fillEllipse(-12, 5, 9, 16); // Left hair tips
-        g.fillEllipse(12, 5, 9, 16); // Right hair tips
-        // Hair highlights
-        g.fillStyle(hairHighlight);
-        g.fillEllipse(-10, -22, 4, 20);
-        g.fillEllipse(10, -22, 4, 20);
-        // Head - different skin tone for P2
-        g.fillStyle(skinColor); g.fillCircle(0, -26, 13);
-        // Hairline and top hair (drawn over head for attachment)
-        g.fillStyle(hairColor);
-        g.fillEllipse(0, -34, 18, 8);
-        g.fillEllipse(-6, -33, 8, 6);
-        g.fillEllipse(6, -33, 8, 6);
-        g.fillEllipse(0, -38, 20, 10);
-        // Hairline and top hair (drawn over head for attachment)
-        g.fillStyle(hairColor);
-        g.fillEllipse(0, -34, 18, 8);
-        g.fillEllipse(-6, -33, 8, 6);
-        g.fillEllipse(6, -33, 8, 6);
-        g.fillEllipse(0, -38, 20, 10);
-        // Hairline and bangs (drawn over head for attachment)
-        g.fillStyle(hairColor);
-        g.fillEllipse(0, -34, 18, 8);
-        g.fillEllipse(-6, -33, 8, 6);
-        g.fillEllipse(6, -33, 8, 6);
-        // P2 headband - purple instead of none
-        if (isPlayer2) {
-            g.fillStyle(0x9933ff);
-            g.fillRoundedRect(-14, -38, 28, 5, 2);
-        }
-        // Rosy cheeks
-        g.fillStyle(0xffcccc, 0.5);
-        g.fillCircle(-8, -23, 4);
-        g.fillCircle(8, -23, 4);
-        // Eyes (larger, more expressive)
-        g.fillStyle(0xffffff);
-        g.fillEllipse(-5, -28, 4, 3.5);
-        g.fillEllipse(5, -28, 4, 3.5);
-        // Eye color - P2 gets green eyes
-        const irisColor = isPlayer2 ? 0x2e8b57 : 0x4a3728;
-        g.fillStyle(irisColor);
-        g.fillCircle(-5, -28, 2.2);
-        g.fillCircle(5, -28, 2.2);
-        g.fillStyle(0x000000); // Pupil
-        g.fillCircle(-5, -28, 1.2);
-        g.fillCircle(5, -28, 1.2);
-        g.fillStyle(0xffffff); // Eye shine
-        g.fillCircle(-4, -29, 0.8);
-        g.fillCircle(6, -29, 0.8);
-        // Eyelashes
-        g.lineStyle(1.5, 0x000000);
-        g.lineBetween(-7, -30, -8, -33);
-        g.lineBetween(-5, -31, -5, -34);
-        g.lineBetween(5, -31, 5, -34);
-        g.lineBetween(7, -30, 8, -33);
-        // Eyebrows (subtle, feminine)
-        g.lineStyle(1.5, hairColor);
-        g.beginPath();
-        g.arc(-5, -34, 5, Math.PI * 0.15, Math.PI * 0.85, false);
-        g.strokePath();
-        g.beginPath();
-        g.arc(5, -34, 5, Math.PI * 0.15, Math.PI * 0.85, false);
-        g.strokePath();
-        // Nose (small, cute)
-        const noseColor = isPlayer2 ? 0xc4a088 : 0xe8c4b8;
-        g.fillStyle(noseColor); g.fillEllipse(0, -24, 2.5, 1.5);
-        // Lips (fuller, with color)
-        g.fillStyle(0xe07070);
-        g.fillEllipse(0, -19, 5, 2);
-        g.fillStyle(0xd06060);
-        g.fillEllipse(0, -18.5, 4, 1.2);
+    drawFemalePlayer(g, isPlayer2 = false, expression = 'frowny') {
+        drawFemalePlayerGlobal(g, isPlayer2, expression);
     }
 
     createHUD() {
@@ -3431,6 +3459,10 @@ class GameScene extends Phaser.Scene {
         
         if (this.player.invincible) {
             this.player.alpha = (Math.floor(time / 100) % 2 === 0) ? 0.4 : 0.9;
+        }
+        this.updatePlayerExpression(this.player, selectedCharacter, false);
+        if (this.isMultiplayer && this.remotePlayer) {
+            this.updatePlayerExpression(this.remotePlayer, remoteCharacter || 'male', true);
         }
     }
 
@@ -4739,120 +4771,12 @@ class CharacterSelectScene extends Phaser.Scene {
         this.cameras.main.fadeIn(300);
     }
 
-    drawMaleCharacter(g) {
-        // Shadow
-        g.fillStyle(0x000000, 0.4); g.fillEllipse(0, 28, 35, 12);
-        // Legs
-        g.fillStyle(0x2c3e50); g.fillRoundedRect(-12, 8, 10, 22, 3); g.fillRoundedRect(2, 8, 10, 22, 3);
-        // Hands
-        g.fillStyle(0xfce4d6);
-        g.fillCircle(-20, -5, 6);
-        g.fillCircle(20, -5, 6);
-        // Safety Vest
-        const vestGreen = 0xccff00;
-        const reflectiveSilver = 0xdddddd;
-        const safetyOrange = 0xff6b00;
-        g.fillStyle(vestGreen);
-        g.fillRoundedRect(-18, -18, 36, 32, 5);
-        g.fillStyle(safetyOrange);
-        g.fillRect(-14, -18, 12, 32);
-        g.fillRect(2, -18, 12, 32);
-        g.fillRect(-18, -4, 36, 12);
-        g.fillStyle(reflectiveSilver);
-        g.fillRect(-12, -18, 8, 32);
-        g.fillRect(4, -18, 8, 32);
-        g.fillRect(-18, -2, 36, 8);
-        // Head
-        g.fillStyle(0xfce4d6); g.fillCircle(0, -26, 14);
-        // Eyes
-        g.fillStyle(0x000000); g.fillCircle(-5, -28, 2.5); g.fillCircle(5, -28, 2.5);
-        // Nose
-        g.fillStyle(0xcc9988); g.fillEllipse(0, -22, 4, 2);
-        // Cap
-        g.fillStyle(0xff0000); g.fillEllipse(0, -40, 26, 14);
-        g.fillStyle(0xcc0000); g.fillRect(-13, -42, 26, 6);
+    drawMaleCharacter(g, expression = 'frowny') {
+        drawMalePlayerGlobal(g, false, expression);
     }
 
-    drawFemaleCharacter(g) {
-        // Shadow
-        g.fillStyle(0x000000, 0.4); g.fillEllipse(0, 28, 35, 12);
-        // Legs
-        g.fillStyle(0x2c3e50); g.fillRoundedRect(-12, 8, 10, 22, 3); g.fillRoundedRect(2, 8, 10, 22, 3);
-        // Hands
-        g.fillStyle(0xfce4d6);
-        g.fillCircle(-20, -5, 6);
-        g.fillCircle(20, -5, 6);
-        // Safety Vest
-        const vestGreen = 0xccff00;
-        const reflectiveSilver = 0xdddddd;
-        const safetyOrange = 0xff6b00;
-        g.fillStyle(vestGreen);
-        g.fillRoundedRect(-18, -18, 36, 32, 5);
-        g.fillStyle(safetyOrange);
-        g.fillRect(-14, -18, 12, 32);
-        g.fillRect(2, -18, 12, 32);
-        g.fillRect(-18, -4, 36, 12);
-        g.fillStyle(reflectiveSilver);
-        g.fillRect(-12, -18, 8, 32);
-        g.fillRect(4, -18, 8, 32);
-        g.fillRect(-18, -2, 36, 8);
-        // Hair base (drawn behind head, anchored to scalp)
-        g.fillStyle(0x3d2314); // Dark brown base
-        g.fillEllipse(0, -30, 22, 18); // Scalp coverage
-        g.fillEllipse(-14, -15, 12, 34); // Left side hair
-        g.fillEllipse(14, -15, 12, 34); // Right side hair
-        g.fillEllipse(-12, 5, 9, 16); // Left hair tips
-        g.fillEllipse(12, 5, 9, 16); // Right hair tips
-        // Hair highlights
-        g.fillStyle(0x5a3d2b); // Lighter brown highlights
-        g.fillEllipse(-10, -22, 4, 20);
-        g.fillEllipse(10, -22, 4, 20);
-        // Head
-        g.fillStyle(0xfce4d6); g.fillCircle(0, -26, 13);
-        // Hairline and top hair (drawn over head for attachment)
-        g.fillStyle(0x3d2314);
-        g.fillEllipse(0, -34, 18, 8);
-        g.fillEllipse(-6, -33, 8, 6);
-        g.fillEllipse(6, -33, 8, 6);
-        g.fillEllipse(0, -38, 20, 10);
-        // Rosy cheeks
-        g.fillStyle(0xffcccc, 0.5);
-        g.fillCircle(-8, -23, 4);
-        g.fillCircle(8, -23, 4);
-        // Eyes (larger, more expressive)
-        g.fillStyle(0xffffff);
-        g.fillEllipse(-5, -28, 4, 3.5);
-        g.fillEllipse(5, -28, 4, 3.5);
-        g.fillStyle(0x4a3728); // Brown iris
-        g.fillCircle(-5, -28, 2.2);
-        g.fillCircle(5, -28, 2.2);
-        g.fillStyle(0x000000); // Pupil
-        g.fillCircle(-5, -28, 1.2);
-        g.fillCircle(5, -28, 1.2);
-        g.fillStyle(0xffffff); // Eye shine
-        g.fillCircle(-4, -29, 0.8);
-        g.fillCircle(6, -29, 0.8);
-        // Eyelashes
-        g.lineStyle(1.5, 0x000000);
-        g.lineBetween(-7, -30, -8, -33);
-        g.lineBetween(-5, -31, -5, -34);
-        g.lineBetween(5, -31, 5, -34);
-        g.lineBetween(7, -30, 8, -33);
-        // Eyebrows (subtle, feminine)
-        g.lineStyle(1.5, 0x3d2314);
-        g.beginPath();
-        g.arc(-5, -34, 5, Math.PI * 0.15, Math.PI * 0.85, false);
-        g.strokePath();
-        g.beginPath();
-        g.arc(5, -34, 5, Math.PI * 0.15, Math.PI * 0.85, false);
-        g.strokePath();
-        // Nose (small, cute)
-        g.fillStyle(0xe8c4b8); g.fillEllipse(0, -24, 2.5, 1.5);
-        // Lips (fuller, with color)
-        g.fillStyle(0xe07070);
-        g.fillEllipse(0, -19, 5, 2);
-        g.fillStyle(0xd06060);
-        g.fillEllipse(0, -18.5, 4, 1.2);
+    drawFemaleCharacter(g, expression = 'frowny') {
+        drawFemalePlayerGlobal(g, false, expression);
     }
 }
 
