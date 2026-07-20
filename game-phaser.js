@@ -3631,7 +3631,17 @@ class GameScene extends Phaser.Scene {
         container.setDepth(30);
 
         const g = this.add.graphics();
-        const colors = [0xe74c3c, 0x3498db, 0x2ecc71, 0x9b59b6, 0xf39c12, 0x1abc9c, 0xbdc3c7, 0x34495e];
+        // Tesla-inspired paint palette (pearl white, solid black, midnight silver, deep blue, multi-coat red, etc.)
+        const colors = [
+            0xf2f2f2, // Pearl White
+            0x1a1a1a, // Solid Black
+            0x6b7280, // Midnight Silver Metallic
+            0xc5c9ce, // Quicksilver
+            0x1e3a5f, // Deep Blue Metallic
+            0xb91c1c, // Red Multi-Coat
+            0x374151, // Stealth Grey
+            0x0f172a  // Ultra Blue / dark navy
+        ];
         const mainColor = colors[Phaser.Math.Between(0, colors.length - 1)];
 
         if (type === 'car') this.draw3DCar(g, mainColor, dir);
@@ -3653,129 +3663,358 @@ class GameScene extends Phaser.Scene {
         this.cars.add(container);
     }
 
+    // Soft shade helpers for layered vehicle paint
+    shadeColor(color, amount) {
+        const c = Phaser.Display.Color.ValueToColor(color);
+        if (amount >= 0) return c.lighten(amount).color;
+        return c.darken(Math.abs(amount)).color;
+    }
+
+    drawAlloyWheel(g, x, y, w, h) {
+        // Tire
+        g.fillStyle(0x0a0a0a, 0.95);
+        g.fillRoundedRect(x, y, w, h, 3);
+        // Rim
+        g.fillStyle(0x9ca3af, 0.95);
+        g.fillRoundedRect(x + 2, y + 1.5, w - 4, h - 3, 2);
+        // Hub
+        g.fillStyle(0x374151);
+        g.fillRoundedRect(x + w * 0.35, y + 2, w * 0.3, h - 4, 1);
+        // Spoke highlight
+        g.fillStyle(0xe5e7eb, 0.7);
+        g.fillRect(x + 3, y + h * 0.35, w - 6, 1.2);
+    }
+
     draw3DCar(g, color, dir) {
-        const dark = Phaser.Display.Color.ValueToColor(color).darken(30).color;
-        const bright = Phaser.Display.Color.ValueToColor(color).lighten(20).color;
+        // Tesla Model 3 / Y inspired top-down EV sedan
+        const dark = this.shadeColor(color, -35);
+        const mid = this.shadeColor(color, -12);
+        const bright = this.shadeColor(color, 22);
+        const glass = 0x0c1a28;
+        const glassReflect = 0x4a90b8;
+        const s = dir; // travel direction (+1 right, -1 left)
 
-        // Shadow
-        g.fillStyle(0x000000, 0.3);
-        g.fillEllipse(0, 22, 95, 18);
+        // Soft ground shadow
+        g.fillStyle(0x000000, 0.38);
+        g.fillEllipse(0, 2, 100, 42);
+        g.fillStyle(0x000000, 0.18);
+        g.fillEllipse(0, 10, 88, 28);
 
-        // Body base (3D side depth)
+        // Alloy wheels (partially under body)
+        this.drawAlloyWheel(g, -34, -26, 18, 7);
+        this.drawAlloyWheel(g, 16, -26, 18, 7);
+        this.drawAlloyWheel(g, -34, 19, 18, 7);
+        this.drawAlloyWheel(g, 16, 19, 18, 7);
+
+        // Lower body / rocker panel depth
+        g.fillStyle(0x111111, 0.9);
+        g.fillRoundedRect(-50, -18, 100, 36, 12);
+
+        // Main body shell — long, smooth Tesla silhouette
         g.fillStyle(dark);
-        g.fillRoundedRect(-48, -16, 96, 36, 10);
-
-        // Main body (Top surface)
-        g.fillGradientStyle(color, color, bright, bright);
-        g.fillRoundedRect(-48, -20, 96, 34, 10);
-
-        // Roof
-        g.fillStyle(bright);
-        g.fillRoundedRect(-15, -16, 45, 26, 6);
+        g.fillRoundedRect(-49, -19, 98, 38, 14);
         g.fillStyle(color);
-        g.fillRoundedRect(-12, -14, 39, 22, 5);
+        g.fillRoundedRect(-48, -18, 96, 34, 13);
 
-        // Windshieds
-        g.fillStyle(0x1a2530);
-        g.fillRect(dir === 1 ? 18 : -32, -12, 14, 18); // Front
-        g.fillRect(dir === 1 ? -22 : 8, -12, 8, 18); // Back
+        // Subtle paint highlight along upper edge (sun reflection)
+        g.fillStyle(bright, 0.45);
+        g.fillRoundedRect(-42, -17, 84, 5, 3);
+        // Side shoulder crease
+        g.fillStyle(mid, 0.55);
+        g.fillRect(-40, -8, 80, 1.5);
+        g.fillRect(-40, 6, 80, 1.5);
 
-        // Windows (sides)
-        g.fillRect(-10, -13, 22, 2);
-        g.fillRect(-10, 7, 22, 2);
+        // Front bumper taper (aerodynamic nose)
+        const frontX = s === 1 ? 38 : -50;
+        g.fillStyle(dark);
+        g.fillRoundedRect(frontX, -14, 12, 28, 8);
+        g.fillStyle(color);
+        g.fillRoundedRect(frontX + (s === 1 ? 1 : 0), -13, 11, 26, 7);
 
-        // Lights
-        g.fillStyle(0xffffcc);
-        g.fillCircle(dir === 1 ? 44 : -44, -10, 5);
-        g.fillCircle(dir === 1 ? 44 : -44, 4, 5);
-        g.fillStyle(0xff3333);
-        g.fillCircle(dir === 1 ? -44 : 44, -12, 4);
-        g.fillCircle(dir === 1 ? -44 : 44, 6, 4);
+        // Rear bumper
+        const rearX = s === 1 ? -50 : 38;
+        g.fillStyle(dark);
+        g.fillRoundedRect(rearX, -14, 12, 28, 6);
 
-        // Wheels
-        g.fillStyle(0x111111);
-        g.fillRoundedRect(-35, 14, 16, 6, 2);
-        g.fillRoundedRect(20, 14, 16, 6, 2);
-        g.fillRoundedRect(-35, -24, 16, 6, 2);
-        g.fillRoundedRect(20, -24, 16, 6, 2);
+        // Continuous LED headlight bar (Tesla signature)
+        const headX = s === 1 ? 46 : -49;
+        g.fillStyle(0xffffff, 0.95);
+        g.fillRoundedRect(headX, -11, 4, 22, 2);
+        g.fillStyle(0xa5f3fc, 0.85);
+        g.fillRoundedRect(headX + 0.5, -9, 2.5, 18, 1.5);
+        // Glow
+        g.fillStyle(0x67e8f9, 0.35);
+        g.fillEllipse(headX + 2, 0, 10, 26);
+
+        // Continuous red taillight bar
+        const tailX = s === 1 ? -50 : 46;
+        g.fillStyle(0x7f1d1d);
+        g.fillRoundedRect(tailX, -11, 4, 22, 2);
+        g.fillStyle(0xef4444, 0.95);
+        g.fillRoundedRect(tailX + 0.5, -9, 2.5, 18, 1.5);
+        g.fillStyle(0xfca5a5, 0.4);
+        g.fillEllipse(tailX + 2, 0, 8, 22);
+
+        // Panoramic glass roof (Tesla signature)
+        g.fillStyle(0x050a10, 0.95);
+        g.fillRoundedRect(-18, -13, 42, 26, 7);
+        g.fillStyle(glass, 0.92);
+        g.fillRoundedRect(-16, -11.5, 38, 23, 6);
+        // Glass reflection streak
+        g.fillStyle(glassReflect, 0.35);
+        g.fillRoundedRect(-12, -10, 12, 20, 4);
+        g.fillStyle(0xffffff, 0.12);
+        g.fillRoundedRect(-10, -9, 5, 18, 2);
+
+        // Front windshield
+        const windX = s === 1 ? 20 : -32;
+        g.fillStyle(0x0a1620, 0.95);
+        g.fillRoundedRect(windX, -11, 14, 22, 4);
+        g.fillStyle(glassReflect, 0.28);
+        g.fillRoundedRect(windX + 2, -9, 5, 18, 2);
+
+        // Rear glass
+        const rearGlassX = s === 1 ? -30 : 16;
+        g.fillStyle(0x0a1620, 0.9);
+        g.fillRoundedRect(rearGlassX, -10, 10, 20, 3);
+        g.fillStyle(glassReflect, 0.2);
+        g.fillRoundedRect(rearGlassX + 1, -8, 4, 16, 2);
+
+        // Door seam lines
+        g.lineStyle(1, dark, 0.55);
+        g.lineBetween(-4, -16, -4, 16);
+        g.lineBetween(10, -16, 10, 16);
+
+        // Flush door handles (minimal Tesla style)
+        g.fillStyle(dark, 0.8);
+        g.fillRoundedRect(-2, -15.5, 6, 1.5, 1);
+        g.fillRoundedRect(-2, 14, 6, 1.5, 1);
+        g.fillRoundedRect(12, -15.5, 6, 1.5, 1);
+        g.fillRoundedRect(12, 14, 6, 1.5, 1);
+
+        // Side mirrors
+        g.fillStyle(dark);
+        g.fillRoundedRect(s === 1 ? 22 : -30, -22, 8, 4, 2);
+        g.fillRoundedRect(s === 1 ? 22 : -30, 18, 8, 4, 2);
+        g.fillStyle(0x1e293b);
+        g.fillRoundedRect(s === 1 ? 23 : -29, -21, 5, 2, 1);
+        g.fillRoundedRect(s === 1 ? 23 : -29, 19, 5, 2, 1);
+
+        // Hood center crease
+        g.fillStyle(bright, 0.25);
+        g.fillRect(s === 1 ? 30 : -42, -1, 12, 2);
+
+        // Charge-port hint on rear quarter (subtle)
+        g.fillStyle(0x111827, 0.7);
+        g.fillCircle(s === 1 ? -38 : 38, -14, 2.2);
+        g.fillStyle(0x22c55e, 0.5);
+        g.fillCircle(s === 1 ? -38 : 38, -14, 1.1);
     }
 
     draw3DTruck(g, color, dir) {
-        const dark = Phaser.Display.Color.ValueToColor(color).darken(40).color;
-        const bright = Phaser.Display.Color.ValueToColor(color).lighten(15).color;
+        // Modern electric semi (Tesla Semi inspired) + trailer
+        const dark = this.shadeColor(color, -40);
+        const bright = this.shadeColor(color, 18);
+        const s = dir;
+        const cabFront = s === 1 ? 68 : -118;
+        const trailerX = s === 1 ? -55 : -35;
 
-        // Shadow
-        g.fillStyle(0x000000, 0.35);
-        g.fillEllipse(0, 25, 145, 25);
+        // Ground shadow
+        g.fillStyle(0x000000, 0.4);
+        g.fillEllipse(s === 1 ? 15 : -15, 4, 155, 48);
+        g.fillStyle(0x000000, 0.2);
+        g.fillEllipse(s === 1 ? 10 : -10, 12, 140, 30);
 
-        // Trailer (Main box)
-        g.fillStyle(0xd5d5d5);
-        g.fillRoundedRect(-20, -24, 90, 48, 4);
-        g.fillStyle(0xeeeeee);
-        g.fillRoundedRect(-20, -24, 90, 44, 4);
-
-        // Cab (Front part)
-        const cabX = dir === 1 ? 70 : -70;
-        g.fillStyle(dark);
-        g.fillRoundedRect(dir === 1 ? 65 : -115, -22, 50, 44, 6);
-        g.fillStyle(color);
-        g.fillRoundedRect(dir === 1 ? 65 : -115, -22, 50, 40, 6);
-
-        // Cab Windows
-        g.fillStyle(0x1a2530);
-        g.fillRect(dir === 1 ? 95 : -110, -18, 12, 32); // Front
-        g.fillRect(dir === 1 ? 75 : -85, -19, 15, 3); // Sides
-        g.fillRect(dir === 1 ? 75 : -85, 12, 15, 3);
-
-        // Wheels (6 wheels)
-        g.fillStyle(0x111111);
-        const wheelY = [18, -28];
-        const wheelX = [-10, 25, 60, 95];
-        wheelY.forEach(wy => {
-            wheelX.forEach(wx => {
-                const finalX = dir === 1 ? wx : -wx - 50;
-                g.fillRoundedRect(finalX, wy, 18, 8, 2);
-            });
+        // Trailer wheels (dual axles)
+        const trailerWheelsX = s === 1 ? [-35, -5, 25] : [-5, 25, 55];
+        trailerWheelsX.forEach(wx => {
+            this.drawAlloyWheel(g, wx, -30, 20, 9);
+            this.drawAlloyWheel(g, wx, 21, 20, 9);
         });
+        // Cab wheels
+        const cabWheelX = s === 1 ? 78 : -98;
+        this.drawAlloyWheel(g, cabWheelX, -28, 20, 9);
+        this.drawAlloyWheel(g, cabWheelX, 19, 20, 9);
 
-        // Details
-        g.fillStyle(0xffcc00);
-        g.fillCircle(dir === 1 ? 110 : -110, -15, 6);
-        g.fillCircle(dir === 1 ? 110 : -110, 11, 6);
+        // Trailer body — corrugated modern freight box
+        g.fillStyle(0x1f2937);
+        g.fillRoundedRect(trailerX, -24, 95, 48, 4);
+        g.fillStyle(0xd1d5db);
+        g.fillRoundedRect(trailerX + 1, -23, 93, 44, 3);
+        // Roof highlight
+        g.fillStyle(0xf3f4f6, 0.9);
+        g.fillRoundedRect(trailerX + 3, -22, 89, 8, 2);
+        // Side panel ribs
+        g.fillStyle(0x9ca3af, 0.55);
+        for (let i = 0; i < 7; i++) {
+            const rx = trailerX + 10 + i * 12;
+            g.fillRect(rx, -13, 2, 30);
+        }
+        // Rear doors
+        const doorX = s === 1 ? trailerX : trailerX + 88;
+        g.fillStyle(0x6b7280);
+        g.fillRect(doorX, -20, 6, 38);
+        g.fillStyle(0x4b5563);
+        g.fillRect(doorX + 2.5, -18, 1, 34);
+        // Marker lights along trailer
+        g.fillStyle(0xfbbf24, 0.9);
+        g.fillCircle(trailerX + 8, -22, 2);
+        g.fillCircle(trailerX + 87, -22, 2);
+        g.fillCircle(trailerX + 8, 20, 2);
+        g.fillCircle(trailerX + 87, 20, 2);
+
+        // Fifth-wheel / hitch
+        g.fillStyle(0x374151);
+        g.fillRoundedRect(s === 1 ? 38 : -58, -8, 18, 16, 3);
+
+        // Cab — sleek electric semi cabin
+        g.fillStyle(0x0a0a0a);
+        g.fillRoundedRect(cabFront, -22, 52, 44, 8);
+        g.fillStyle(dark);
+        g.fillRoundedRect(cabFront + 1, -21, 50, 40, 7);
+        g.fillStyle(color);
+        g.fillRoundedRect(cabFront + 2, -20, 48, 36, 7);
+        // Paint highlight
+        g.fillStyle(bright, 0.4);
+        g.fillRoundedRect(cabFront + 6, -19, 40, 5, 2);
+
+        // Wraparound windshield (angular Semi style)
+        const windX = s === 1 ? cabFront + 30 : cabFront + 4;
+        g.fillStyle(0x0c1a28, 0.95);
+        g.fillRoundedRect(windX, -16, 16, 32, 5);
+        g.fillStyle(0x38bdf8, 0.3);
+        g.fillRoundedRect(windX + 2, -13, 6, 26, 3);
+        g.fillStyle(0xffffff, 0.12);
+        g.fillRoundedRect(windX + 3, -11, 3, 12, 1);
+
+        // Side glass
+        g.fillStyle(0x0c1a28, 0.85);
+        g.fillRoundedRect(s === 1 ? cabFront + 12 : cabFront + 22, -18, 14, 4, 1);
+        g.fillRoundedRect(s === 1 ? cabFront + 12 : cabFront + 22, 14, 14, 4, 1);
+
+        // Continuous LED light bar
+        const headX = s === 1 ? cabFront + 48 : cabFront;
+        g.fillStyle(0xffffff, 0.95);
+        g.fillRoundedRect(headX, -14, 4, 28, 2);
+        g.fillStyle(0xa5f3fc, 0.85);
+        g.fillRoundedRect(headX + 0.5, -12, 2.5, 24, 1);
+        g.fillStyle(0x67e8f9, 0.35);
+        g.fillEllipse(headX + 2, 0, 12, 30);
+
+        // Side mirrors (tall truck mirrors)
+        g.fillStyle(dark);
+        g.fillRoundedRect(s === 1 ? cabFront + 28 : cabFront + 12, -28, 6, 8, 1);
+        g.fillRoundedRect(s === 1 ? cabFront + 28 : cabFront + 12, 20, 6, 8, 1);
+        g.fillStyle(0x1e293b);
+        g.fillRect(s === 1 ? cabFront + 29 : cabFront + 13, -26, 3, 5);
+        g.fillRect(s === 1 ? cabFront + 29 : cabFront + 13, 22, 3, 5);
+
+        // Cab door seam
+        g.lineStyle(1, dark, 0.5);
+        g.lineBetween(cabFront + 22, -18, cabFront + 22, 18);
     }
 
     draw3DMotorbike(g, color, dir) {
-        const dark = Phaser.Display.Color.ValueToColor(color).darken(30).color;
+        // Modern electric sport motorcycle, top-down
+        const dark = this.shadeColor(color, -30);
+        const bright = this.shadeColor(color, 20);
+        const s = dir;
 
         // Shadow
-        g.fillStyle(0x000000, 0.25);
-        g.fillEllipse(0, 15, 50, 10);
+        g.fillStyle(0x000000, 0.32);
+        g.fillEllipse(0, 4, 58, 22);
+        g.fillStyle(0x000000, 0.15);
+        g.fillEllipse(0, 8, 48, 14);
 
-        // Body
-        g.lineStyle(6, 0x222222);
-        g.lineBetween(-20, 0, 20, 0); // Frame
+        // Wheels with detailed rims
+        const frontWx = s === 1 ? 16 : -26;
+        const rearWx = s === 1 ? -26 : 16;
+        // Front tire
+        g.fillStyle(0x0a0a0a);
+        g.fillRoundedRect(frontWx, -5, 12, 10, 4);
+        g.fillStyle(0x6b7280);
+        g.fillRoundedRect(frontWx + 2.5, -3, 7, 6, 2);
+        g.fillStyle(0xd1d5db);
+        g.fillCircle(frontWx + 6, 0, 1.8);
+        // Rear tire (wider)
+        g.fillStyle(0x0a0a0a);
+        g.fillRoundedRect(rearWx, -6, 12, 12, 4);
+        g.fillStyle(0x6b7280);
+        g.fillRoundedRect(rearWx + 2.5, -3.5, 7, 7, 2);
+        g.fillStyle(0xd1d5db);
+        g.fillCircle(rearWx + 6, 0, 1.8);
 
+        // Swingarm / frame rails
+        g.lineStyle(3.5, 0x1f2937, 0.95);
+        g.lineBetween(rearWx + 10, 0, frontWx + 2, 0);
+        g.lineStyle(2, 0x4b5563, 0.8);
+        g.lineBetween(rearWx + 10, -2, 0, -4);
+        g.lineBetween(rearWx + 10, 2, 0, 4);
+
+        // Battery pack / underbody (EV look)
+        g.fillStyle(0x111827);
+        g.fillRoundedRect(-12, -5, 24, 10, 3);
+
+        // Body / fairing
+        g.fillStyle(dark);
+        g.fillEllipse(0, 0, 30, 14);
         g.fillStyle(color);
-        g.fillEllipse(0, 0, 25, 10); // Fuel tank/Body
+        g.fillEllipse(0, 0, 26, 11);
+        g.fillStyle(bright, 0.4);
+        g.fillEllipse(-2, -2, 14, 4);
 
-        // Rider (Top down)
-        g.fillStyle(0x333333);
-        g.fillCircle(-5, 0, 10); // Helmet/Body
-        g.fillStyle(0xddccbb);
-        g.fillCircle(-2, 0, 7); // Arms/Hands area
+        // Seat
+        g.fillStyle(0x1f2937);
+        g.fillRoundedRect(s === 1 ? -16 : 4, -5, 12, 10, 3);
+        g.fillStyle(0x374151);
+        g.fillRoundedRect(s === 1 ? -14 : 6, -3.5, 8, 7, 2);
+
+        // Rider — helmet + jacket + arms
+        g.fillStyle(0x1e293b);
+        g.fillEllipse(s === 1 ? -4 : 4, 0, 14, 12); // torso
+        // Helmet
+        g.fillStyle(0x0f172a);
+        g.fillCircle(s === 1 ? 2 : -2, 0, 7);
+        g.fillStyle(0x334155);
+        g.fillCircle(s === 1 ? 2 : -2, 0, 5.5);
+        // Visor
+        g.fillStyle(0x22d3ee, 0.55);
+        g.fillEllipse(s === 1 ? 4 : -4, 0, 5, 7);
+        g.fillStyle(0xffffff, 0.2);
+        g.fillEllipse(s === 1 ? 3 : -3, -1.5, 2, 3);
+        // Arms to bars
+        g.fillStyle(0x1e293b);
+        g.fillRoundedRect(s === 1 ? 4 : -12, -9, 10, 3.5, 1.5);
+        g.fillRoundedRect(s === 1 ? 4 : -12, 5.5, 10, 3.5, 1.5);
+        // Gloves
+        g.fillStyle(0x0f172a);
+        g.fillCircle(s === 1 ? 14 : -14, -7, 2.5);
+        g.fillCircle(s === 1 ? 14 : -14, 7, 2.5);
 
         // Handlebars
-        g.lineStyle(2, 0x555555);
-        g.lineBetween(10, -10, 10, 10);
+        g.lineStyle(2.5, 0x6b7280);
+        g.lineBetween(s === 1 ? 12 : -12, -10, s === 1 ? 12 : -12, 10);
+        g.fillStyle(0x9ca3af);
+        g.fillCircle(s === 1 ? 12 : -12, -10, 2);
+        g.fillCircle(s === 1 ? 12 : -12, 10, 2);
 
-        // Wheels
-        g.fillStyle(0x111111);
-        g.fillRoundedRect(-22, -3, 10, 6, 2);
-        g.fillRoundedRect(12, -3, 10, 6, 2);
+        // Front fairing / LED headlight
+        g.fillStyle(dark);
+        g.fillRoundedRect(s === 1 ? 20 : -28, -6, 8, 12, 3);
+        g.fillStyle(color);
+        g.fillRoundedRect(s === 1 ? 21 : -27, -5, 6, 10, 2);
+        g.fillStyle(0xffffff, 0.95);
+        g.fillCircle(s === 1 ? 26 : -26, 0, 3.5);
+        g.fillStyle(0xa5f3fc, 0.8);
+        g.fillCircle(s === 1 ? 26 : -26, 0, 2.2);
+        g.fillStyle(0x67e8f9, 0.3);
+        g.fillEllipse(s === 1 ? 28 : -28, 0, 10, 12);
 
-        // Headlight
-        g.fillStyle(0xffffcc);
-        g.fillCircle(dir === 1 ? 22 : -22, 0, 4);
+        // Tail light
+        g.fillStyle(0xef4444, 0.9);
+        g.fillRoundedRect(s === 1 ? -28 : 22, -3, 4, 6, 1.5);
+        g.fillStyle(0xfca5a5, 0.45);
+        g.fillEllipse(s === 1 ? -26 : 24, 0, 6, 8);
     }
 
     spawnNewt() {
