@@ -4,6 +4,7 @@ import test from 'node:test';
 
 const gameSource = readFileSync(new URL('../game-phaser.js', import.meta.url), 'utf8');
 const sqlSource = readFileSync(new URL('../supabase_setup.sql', import.meta.url), 'utf8');
+const htmlSource = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
 
 function sourceBetween(startToken, endToken) {
     const start = gameSource.indexOf(startToken);
@@ -21,31 +22,39 @@ function assertSourceDoesNotMatch(source, pattern, label) {
     assert.ok(!pattern.test(source), label);
 }
 
-test('multiplayer sync uses 60Hz peer transport with a Supabase-safe fallback', () => {
+test('multiplayer sync uses 60Hz peer player updates and 20Hz world snapshots via Trystero WebRTC', () => {
     assertSourceMatches(gameSource, /PLAYER_UPDATE_MS:\s*1000\s*\/\s*60/, 'peer player updates should run at 60Hz');
     assertSourceMatches(gameSource, /WORLD_UPDATE_MS:\s*1000\s*\/\s*20/, 'peer world snapshots should run at 20Hz');
-    assertSourceMatches(gameSource, /SUPABASE_FALLBACK_PLAYER_UPDATE_MS:\s*125/, 'Supabase fallback player updates should stay capped at 8Hz');
-    assertSourceMatches(gameSource, /SUPABASE_FALLBACK_WORLD_UPDATE_MS:\s*250/, 'Supabase fallback world snapshots should stay capped at 4Hz');
     assertSourceMatches(gameSource, /IDLE_HEARTBEAT_MS:\s*1500/, 'idle players should use a heartbeat instead of constant packets');
     assertSourceMatches(gameSource, /function quantizeRatio/, 'ratios should be quantized before broadcast');
     assertSourceMatches(gameSource, /shouldBroadcastPlayerState\(payload, force/, 'unchanged player states should be skipped');
-    assertSourceMatches(gameSource, /setupGameDataChannel\(\)/, 'game sync should establish a WebRTC data channel');
-    assertSourceMatches(gameSource, /createDataChannel\('game-sync'/, 'host should create a dedicated game-sync data channel');
-    assertSourceMatches(gameSource, /sendMultiplayerMessage\(event, payload, options = \{\}\)/, 'volatile sync should route through a shared transport helper');
-    assertSourceMatches(gameSource, /volatile && this\.isGameDataChannelReady\(\)/, 'volatile sync should prefer the peer data channel');
+    assertSourceMatches(gameSource, /getTrystero\(\)/, 'multiplayer should retrieve Trystero instance');
+    assertSourceMatches(gameSource, /initTrysteroRoom\(code\)/, 'multiplayer should initialize Trystero room');
+    assertSourceMatches(gameSource, /initTrysteroActions\(room\)/, 'multiplayer should declare Trystero action channels');
+    assertSourceMatches(gameSource, /sendMultiplayerMessage\(event, payload, options = \{\}\)/, 'sync should route through shared action sender');
 
     const playerBroadcast = sourceBetween('    broadcastPlayerState', '    broadcastGameState');
     assertSourceDoesNotMatch(playerBroadcast, /broadcastGameState\(/, 'player packets should not trigger full world snapshots');
-    assertSourceMatches(playerBroadcast, /sendMultiplayerMessage\('player_update', payload, \{ volatile: true \}\)/, 'player movement should use the volatile transport');
+    assertSourceMatches(playerBroadcast, /sendMultiplayerMessage\('player_update', payload, \{ volatile: true \}\)/, 'player movement should use volatile action');
 
-    assertSourceMatches(gameSource, /getWorldUpdateDelay\(\)[\s\S]*WORLD_UPDATE_MS/, 'world timer helper should choose the peer world rate');
-    assertSourceMatches(gameSource, /gameStateBroadcastTimer[\s\S]*getWorldUpdateDelay\(\)/, 'host world snapshots should use their own lower-rate timer helper');
+    assertSourceMatches(gameSource, /getWorldUpdateDelay\(\)[\s\S]*WORLD_UPDATE_MS/, 'world timer helper should choose peer world rate');
+    assertSourceMatches(gameSource, /gameStateBroadcastTimer[\s\S]*getWorldUpdateDelay\(\)/, 'host world snapshots should use their own timer helper');
+    assertSourceDoesNotMatch(gameSource, /multiplayerChannel/, 'game sync should not depend on Supabase realtime channels');
 });
 
-test('multiplayer avoids avoidable realtime events and lobby races', () => {
-    assertSourceDoesNotMatch(gameSource, /Start voice chat\s*\n\s*this\.setupVoiceChat\(\)/, 'voice chat should not auto-start and spend signaling messages');
+test('voice chat uses Trystero media streams and activates only on user interaction', () => {
+    assertSourceDoesNotMatch(gameSource, /Start voice chat\s*\n\s*this\.setupVoiceChat\(\)/, 'voice chat should not auto-start');
     assertSourceMatches(gameSource, /toggleMute\(\)[\s\S]*this\.setupVoiceChat\(\)/, 'mic button should opt into voice setup');
-    assertSourceMatches(gameSource, /\.update\(\{[\s\S]*guest_id: guestId[\s\S]*status: 'playing'[\s\S]*\}\)[\s\S]*\.eq\('id', room\.id\)[\s\S]*\.eq\('status', 'waiting'\)[\s\S]*\.is\('guest_id', null\)/, 'join update should remain conditional to avoid double joins');
+    assertSourceMatches(gameSource, /trysteroRoom\.addStream\(localStream\)/, 'local microphone stream should be added to Trystero room');
+    assertSourceMatches(gameSource, /trysteroRoom\.onPeerStream\(/, 'remote audio stream should be handled via onPeerStream');
+    assertSourceMatches(gameSource, /cleanupVoiceChat\(\)/, 'voice chat cleanup function should exist');
+});
+
+test('multiplayer lobby and room lifecycle are serverless P2P', () => {
+    assertSourceMatches(htmlSource, /trystero\/nostr/, 'index.html should include Trystero nostr module');
+    assertSourceMatches(gameSource, /createRoom\(hostCharacter\)/, 'createRoom should create a P2P room with code');
+    assertSourceMatches(gameSource, /joinRoom\(code, guestCharacter\)/, 'joinRoom should connect to existing P2P room code');
+    assertSourceMatches(gameSource, /cleanupMultiplayerState\(\)/, 'cleanupMultiplayerState should teardown room and state');
 });
 
 test('database setup keeps leaderboard reads cheap', () => {

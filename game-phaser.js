@@ -54,161 +54,151 @@ let selectedCharacter = 'male'; // 'male' or 'female'
 let playerName = '';
 
 // ===== MULTIPLAYER STATE =====
-let gameMode = 'single'; // 'single' or 'multi'
+let gameMode = 'single';
 let isHost = false;
 let roomCode = null;
 let roomId = null;
 let playerId = null;
 let remotePlayerId = null;
 let remoteCharacter = null;
-let multiplayerChannel = null;
 let lastRemoteUpdate = 0;
 
+let trysteroRoom = null;
+let trysteroActions = null;
+
 // ===== VOICE CHAT STATE =====
-let peerConnection = null;
 let localStream = null;
 let remoteAudioEl = null;
 let voiceChatActive = false;
 let isMuted = false;
 
-// ===== GAME DATA CHANNEL STATE =====
-let gameDataPeerConnection = null;
-let gameDataChannel = null;
-let gameDataChannelReady = false;
-
-// Generate unique player ID
 function generatePlayerId() {
     return 'player_' + Math.random().toString(36).substring(2, 15);
 }
 
-// Generate 4-digit room code
 function generateRoomCode() {
     return Math.floor(1000 + Math.random() * 9000).toString();
 }
 
-
-// Room management functions
-async function createRoom(hostCharacter) {
-    if (!supabaseClient) return null;
-    const hostId = generatePlayerId();
-    
+async function getTrystero() {
+    if (window.Trystero && typeof window.Trystero.joinRoom === 'function') {
+        return window.Trystero;
+    }
     try {
-        for (let attempt = 0; attempt < 5; attempt++) {
-            const code = generateRoomCode();
-            const { data, error } = await supabaseClient
-                .from('game_rooms')
-                .insert([{
-                    room_code: code,
-                    host_id: hostId,
-                    host_character: hostCharacter,
-                    status: 'waiting'
-                }])
-                .select('id, room_code, host_id, host_character, guest_id, guest_character, status')
-                .single();
-
-            if (!error && data) {
-                playerId = hostId;
-                roomCode = data.room_code;
-                roomId = data.id;
-                isHost = true;
-
-                return data;
-            }
-
-            if (error && error.code === '23505') continue;
-
-            console.error("Error creating room:", error);
+        const mod = await import('https://esm.sh/trystero/nostr');
+        window.Trystero = mod;
+        return mod;
+    } catch (e) {
+        try {
+            const modTorrent = await import('https://esm.sh/trystero/torrent');
+            window.Trystero = modTorrent;
+            return modTorrent;
+        } catch (err) {
+            console.error('Trystero import failed:', err);
             return null;
         }
+    }
+}
 
-        console.error("Unable to create a unique room code after several attempts");
-        return null;
-    } catch (e) {
-        console.error("Exception creating room:", e);
+function initTrysteroActions(room) {
+    if (!room) return null;
+    const [sendPlayerUpdate, onPlayerUpdate] = room.makeAction('player_update');
+    const [sendGameState, onGameState] = room.makeAction('game_state');
+    const [sendNewtPickup, onNewtPickup] = room.makeAction('newt_pickup');
+    const [sendNewtSave, onNewtSave] = room.makeAction('newt_save');
+    const [sendPlayerDisconnect, onPlayerDisconnect] = room.makeAction('player_disconnect');
+    const [sendGameOver, onGameOver] = room.makeAction('game_over');
+    const [sendPlayerName, onPlayerName] = room.makeAction('player_name');
+    const [sendPlayerHitIntent, onPlayerHitIntent] = room.makeAction('player_hit_intent');
+    const [sendPlayerHit, onPlayerHit] = room.makeAction('player_hit');
+    const [sendLobbyHandshake, onLobbyHandshake] = room.makeAction('lobby_handshake');
+
+    trysteroActions = {
+        sendPlayerUpdate,
+        onPlayerUpdate,
+        sendGameState,
+        onGameState,
+        sendNewtPickup,
+        onNewtPickup,
+        sendNewtSave,
+        onNewtSave,
+        sendPlayerDisconnect,
+        onPlayerDisconnect,
+        sendGameOver,
+        onGameOver,
+        sendPlayerName,
+        onPlayerName,
+        sendPlayerHitIntent,
+        onPlayerHitIntent,
+        sendPlayerHit,
+        onPlayerHit,
+        sendLobbyHandshake,
+        onLobbyHandshake
+    };
+    return trysteroActions;
+}
+
+async function initTrysteroRoom(code) {
+    const trystero = await getTrystero();
+    if (!trystero || typeof trystero.joinRoom !== 'function') {
+        console.error('Trystero library unavailable');
         return null;
     }
+
+    cleanupTrysteroRoom();
+
+    const config = { appId: 'save-the-newts' };
+    const room = trystero.joinRoom(config, 'stn-' + code);
+    trysteroRoom = room;
+    initTrysteroActions(room);
+    return room;
+}
+
+async function createRoom(hostCharacter) {
+    const hostId = generatePlayerId();
+    const code = generateRoomCode();
+    
+    playerId = hostId;
+    roomCode = code;
+    roomId = code;
+    isHost = true;
+
+    const room = await initTrysteroRoom(code);
+    if (!room) return null;
+
+    return {
+        id: code,
+        room_code: code,
+        host_id: hostId,
+        host_character: hostCharacter,
+        status: 'waiting'
+    };
 }
 
 async function joinRoom(code, guestCharacter) {
-    if (!supabaseClient) return null;
     const guestId = generatePlayerId();
-    
-    try {
-        // First check if room exists and is waiting
-        const { data: room, error: fetchError } = await supabaseClient
-            .from('game_rooms')
-            .select('id, room_code, host_id, host_character')
-            .eq('room_code', code)
-            .eq('status', 'waiting')
-            .is('guest_id', null)
-            .single();
-        
-        if (fetchError || !room) {
-            console.error("Room not found or not available:", fetchError);
-            return null;
-        }
-        
-        // Update room with guest info
-        const { data, error } = await supabaseClient
-            .from('game_rooms')
-            .update({ 
-                guest_id: guestId,
-                guest_character: guestCharacter,
-                status: 'playing'
-            })
-            .eq('id', room.id)
-            .eq('status', 'waiting')
-            .is('guest_id', null)
-            .select('id, room_code, host_id, host_character, guest_id, guest_character, status')
-            .single();
-        
-        if (error || !data) {
-            console.error("Error joining room:", error);
-            return null;
-        }
-        
-        playerId = guestId;
-        roomCode = code;
-        roomId = data.id;
-        isHost = false;
-        remotePlayerId = data.host_id;
-        remoteCharacter = data.host_character;
-        
-        return data;
-    } catch (e) {
-        console.error("Exception joining room:", e);
-        return null;
-    }
-}
+    playerId = guestId;
+    roomCode = code;
+    roomId = code;
+    isHost = false;
 
-async function updateRoomStatus(status) {
-    if (!supabaseClient || !roomId) return;
-    try {
-        await supabaseClient
-            .from('game_rooms')
-            .update({ status: status })
-            .eq('id', roomId);
-    } catch (e) {
-        console.error("Error updating room status:", e);
-    }
-}
+    const room = await initTrysteroRoom(code);
+    if (!room) return null;
 
-async function deleteRoom() {
-    if (!supabaseClient || !roomId) return;
-    try {
-        await supabaseClient
-            .from('game_rooms')
-            .delete()
-            .eq('id', roomId);
-    } catch (e) {
-        console.error("Error deleting room:", e);
-    }
+    return {
+        id: code,
+        room_code: code,
+        guest_id: guestId,
+        guest_character: guestCharacter,
+        status: 'playing'
+    };
 }
 
 function cleanupVoiceChat() {
-    if (peerConnection) {
-        peerConnection.close();
-        peerConnection = null;
+    if (trysteroRoom && localStream) {
+        try {
+            trysteroRoom.removeStream(localStream);
+        } catch (e) {}
     }
     if (localStream) {
         localStream.getTracks().forEach(track => track.stop());
@@ -223,29 +213,19 @@ function cleanupVoiceChat() {
     isMuted = false;
 }
 
-function cleanupGameDataChannel() {
-    gameDataChannelReady = false;
-    if (gameDataChannel) {
-        gameDataChannel.onopen = null;
-        gameDataChannel.onclose = null;
-        gameDataChannel.onerror = null;
-        gameDataChannel.onmessage = null;
-        gameDataChannel.close();
-        gameDataChannel = null;
+function cleanupTrysteroRoom() {
+    cleanupVoiceChat();
+    if (trysteroRoom) {
+        try {
+            trysteroRoom.leave();
+        } catch (e) {}
+        trysteroRoom = null;
     }
-    if (gameDataPeerConnection) {
-        gameDataPeerConnection.close();
-        gameDataPeerConnection = null;
-    }
+    trysteroActions = null;
 }
 
 function cleanupMultiplayerState() {
-    cleanupVoiceChat();
-    cleanupGameDataChannel();
-    if (multiplayerChannel && supabaseClient) {
-        supabaseClient.removeChannel(multiplayerChannel);
-        multiplayerChannel = null;
-    }
+    cleanupTrysteroRoom();
     gameMode = 'single';
     isHost = false;
     roomCode = null;
@@ -1086,11 +1066,10 @@ class ModeSelectScene extends Phaser.Scene {
             color: '#aaccff'
         }).setOrigin(0.5);
 
-        // Multiplayer availability check
-        if (!supabaseClient) {
+        if (typeof window !== 'undefined' && !window.RTCPeerConnection) {
             multiBg.setAlpha(0.5);
             multiBg.disableInteractive();
-            this.add.text(width / 2, multiY + 40, '(Requires online connection)', {
+            this.add.text(width / 2, multiY + 40, '(WebRTC not supported)', {
                 fontFamily: 'Outfit, sans-serif',
                 fontSize: '11px',
                 color: '#666666'
@@ -1195,17 +1174,12 @@ class LobbyScene extends Phaser.Scene {
     }
 
     cleanup() {
-        if (this.roomSubscription) {
-            supabaseClient.removeChannel(this.roomSubscription);
-            this.roomSubscription = null;
-        }
         if (this.inputEl && this.inputEl.parentNode) {
             this.inputEl.parentNode.removeChild(this.inputEl);
             this.inputEl = null;
         }
-        // If we created a room but didn't start, delete it
-        if (isHost && roomId && this.lobbyState === 'waiting') {
-            deleteRoom();
+        if (isHost && this.lobbyState === 'waiting') {
+            cleanupMultiplayerState();
         }
     }
 
@@ -1214,7 +1188,6 @@ class LobbyScene extends Phaser.Scene {
         const isCompact = isCompactViewport(width, height);
         const isMobile = width < 500;
 
-        // Container for menu items (so we can destroy and recreate)
         if (this.menuContainer) {
             this.menuContainer.destroy();
         }
@@ -1224,7 +1197,6 @@ class LobbyScene extends Phaser.Scene {
         const btnHeight = isMobile ? 60 : (isCompact ? 70 : 80);
         const btnY = height * 0.40;
 
-        // Create Room Button
         const createBg = this.add.rectangle(width / 2, btnY, btnWidth, btnHeight, 0x1a3a2a, 0.9)
             .setStrokeStyle(3, 0x00ff88, 1)
             .setInteractive({ useHandCursor: true });
@@ -1241,7 +1213,6 @@ class LobbyScene extends Phaser.Scene {
         createBg.on('pointerout', () => createBg.setStrokeStyle(3, 0x00ff88, 1));
         createBg.on('pointerdown', () => this.showCreateRoom());
 
-        // Join Room Button
         const joinY = btnY + btnHeight + 30;
         const joinBg = this.add.rectangle(width / 2, joinY, btnWidth, btnHeight, 0x1a2a3a, 0.9)
             .setStrokeStyle(3, 0x00ccff, 1)
@@ -1259,7 +1230,6 @@ class LobbyScene extends Phaser.Scene {
         joinBg.on('pointerout', () => joinBg.setStrokeStyle(3, 0x00ccff, 1));
         joinBg.on('pointerdown', () => this.showJoinRoom());
 
-        // Instructions
         const instrText = this.add.text(width / 2, height * 0.75, 
             'Create a room and share the code\nwith your friend to play together!', {
             fontFamily: 'Outfit, sans-serif',
@@ -1272,14 +1242,11 @@ class LobbyScene extends Phaser.Scene {
 
     async showCreateRoom() {
         const { width, height } = this.scale;
-        const isCompact = isCompactViewport(width, height);
-        const isMobile = width < 500;
 
         this.lobbyState = 'creating';
         this.menuContainer.destroy();
         this.menuContainer = this.add.container(0, 0);
 
-        // Show creating message
         const creatingText = this.add.text(width / 2, height * 0.4, 'Creating room...', {
             fontFamily: 'Fredoka, sans-serif',
             fontSize: '20px',
@@ -1287,7 +1254,6 @@ class LobbyScene extends Phaser.Scene {
         }).setOrigin(0.5);
         this.menuContainer.add(creatingText);
 
-        // Create the room
         const room = await createRoom(selectedCharacter);
         
         if (!room) {
@@ -1305,14 +1271,12 @@ class LobbyScene extends Phaser.Scene {
 
     showWaitingForPlayer() {
         const { width, height } = this.scale;
-        const isCompact = isCompactViewport(width, height);
         const isMobile = width < 500;
 
         this.lobbyState = 'waiting';
         this.menuContainer.destroy();
         this.menuContainer = this.add.container(0, 0);
 
-        // Room code display
         this.add.text(width / 2, height * 0.25, 'ROOM CODE', {
             fontFamily: 'Outfit, sans-serif',
             fontSize: '14px',
@@ -1331,7 +1295,6 @@ class LobbyScene extends Phaser.Scene {
 
         this.menuContainer.add([codeBox, codeText]);
 
-        // Waiting message with animation
         const waitingText = this.add.text(width / 2, height * 0.50, 'Waiting for player to join...', {
             fontFamily: 'Outfit, sans-serif',
             fontSize: '16px',
@@ -1339,7 +1302,6 @@ class LobbyScene extends Phaser.Scene {
         }).setOrigin(0.5);
         this.menuContainer.add(waitingText);
 
-        // Animated dots
         let dots = 0;
         this.dotsTimer = this.time.addEvent({
             delay: 500,
@@ -1350,7 +1312,6 @@ class LobbyScene extends Phaser.Scene {
             loop: true
         });
 
-        // Share instructions
         const shareText = this.add.text(width / 2, height * 0.60, 
             'Share this code with your friend!', {
             fontFamily: 'Outfit, sans-serif',
@@ -1359,7 +1320,6 @@ class LobbyScene extends Phaser.Scene {
         }).setOrigin(0.5);
         this.menuContainer.add(shareText);
 
-        // Cancel button
         const cancelBtn = this.add.text(width / 2, height * 0.75, 'CANCEL', {
             fontFamily: 'Fredoka, sans-serif',
             fontSize: '18px',
@@ -1369,42 +1329,46 @@ class LobbyScene extends Phaser.Scene {
         }).setOrigin(0.5).setInteractive({ useHandCursor: true });
         this.menuContainer.add(cancelBtn);
 
-        cancelBtn.on('pointerdown', async () => {
+        cancelBtn.on('pointerdown', () => {
             if (this.dotsTimer) this.dotsTimer.destroy();
-            await deleteRoom();
             cleanupMultiplayerState();
             this.lobbyState = 'menu';
             this.createLobbyMenu();
         });
 
-        // Subscribe to room changes (wait for guest to join)
-        this.roomSubscription = supabaseClient
-            .channel(`room-${roomId}`)
-            .on('postgres_changes', 
-                { event: 'UPDATE', schema: 'public', table: 'game_rooms', filter: `id=eq.${roomId}` },
-                (payload) => {
-                    console.log('Room updated:', payload);
-                    if (payload.new.guest_id && payload.new.status === 'playing') {
-                        // Guest joined!
-                        remotePlayerId = payload.new.guest_id;
-                        remoteCharacter = payload.new.guest_character;
-                        this.startMultiplayerGame();
-                    }
+        if (trysteroRoom && trysteroActions) {
+            trysteroRoom.onPeerJoin(() => {
+                trysteroActions.sendLobbyHandshake({
+                    type: 'host_ready',
+                    hostId: playerId,
+                    hostCharacter: selectedCharacter,
+                    hostName: playerName
+                });
+            });
+
+            trysteroActions.onLobbyHandshake((payload, peerId) => {
+                if (payload && (payload.type === 'guest_join' || payload.type === 'guest_ready')) {
+                    remotePlayerId = payload.guestId || peerId;
+                    remoteCharacter = payload.guestCharacter || 'female';
+                    trysteroActions.sendLobbyHandshake({
+                        type: 'host_welcome',
+                        hostId: playerId,
+                        hostCharacter: selectedCharacter,
+                        hostName: playerName
+                    });
+                    this.startMultiplayerGame();
                 }
-            )
-            .subscribe();
+            });
+        }
     }
 
     showJoinRoom() {
         const { width, height } = this.scale;
-        const isCompact = isCompactViewport(width, height);
-        const isMobile = width < 500;
 
         this.lobbyState = 'joining';
         this.menuContainer.destroy();
         this.menuContainer = this.add.container(0, 0);
 
-        // Input label
         const labelText = this.add.text(width / 2, height * 0.30, 'ENTER ROOM CODE', {
             fontFamily: 'Outfit, sans-serif',
             fontSize: '14px',
@@ -1412,7 +1376,6 @@ class LobbyScene extends Phaser.Scene {
         }).setOrigin(0.5);
         this.menuContainer.add(labelText);
 
-        // Create DOM input for room code
         const canvasRect = this.game.canvas.getBoundingClientRect();
         this.inputEl = document.createElement('input');
         this.inputEl.type = 'text';
@@ -1439,11 +1402,9 @@ class LobbyScene extends Phaser.Scene {
         document.body.appendChild(this.inputEl);
         this.inputEl.focus();
 
-        // Disable keyboard capture for typing
         this.input.keyboard.removeCapture('W,A,S,D');
         this.input.keyboard.removeCapture([32, 37, 38, 39, 40]);
 
-        // Status text
         this.statusText = this.add.text(width / 2, height * 0.55, '', {
             fontFamily: 'Outfit, sans-serif',
             fontSize: '14px',
@@ -1451,7 +1412,6 @@ class LobbyScene extends Phaser.Scene {
         }).setOrigin(0.5);
         this.menuContainer.add(this.statusText);
 
-        // Join button
         const joinBtn = this.add.text(width / 2, height * 0.65, 'JOIN', {
             fontFamily: 'Fredoka, sans-serif',
             fontSize: '22px',
@@ -1463,14 +1423,12 @@ class LobbyScene extends Phaser.Scene {
 
         joinBtn.on('pointerdown', () => this.attemptJoin());
 
-        // Also allow Enter key to join
         this.inputEl.addEventListener('keydown', (e) => {
             if (e.key === 'Enter') {
                 this.attemptJoin();
             }
         });
 
-        // Cancel button
         const cancelBtn = this.add.text(width / 2, height * 0.78, 'CANCEL', {
             fontFamily: 'Outfit, sans-serif',
             fontSize: '16px',
@@ -1483,6 +1441,7 @@ class LobbyScene extends Phaser.Scene {
                 this.inputEl.parentNode.removeChild(this.inputEl);
                 this.inputEl = null;
             }
+            cleanupMultiplayerState();
             this.lobbyState = 'menu';
             this.createLobbyMenu();
         });
@@ -1497,39 +1456,58 @@ class LobbyScene extends Phaser.Scene {
             return;
         }
 
-        this.statusText.setText('Joining room...');
+        this.statusText.setText('Connecting to room...');
         this.statusText.setColor('#ffffff');
 
         const room = await joinRoom(code, selectedCharacter);
         
-        if (!room) {
-            this.statusText.setText('Room not found or already full');
+        if (!room || !trysteroRoom || !trysteroActions) {
+            this.statusText.setText('Connection failed. Try again.');
             this.statusText.setColor('#ff6666');
             return;
         }
 
-        // Successfully joined - go to character select then game
-        if (this.inputEl && this.inputEl.parentNode) {
-            this.inputEl.parentNode.removeChild(this.inputEl);
-            this.inputEl = null;
-        }
+        const sendGuestHandshake = () => {
+            if (trysteroActions) {
+                trysteroActions.sendLobbyHandshake({
+                    type: 'guest_join',
+                    guestId: playerId,
+                    guestCharacter: selectedCharacter,
+                    guestName: playerName
+                });
+            }
+        };
 
-        this.startMultiplayerGame();
+        trysteroRoom.onPeerJoin(() => {
+            sendGuestHandshake();
+        });
+
+        let joined = false;
+        trysteroActions.onLobbyHandshake((payload, peerId) => {
+            if (joined) return;
+            if (payload && (payload.type === 'host_welcome' || payload.type === 'host_ready')) {
+                joined = true;
+                remotePlayerId = payload.hostId || peerId;
+                remoteCharacter = payload.hostCharacter || 'male';
+                if (payload.type === 'host_ready') {
+                    sendGuestHandshake();
+                }
+                this.startMultiplayerGame();
+            }
+        });
+
+        sendGuestHandshake();
+        this.time.delayedCall(800, sendGuestHandshake);
+        this.time.delayedCall(2000, sendGuestHandshake);
     }
 
     startMultiplayerGame() {
         if (this.dotsTimer) this.dotsTimer.destroy();
-        if (this.roomSubscription) {
-            supabaseClient.removeChannel(this.roomSubscription);
-            this.roomSubscription = null;
-        }
         if (this.inputEl && this.inputEl.parentNode) {
             this.inputEl.parentNode.removeChild(this.inputEl);
             this.inputEl = null;
         }
 
-        // Both players now go to character select (but their choice is already made)
-        // For simplicity, we'll skip character select in multiplayer and go straight to game
         this.cameras.main.fadeOut(300, 0, 0, 0);
         this.cameras.main.once('camerafadeoutcomplete', () => {
             this.scene.start('GameScene');
@@ -1577,9 +1555,6 @@ class GameScene extends Phaser.Scene {
         this.lastHitByPlayer = new Map();
         this.gameStateSeq = 0;
         this.lastReceivedSeq = -1;
-        this.gameDataConnecting = false;
-        this.bufferedGameDataOffer = null;
-        this.bufferedGameDataIceCandidates = [];
 
         // Achievement tracking
         this.streak = 0;
@@ -1916,127 +1891,60 @@ class GameScene extends Phaser.Scene {
     }
 
     setupMultiplayerSync() {
-        if (!supabaseClient || !roomCode) return;
+        if (!roomCode) return;
 
-        if (multiplayerChannel) {
-            supabaseClient.removeChannel(multiplayerChannel);
-            multiplayerChannel = null;
+        if (trysteroRoom && !trysteroActions) {
+            initTrysteroActions(trysteroRoom);
         }
-        
-        // Create broadcast channel for real-time sync
-        multiplayerChannel = supabaseClient.channel(`game-${roomCode}`, {
-            config: {
-                broadcast: { self: false }
-            }
+
+        if (trysteroActions) {
+            trysteroActions.onPlayerUpdate((payload) => {
+                this.handleMultiplayerMessage('player_update', payload);
+            });
+            trysteroActions.onGameState((payload) => {
+                this.handleMultiplayerMessage('game_state', payload);
+            });
+            trysteroActions.onNewtPickup((payload) => {
+                this.handleMultiplayerMessage('newt_pickup', payload);
+            });
+            trysteroActions.onNewtSave((payload) => {
+                this.handleMultiplayerMessage('newt_save', payload);
+            });
+            trysteroActions.onPlayerDisconnect((payload) => {
+                this.handleMultiplayerMessage('player_disconnect', payload);
+            });
+            trysteroActions.onGameOver((payload) => {
+                this.handleMultiplayerMessage('game_over', payload);
+            });
+            trysteroActions.onPlayerName((payload) => {
+                this.handleMultiplayerMessage('player_name', payload);
+            });
+            trysteroActions.onPlayerHitIntent((payload) => {
+                this.handleMultiplayerMessage('player_hit_intent', payload);
+            });
+            trysteroActions.onPlayerHit((payload) => {
+                this.handleMultiplayerMessage('player_hit', payload);
+            });
+        }
+
+        if (trysteroRoom) {
+            trysteroRoom.onPeerLeave((peerId) => {
+                this.handleMultiplayerMessage('player_disconnect', { playerId: peerId });
+            });
+        }
+
+        this.broadcastPlayerName(playerName);
+        this.configureMultiplayerTimers(true);
+
+        lastRemoteUpdate = Date.now();
+        this.disconnectCheckTimer = this.time.addEvent({
+            delay: 1000,
+            callback: this.checkPartnerConnection,
+            callbackScope: this,
+            loop: true
         });
 
-        // Listen for remote player updates
-        multiplayerChannel.on('broadcast', { event: 'player_update' }, (payload) => {
-            this.handleMultiplayerMessage('player_update', payload.payload);
-        });
-
-        // Listen for game state updates (from host)
-        multiplayerChannel.on('broadcast', { event: 'game_state' }, (payload) => {
-            this.handleMultiplayerMessage('game_state', payload.payload);
-        });
-
-        // Note: newt_spawn events removed - newts are synced via game_state broadcast
-
-        // Listen for newt pickup events
-        multiplayerChannel.on('broadcast', { event: 'newt_pickup' }, (payload) => {
-            this.handleMultiplayerMessage('newt_pickup', payload.payload);
-        });
-
-        // Listen for newt save events
-        multiplayerChannel.on('broadcast', { event: 'newt_save' }, (payload) => {
-            this.handleMultiplayerMessage('newt_save', payload.payload);
-        });
-
-        // Listen for partner disconnect
-        multiplayerChannel.on('broadcast', { event: 'player_disconnect' }, (payload) => {
-            this.handleMultiplayerMessage('player_disconnect', payload.payload);
-        });
-
-        // Listen for game over event (normal end of game)
-        multiplayerChannel.on('broadcast', { event: 'game_over' }, (payload) => {
-            this.handleMultiplayerMessage('game_over', payload.payload);
-        });
-
-        // Listen for partner's name during game over screen
-        multiplayerChannel.on('broadcast', { event: 'player_name' }, (payload) => {
-            this.handleMultiplayerMessage('player_name', payload.payload);
-        });
-
-
-        // Guest -> host hit intent, host -> guest hit outcome
-        multiplayerChannel.on('broadcast', { event: 'player_hit_intent' }, (payload) => {
-            this.handleMultiplayerMessage('player_hit_intent', payload.payload);
-        });
-
-        multiplayerChannel.on('broadcast', { event: 'player_hit' }, (payload) => {
-            this.handleMultiplayerMessage('player_hit', payload.payload);
-        });
-
-        // WebRTC game data-channel signaling. Continuous gameplay packets use the
-        // data channel after this handshake, keeping Supabase on the low-rate fallback.
-        multiplayerChannel.on('broadcast', { event: 'game_data_offer' }, (payload) => {
-            if (payload.payload.playerId !== playerId) {
-                this.handleGameDataOffer(payload.payload);
-            }
-        });
-
-        multiplayerChannel.on('broadcast', { event: 'game_data_answer' }, (payload) => {
-            if (payload.payload.playerId !== playerId) {
-                this.handleGameDataAnswer(payload.payload);
-            }
-        });
-
-        multiplayerChannel.on('broadcast', { event: 'game_data_ice' }, (payload) => {
-            if (payload.payload.playerId !== playerId) {
-                this.handleGameDataIce(payload.payload);
-            }
-        });
-
-        // WebRTC voice chat signaling
-        multiplayerChannel.on('broadcast', { event: 'webrtc_offer' }, (payload) => {
-            if (payload.payload.playerId !== playerId) {
-                this.handleWebRTCOffer(payload.payload);
-            }
-        });
-
-        multiplayerChannel.on('broadcast', { event: 'webrtc_answer' }, (payload) => {
-            if (payload.payload.playerId !== playerId) {
-                this.handleWebRTCAnswer(payload.payload);
-            }
-        });
-
-        multiplayerChannel.on('broadcast', { event: 'webrtc_ice' }, (payload) => {
-            if (payload.payload.playerId !== playerId) {
-                this.handleWebRTCIce(payload.payload);
-            }
-        });
-
-        multiplayerChannel.subscribe((status) => {
-            console.log('Multiplayer channel status:', status);
-            if (status === 'SUBSCRIBED') {
-                // Broadcast our name to the partner
-                this.broadcastPlayerName(playerName);
-
-                this.configureMultiplayerTimers(true);
-                this.setupGameDataChannel();
-                
-                // Start disconnect detection
-                lastRemoteUpdate = Date.now();
-                this.disconnectCheckTimer = this.time.addEvent({
-                    delay: 1000,
-                    callback: this.checkPartnerConnection,
-                    callbackScope: this,
-                    loop: true
-                });
-
-                this.updateMicButton();
-            }
-        });
+        this.updateMicButton();
     }
 
     handleMultiplayerMessage(event, payload) {
@@ -2076,19 +1984,15 @@ class GameScene extends Phaser.Scene {
     }
 
     isGameDataChannelReady() {
-        return gameDataChannelReady && gameDataChannel && gameDataChannel.readyState === 'open';
+        return Boolean(trysteroRoom && trysteroActions);
     }
 
     getPlayerUpdateDelay() {
-        return this.isGameDataChannelReady()
-            ? MULTIPLAYER_CONFIG.PLAYER_UPDATE_MS
-            : MULTIPLAYER_CONFIG.SUPABASE_FALLBACK_PLAYER_UPDATE_MS;
+        return MULTIPLAYER_CONFIG.PLAYER_UPDATE_MS;
     }
 
     getWorldUpdateDelay() {
-        return this.isGameDataChannelReady()
-            ? MULTIPLAYER_CONFIG.WORLD_UPDATE_MS
-            : MULTIPLAYER_CONFIG.SUPABASE_FALLBACK_WORLD_UPDATE_MS;
+        return MULTIPLAYER_CONFIG.WORLD_UPDATE_MS;
     }
 
     configureMultiplayerTimers(forceBroadcast = false) {
@@ -2120,240 +2024,47 @@ class GameScene extends Phaser.Scene {
     }
 
     sendMultiplayerMessage(event, payload, options = {}) {
-        const volatile = Boolean(options.volatile);
-
-        if (volatile && this.isGameDataChannelReady()) {
-            try {
-                gameDataChannel.send(JSON.stringify({ event, payload }));
-                return true;
-            } catch (err) {
-                console.warn('Game data channel send failed, falling back to Supabase:', err);
-                gameDataChannelReady = false;
-                this.configureMultiplayerTimers(false);
-            }
-        }
-
-        if (!multiplayerChannel) return false;
-        multiplayerChannel.send({
-            type: 'broadcast',
-            event,
-            payload
-        });
-        return true;
-    }
-
-    setupGameDataChannel() {
-        if (!this.isMultiplayer || !multiplayerChannel || gameDataPeerConnection || this.gameDataConnecting) return;
-        if (!window.RTCPeerConnection) return;
-
-        this.gameDataConnecting = true;
-        if (!this.bufferedGameDataIceCandidates) this.bufferedGameDataIceCandidates = [];
-
-        const rtcConfig = {
-            iceServers: [
-                { urls: 'stun:stun.l.google.com:19302' },
-                { urls: 'stun:stun1.l.google.com:19302' }
-            ]
-        };
-
+        if (!trysteroActions) return false;
         try {
-            gameDataPeerConnection = new RTCPeerConnection(rtcConfig);
-        } catch (err) {
-            console.warn('Game data channel unavailable:', err.message);
-            this.gameDataConnecting = false;
-            return;
-        }
-
-        gameDataPeerConnection.onicecandidate = (event) => {
-            if (event.candidate && multiplayerChannel) {
-                multiplayerChannel.send({
-                    type: 'broadcast',
-                    event: 'game_data_ice',
-                    payload: { playerId: playerId, candidate: event.candidate.toJSON() }
-                });
+            switch (event) {
+                case 'player_update':
+                    trysteroActions.sendPlayerUpdate(payload);
+                    return true;
+                case 'game_state':
+                    trysteroActions.sendGameState(payload);
+                    return true;
+                case 'newt_pickup':
+                    trysteroActions.sendNewtPickup(payload);
+                    return true;
+                case 'newt_save':
+                    trysteroActions.sendNewtSave(payload);
+                    return true;
+                case 'player_disconnect':
+                    trysteroActions.sendPlayerDisconnect(payload);
+                    return true;
+                case 'game_over':
+                    trysteroActions.sendGameOver(payload);
+                    return true;
+                case 'player_name':
+                    trysteroActions.sendPlayerName(payload);
+                    return true;
+                case 'player_hit_intent':
+                    trysteroActions.sendPlayerHitIntent(payload);
+                    return true;
+                case 'player_hit':
+                    trysteroActions.sendPlayerHit(payload);
+                    return true;
+                default:
+                    return false;
             }
-        };
-
-        gameDataPeerConnection.oniceconnectionstatechange = () => {
-            if (!gameDataPeerConnection) return;
-            const state = gameDataPeerConnection.iceConnectionState;
-            if (state === 'failed' || state === 'disconnected' || state === 'closed') {
-                gameDataChannelReady = false;
-                this.gameDataConnecting = false;
-                this.configureMultiplayerTimers(true);
-            }
-        };
-
-        if (isHost) {
-            const channel = gameDataPeerConnection.createDataChannel('game-sync', {
-                ordered: false,
-                maxRetransmits: 0
-            });
-            this.attachGameDataChannel(channel);
-            this.time.delayedCall(500, () => this.createAndSendGameDataOffer());
-        } else {
-            gameDataPeerConnection.ondatachannel = (event) => {
-                this.attachGameDataChannel(event.channel);
-            };
-
-            if (this.bufferedGameDataOffer) {
-                const offer = this.bufferedGameDataOffer;
-                this.bufferedGameDataOffer = null;
-                this.handleGameDataOffer(offer);
-            }
-        }
-    }
-
-    attachGameDataChannel(channel) {
-        gameDataChannel = channel;
-        gameDataChannel.binaryType = 'arraybuffer';
-
-        gameDataChannel.onopen = () => {
-            gameDataChannelReady = true;
-            this.gameDataConnecting = false;
-            this.configureMultiplayerTimers(true);
-        };
-
-        gameDataChannel.onclose = () => {
-            gameDataChannelReady = false;
-            this.gameDataConnecting = false;
-            this.configureMultiplayerTimers(true);
-        };
-
-        gameDataChannel.onerror = (event) => {
-            console.warn('Game data channel error:', event);
-            gameDataChannelReady = false;
-            this.gameDataConnecting = false;
-            this.configureMultiplayerTimers(true);
-        };
-
-        gameDataChannel.onmessage = (event) => {
-            try {
-                const message = JSON.parse(event.data);
-                if (message && message.event) {
-                    this.handleMultiplayerMessage(message.event, message.payload);
-                }
-            } catch (err) {
-                console.warn('Ignored malformed game data message:', err);
-            }
-        };
-
-        if (gameDataChannel.readyState === 'open') {
-            gameDataChannelReady = true;
-            this.gameDataConnecting = false;
-            this.configureMultiplayerTimers(true);
-        }
-    }
-
-    async createAndSendGameDataOffer() {
-        if (!isHost || !gameDataPeerConnection || !multiplayerChannel) return;
-        if (gameDataPeerConnection.signalingState === 'have-local-offer' && gameDataPeerConnection.localDescription) {
-            multiplayerChannel.send({
-                type: 'broadcast',
-                event: 'game_data_offer',
-                payload: {
-                    playerId: playerId,
-                    sdp: gameDataPeerConnection.localDescription.toJSON()
-                }
-            });
-            return;
-        }
-        if (gameDataPeerConnection.signalingState !== 'stable') return;
-
-        try {
-            const offer = await gameDataPeerConnection.createOffer();
-            await gameDataPeerConnection.setLocalDescription(offer);
-            multiplayerChannel.send({
-                type: 'broadcast',
-                event: 'game_data_offer',
-                payload: {
-                    playerId: playerId,
-                    sdp: gameDataPeerConnection.localDescription.toJSON()
-                }
-            });
-
-            this._gameDataOfferRetryTimer = this.time.delayedCall(MULTIPLAYER_CONFIG.DATA_CHANNEL_RETRY_MS, () => {
-                if (gameDataPeerConnection && !this.isGameDataChannelReady()) {
-                    this.createAndSendGameDataOffer();
-                }
-            });
         } catch (err) {
-            console.warn('Game data channel offer failed:', err);
-            this.gameDataConnecting = false;
-        }
-    }
-
-    async handleGameDataOffer(data) {
-        if (isHost || !data || !data.sdp) return;
-        if (!gameDataPeerConnection) {
-            this.bufferedGameDataOffer = data;
-            this.setupGameDataChannel();
-            return;
-        }
-
-        try {
-            await gameDataPeerConnection.setRemoteDescription(new RTCSessionDescription(data.sdp));
-            const answer = await gameDataPeerConnection.createAnswer();
-            await gameDataPeerConnection.setLocalDescription(answer);
-            multiplayerChannel.send({
-                type: 'broadcast',
-                event: 'game_data_answer',
-                payload: {
-                    playerId: playerId,
-                    sdp: gameDataPeerConnection.localDescription.toJSON()
-                }
-            });
-            await this.processBufferedGameDataIce();
-        } catch (err) {
-            console.warn('Game data channel answer failed:', err);
-            this.gameDataConnecting = false;
-        }
-    }
-
-    async handleGameDataAnswer(data) {
-        if (!isHost || !gameDataPeerConnection || !data || !data.sdp) return;
-
-        try {
-            await gameDataPeerConnection.setRemoteDescription(new RTCSessionDescription(data.sdp));
-            if (this._gameDataOfferRetryTimer) {
-                this._gameDataOfferRetryTimer.destroy();
-                this._gameDataOfferRetryTimer = null;
-            }
-            await this.processBufferedGameDataIce();
-        } catch (err) {
-            console.warn('Game data channel remote answer failed:', err);
-        }
-    }
-
-    async handleGameDataIce(data) {
-        if (!data || !data.candidate) return;
-        if (!gameDataPeerConnection) {
-            this.bufferedGameDataIceCandidates.push(data);
-            this.setupGameDataChannel();
-            return;
-        }
-        if (!gameDataPeerConnection.remoteDescription) {
-            this.bufferedGameDataIceCandidates.push(data);
-            return;
-        }
-
-        try {
-            await gameDataPeerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
-        } catch (err) {
-            console.warn('Game data channel ICE candidate failed:', err);
-        }
-    }
-
-    async processBufferedGameDataIce() {
-        if (!gameDataPeerConnection || !gameDataPeerConnection.remoteDescription) return;
-        const candidates = this.bufferedGameDataIceCandidates.splice(0);
-        for (const ice of candidates) {
-            await this.handleGameDataIce(ice);
+            console.warn('Multiplayer send error:', err);
+            return false;
         }
     }
 
     broadcastPlayerState(force = false) {
-        if ((!multiplayerChannel && !this.isGameDataChannelReady()) || this.gameOver) return;
+        if (!this.isGameDataChannelReady() || this.gameOver) return;
         
         const width = this.scale.width;
         const height = this.scale.height;
@@ -2387,7 +2098,7 @@ class GameScene extends Phaser.Scene {
     }
 
     broadcastGameState() {
-        if ((!multiplayerChannel && !this.isGameDataChannelReady()) || !isHost || this.gameOver) return;
+        if (!this.isGameDataChannelReady() || !isHost || this.gameOver) return;
         
         const width = this.scale.width;
         const height = this.scale.height;
@@ -2710,15 +2421,11 @@ class GameScene extends Phaser.Scene {
     }
 
     requestPlayerHit() {
-        if (!multiplayerChannel || !this.isMultiplayer || isHost || this.gameOver) return;
+        if (!this.isMultiplayer || isHost || this.gameOver) return;
         const now = Date.now();
         if (now - this.lastHitIntentAt < 1000) return;
         this.lastHitIntentAt = now;
-        multiplayerChannel.send({
-            type: 'broadcast',
-            event: 'player_hit_intent',
-            payload: { playerId: playerId, timestamp: now }
-        });
+        this.sendMultiplayerMessage('player_hit_intent', { playerId: playerId, timestamp: now });
     }
 
     handlePlayerHitIntent(data) {
@@ -2742,11 +2449,7 @@ class GameScene extends Phaser.Scene {
             this.showGameOver();
         }
 
-        multiplayerChannel.send({
-            type: 'broadcast',
-            event: 'player_hit',
-            payload: { playerId: data.playerId, lives: this.lives }
-        });
+        this.sendMultiplayerMessage('player_hit', { playerId: data.playerId, lives: this.lives });
     }
 
     handlePlayerHitOutcome(data) {
@@ -2764,23 +2467,17 @@ class GameScene extends Phaser.Scene {
         }
         this.updateHUD();
 
-        // Reset streak on player hit
         this.streak = 0;
 
         if (this.cache.audio.exists('sfx_crash')) {
             this.sound.play('sfx_crash', { volume: 0.7 });
         } else if (this.cache.audio.exists('sfx_hit')) {
-            // Fallback if sfx_crash missing
             this.sound.play('sfx_hit', { volume: 0.7 });
         }
 
-        // Screen shake for impact - dramatic shake on collision
         this.cameras.main.shake(400, 0.03);
-        
-        // Add camera flash for extra punch
         this.cameras.main.flash(100, 255, 80, 80, false);
 
-        // Haptic feedback for mobile (strong vibration pattern)
         if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
 
         this.player.carried.forEach(n => n.destroy()); this.player.carried = [];
@@ -2796,7 +2493,7 @@ class GameScene extends Phaser.Scene {
         if (this.gameOver || this.partnerDisconnected) return;
         
         const timeSinceUpdate = Date.now() - lastRemoteUpdate;
-        if (timeSinceUpdate > 10000) { // 10 seconds timeout
+        if (timeSinceUpdate > 10000) {
             this.handlePartnerDisconnect();
         }
     }
@@ -2805,11 +2502,10 @@ class GameScene extends Phaser.Scene {
         if (this.partnerDisconnected) return;
         this.partnerDisconnected = true;
         
-        // Show disconnect message and end game
         const { width, height } = this.scale;
         
-        const overlay = this.add.rectangle(0, 0, width, height, 0x000000, 0.8).setOrigin(0).setDepth(400);
-        const disconnectText = this.add.text(width / 2, height / 2 - 30, 'Partner Disconnected', {
+        this.add.rectangle(0, 0, width, height, 0x000000, 0.8).setOrigin(0).setDepth(400);
+        this.add.text(width / 2, height / 2 - 30, 'Partner Disconnected', {
             fontFamily: 'Fredoka, sans-serif',
             fontSize: '28px',
             color: '#ff6666',
@@ -2817,7 +2513,7 @@ class GameScene extends Phaser.Scene {
             strokeThickness: 4
         }).setOrigin(0.5).setDepth(401);
         
-        const subText = this.add.text(width / 2, height / 2 + 10, 'Game ending...', {
+        this.add.text(width / 2, height / 2 + 10, 'Game ending...', {
             fontFamily: 'Outfit, sans-serif',
             fontSize: '16px',
             color: '#ffffff'
@@ -2825,59 +2521,40 @@ class GameScene extends Phaser.Scene {
         
         this.time.delayedCall(2000, () => {
             this.gameOver = true;
-            this.score = this.teamScore; // Use team score for leaderboard
+            this.score = this.teamScore;
             this.showGameOver();
         });
     }
 
     broadcastDisconnect() {
-        if (multiplayerChannel) {
-            multiplayerChannel.send({
-                type: 'broadcast',
-                event: 'player_disconnect',
-                payload: { playerId: playerId }
-            });
-        }
+        this.sendMultiplayerMessage('player_disconnect', { playerId: playerId });
     }
 
     broadcastGameOver() {
-        if (multiplayerChannel) {
-            multiplayerChannel.send({
-                type: 'broadcast',
-                event: 'game_over',
-                payload: { 
-                    playerId: playerId,
-                    teamScore: this.teamScore,
-                    saved: this.saved,
-                    lost: this.lost,
-                    maxStreak: this.maxStreak
-                }
-            });
-        }
+        this.sendMultiplayerMessage('game_over', { 
+            playerId: playerId,
+            teamScore: this.teamScore,
+            saved: this.saved,
+            lost: this.lost,
+            maxStreak: this.maxStreak
+        });
     }
 
     handleRemoteGameOver(data) {
         if (this.gameOver) return;
         
-        // Sync final stats from the host/partner
         if (data.teamScore !== undefined) this.teamScore = data.teamScore;
         if (data.saved !== undefined) this.saved = data.saved;
         if (data.lost !== undefined) this.lost = data.lost;
         if (data.maxStreak !== undefined) this.maxStreak = data.maxStreak;
         
         this.gameOver = true;
-        this.score = this.teamScore; // Use team score for leaderboard
+        this.score = this.teamScore;
         this.showGameOver();
     }
 
     broadcastPlayerName(name) {
-        if (multiplayerChannel) {
-            multiplayerChannel.send({
-                type: 'broadcast',
-                event: 'player_name',
-                payload: { playerId: playerId, name: name }
-            });
-        }
+        this.sendMultiplayerMessage('player_name', { playerId: playerId, name: name });
     }
 
     handlePartnerName(data) {
@@ -2885,30 +2562,12 @@ class GameScene extends Phaser.Scene {
             this.partnerName = data.name;
         }
     }
-
-    broadcastScoreSubmitted(combinedName, success) {
-        if (multiplayerChannel) {
-            multiplayerChannel.send({
-                type: 'broadcast',
-                event: 'score_submitted',
-                payload: { combinedName: combinedName, success: success }
-            });
-        }
-    }
-
-    // ===== VOICE CHAT METHODS =====
-
     async setupVoiceChat() {
-        if (!this.isMultiplayer) return;
-        if (this.voiceChatStarting) return;
-        if (peerConnection) {
-            this.voiceChatAvailable = true;
-            this.updateMicButton();
-            return;
-        }
+        if (!this.isMultiplayer || this.voiceChatStarting) return;
+        if (!trysteroRoom) return;
 
         this.voiceChatStarting = true;
-        this.voiceChatAvailable = Boolean(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.RTCPeerConnection);
+        this.voiceChatAvailable = Boolean(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
         this.updateMicButton();
 
         if (!this.voiceChatAvailable) {
@@ -2917,205 +2576,48 @@ class GameScene extends Phaser.Scene {
             return;
         }
 
-        this._bufferedOffer = null;
-        this._bufferedIceCandidates = [];
-        this.voiceChatReady = false;
-
-        const rtcConfig = {
-            iceServers: [
-                { urls: 'stun:stun.l.google.com:19302' },
-                { urls: 'stun:stun1.l.google.com:19302' }
-            ]
-        };
-
         try {
-            peerConnection = new RTCPeerConnection(rtcConfig);
-        } catch (err) {
-            console.warn('Voice chat: WebRTC not supported -', err.message);
-            this.voiceChatAvailable = false;
-            this.voiceChatStarting = false;
-            this.updateMicButton();
-            return;
-        }
-
-        peerConnection.ontrack = (event) => {
-            console.log('Voice chat: remote audio track received');
-            remoteAudioEl = document.createElement('audio');
-            remoteAudioEl.srcObject = event.streams[0];
-            remoteAudioEl.autoplay = true;
-            remoteAudioEl.style.display = 'none';
-            document.body.appendChild(remoteAudioEl);
-            voiceChatActive = true;
-            this.updateMicButton();
-        };
-
-        peerConnection.onicecandidate = (event) => {
-            if (event.candidate && multiplayerChannel) {
-                multiplayerChannel.send({
-                    type: 'broadcast',
-                    event: 'webrtc_ice',
-                    payload: { playerId: playerId, candidate: event.candidate.toJSON() }
+            if (!localStream) {
+                localStream = await navigator.mediaDevices.getUserMedia({
+                    audio: {
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        autoGainControl: true
+                    },
+                    video: false
                 });
             }
-        };
 
-        peerConnection.oniceconnectionstatechange = () => {
-            if (!peerConnection) return;
-            const state = peerConnection.iceConnectionState;
-            console.log('Voice chat ICE state:', state);
-            if (state === 'connected' || state === 'completed') {
+            trysteroRoom.onPeerStream((stream, peerId) => {
+                if (!remoteAudioEl) {
+                    remoteAudioEl = document.createElement('audio');
+                    remoteAudioEl.autoplay = true;
+                    remoteAudioEl.playsInline = true;
+                    remoteAudioEl.style.display = 'none';
+                    document.body.appendChild(remoteAudioEl);
+                }
+                remoteAudioEl.srcObject = stream;
                 voiceChatActive = true;
-            } else if (state === 'failed' || state === 'disconnected' || state === 'closed') {
-                voiceChatActive = false;
-            }
-            this.updateMicButton();
-        };
-
-        // Request microphone
-        try {
-            localStream = await navigator.mediaDevices.getUserMedia({
-                audio: true, video: false
+                this.updateMicButton();
             });
+
+            trysteroRoom.addStream(localStream);
+            voiceChatActive = true;
+            this.voiceChatReady = true;
+            this.voiceChatAvailable = true;
+            this.voiceChatStarting = false;
+            this.updateMicButton();
         } catch (err) {
-            console.warn('Voice chat: mic unavailable -', err.message);
+            console.warn('Voice chat mic unavailable:', err.message);
             this.voiceChatAvailable = false;
             this.voiceChatStarting = false;
-            peerConnection.close();
-            peerConnection = null;
             this.updateMicButton();
-            return;
-        }
-
-        // Add local audio tracks
-        localStream.getTracks().forEach(track => {
-            peerConnection.addTrack(track, localStream);
-        });
-
-        this.voiceChatReady = true;
-        this.voiceChatAvailable = true;
-        this.voiceChatStarting = false;
-
-        // Host creates offer after a short delay to ensure guest has subscribed
-        if (isHost) {
-            this.time.delayedCall(1500, () => this.createAndSendOffer());
-        }
-
-        // Process any buffered signaling messages
-        if (this._bufferedOffer) {
-            await this.handleWebRTCOffer(this._bufferedOffer);
-            this._bufferedOffer = null;
-        }
-        for (const ice of this._bufferedIceCandidates) {
-            await this.handleWebRTCIce(ice);
-        }
-        this._bufferedIceCandidates = [];
-
-        this.updateMicButton();
-    }
-
-    async createAndSendOffer() {
-        if (!peerConnection || !multiplayerChannel) return;
-        try {
-            const offer = await peerConnection.createOffer();
-            await peerConnection.setLocalDescription(offer);
-            multiplayerChannel.send({
-                type: 'broadcast',
-                event: 'webrtc_offer',
-                payload: {
-                    playerId: playerId,
-                    sdp: peerConnection.localDescription.toJSON()
-                }
-            });
-            // Retry once if no answer received within 5 seconds
-            this._offerRetryTimer = this.time.delayedCall(5000, () => {
-                if (peerConnection &&
-                    peerConnection.signalingState === 'have-local-offer') {
-                    console.log('Voice chat: retrying offer');
-                    multiplayerChannel.send({
-                        type: 'broadcast',
-                        event: 'webrtc_offer',
-                        payload: {
-                            playerId: playerId,
-                            sdp: peerConnection.localDescription.toJSON()
-                        }
-                    });
-                }
-            });
-        } catch (err) {
-            console.error('Voice chat: offer failed -', err);
-        }
-    }
-
-    async handleWebRTCOffer(data) {
-        if (!peerConnection || !this.voiceChatReady) {
-            this._bufferedOffer = data;
-            return;
-        }
-        if (isHost) return; // Only guest handles offers
-
-        try {
-            await peerConnection.setRemoteDescription(
-                new RTCSessionDescription(data.sdp)
-            );
-            const answer = await peerConnection.createAnswer();
-            await peerConnection.setLocalDescription(answer);
-            multiplayerChannel.send({
-                type: 'broadcast',
-                event: 'webrtc_answer',
-                payload: {
-                    playerId: playerId,
-                    sdp: peerConnection.localDescription.toJSON()
-                }
-            });
-
-            // Process any ICE candidates that arrived before remote description was set
-            for (const ice of this._bufferedIceCandidates) {
-                await peerConnection.addIceCandidate(new RTCIceCandidate(ice.candidate));
-            }
-            this._bufferedIceCandidates = [];
-        } catch (err) {
-            console.error('Voice chat: answer failed -', err);
-        }
-    }
-
-    async handleWebRTCAnswer(data) {
-        if (!peerConnection || !isHost) return;
-        try {
-            await peerConnection.setRemoteDescription(
-                new RTCSessionDescription(data.sdp)
-            );
-            // Cancel retry timer
-            if (this._offerRetryTimer) {
-                this._offerRetryTimer.destroy();
-                this._offerRetryTimer = null;
-            }
-        } catch (err) {
-            console.error('Voice chat: set answer failed -', err);
-        }
-    }
-
-    async handleWebRTCIce(data) {
-        if (!peerConnection) {
-            if (!this._bufferedIceCandidates) this._bufferedIceCandidates = [];
-            this._bufferedIceCandidates.push(data);
-            return;
-        }
-        // ICE candidates can only be added after remote description is set
-        if (!peerConnection.remoteDescription) {
-            if (!this._bufferedIceCandidates) this._bufferedIceCandidates = [];
-            this._bufferedIceCandidates.push(data);
-            return;
-        }
-        try {
-            await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
-        } catch (err) {
-            console.error('Voice chat: ICE candidate failed -', err);
         }
     }
 
     toggleMute() {
         if (!this.isMultiplayer || this.voiceChatStarting) return;
-        if (!peerConnection || !localStream) {
+        if (!this.voiceChatReady || !localStream) {
             this.setupVoiceChat();
             return;
         }
@@ -3143,25 +2645,22 @@ class GameScene extends Phaser.Scene {
             this.micBtnGraphics.strokeCircle(x, y, btnRadius);
             Icons.drawMic(this.micBtnGraphics, x, y, size, 0x00ccff);
         } else if (!this.voiceChatAvailable) {
-            // Unavailable: dark gray circle, gray mic-off icon
             this.micBtnGraphics.fillStyle(0x333333, 0.7);
             this.micBtnGraphics.fillCircle(x, y, btnRadius);
             Icons.drawMicOff(this.micBtnGraphics, x, y, size, 0x666666);
-        } else if (!localStream || !peerConnection) {
+        } else if (!localStream || !trysteroRoom) {
             this.micBtnGraphics.fillStyle(0x223344, 0.8);
             this.micBtnGraphics.fillCircle(x, y, btnRadius);
             this.micBtnGraphics.lineStyle(2, 0x00ccff, 0.8);
             this.micBtnGraphics.strokeCircle(x, y, btnRadius);
             Icons.drawMic(this.micBtnGraphics, x, y, size, 0x00ccff);
         } else if (isMuted) {
-            // Muted: dark red circle, red border, red mic-off icon
             this.micBtnGraphics.fillStyle(0x442222, 0.8);
             this.micBtnGraphics.fillCircle(x, y, btnRadius);
             this.micBtnGraphics.lineStyle(2, 0xff4444, 0.8);
             this.micBtnGraphics.strokeCircle(x, y, btnRadius);
             Icons.drawMicOff(this.micBtnGraphics, x, y, size, 0xff4444);
         } else {
-            // Active: dark green circle, green border, green mic icon
             this.micBtnGraphics.fillStyle(0x224422, 0.8);
             this.micBtnGraphics.fillCircle(x, y, btnRadius);
             this.micBtnGraphics.lineStyle(2, 0x00ff88, 0.8);
@@ -4097,15 +3596,10 @@ class GameScene extends Phaser.Scene {
                     this.createPickupEffect(newt.x, newt.y);
                     this.updateHUD();
                     
-                    // Broadcast pickup in multiplayer
-                    if (this.isMultiplayer && multiplayerChannel) {
-                        multiplayerChannel.send({
-                            type: 'broadcast',
-                            event: 'newt_pickup',
-                            payload: {
-                                playerId: playerId,
-                                newtId: newt.newtId
-                            }
+                    if (this.isMultiplayer) {
+                        this.sendMultiplayerMessage('newt_pickup', {
+                            playerId: playerId,
+                            newtId: newt.newtId
                         });
                     }
                 }
@@ -4122,14 +3616,10 @@ class GameScene extends Phaser.Scene {
                         if (this.streak > this.maxStreak) this.maxStreak = this.streak;
                         
                         if (this.isMultiplayer) {
-                            // In multiplayer, only the host tracks authoritative score.
-                            // Guest increments are visual only and will be overwritten by host state.
                             if (isHost) {
                                 this.teamScore += 100;
                                 this.saved++;
                             }
-                            // Guest: don't increment teamScore/saved locally — host state overwrites it.
-                            // This prevents the flicker/rollback when host broadcasts game_state.
                         } else {
                             this.score += 100;
                             this.saved++;
@@ -4137,25 +3627,19 @@ class GameScene extends Phaser.Scene {
                         
                         if (this.cache.audio.exists('sfx_saved')) this.sound.play('sfx_saved', { volume: 0.6 });
                         
-                        // Haptic feedback for save (gentle pulse)
                         if (navigator.vibrate) navigator.vibrate(30);
                         
                         this.createSuccessEffect(newt.x, newt.y);
                         this.checkAchievements();
                         this.updateDifficulty();
                         
-                        // Broadcast save in multiplayer
-                        if (this.isMultiplayer && multiplayerChannel) {
-                            multiplayerChannel.send({
-                                type: 'broadcast',
-                                event: 'newt_save',
-                                payload: {
-                                    playerId: playerId,
-                                    newtId: newt.newtId,
-                                    correct: true,
-                                    x: newt.x,
-                                    y: newt.y
-                                }
+                        if (this.isMultiplayer) {
+                            this.sendMultiplayerMessage('newt_save', {
+                                playerId: playerId,
+                                newtId: newt.newtId,
+                                correct: true,
+                                x: newt.x,
+                                y: newt.y
                             });
                         }
                     }
@@ -4491,9 +3975,6 @@ class GameScene extends Phaser.Scene {
             if (this.broadcastTimer) this.broadcastTimer.destroy();
             if (this.gameStateBroadcastTimer) this.gameStateBroadcastTimer.destroy();
             if (this.disconnectCheckTimer) this.disconnectCheckTimer.destroy();
-            if (this._offerRetryTimer) { this._offerRetryTimer.destroy(); this._offerRetryTimer = null; }
-            if (this._gameDataOfferRetryTimer) { this._gameDataOfferRetryTimer.destroy(); this._gameDataOfferRetryTimer = null; }
-            await updateRoomStatus('finished');
         }
 
         if (this.cache.audio.exists('bgm_end')) {
