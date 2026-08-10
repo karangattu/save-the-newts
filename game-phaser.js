@@ -100,40 +100,118 @@ async function getTrystero() {
     }
 }
 
+function setRoomListener(room, eventName, handler) {
+    if (!room) return;
+    if (typeof room[eventName] === 'function') {
+        try {
+            room[eventName](handler);
+        } catch (e) {
+            room[eventName] = handler;
+        }
+    } else {
+        room[eventName] = handler;
+    }
+}
+
+function createActionHandler(room, name) {
+    if (!room || typeof room.makeAction !== 'function') {
+        return {
+            send: () => {},
+            on: () => {}
+        };
+    }
+    try {
+        const act = room.makeAction(name);
+        if (Array.isArray(act)) {
+            const [sendFn, onFn] = act;
+            return {
+                send: (payload, target) => {
+                    try {
+                        if (typeof sendFn === 'function') sendFn(payload, target);
+                    } catch (e) {
+                        console.warn(`Action send failed for ${name}:`, e);
+                    }
+                },
+                on: (callback) => {
+                    if (typeof onFn === 'function') {
+                        onFn((payload, peer) => {
+                            const peerId = typeof peer === 'string' ? peer : (peer && peer.peerId ? peer.peerId : peer);
+                            callback(payload, peerId);
+                        });
+                    }
+                }
+            };
+        }
+        if (act && typeof act === 'object') {
+            const sendFn = typeof act.send === 'function' ? act.send.bind(act) : () => {};
+            return {
+                send: (payload, target) => {
+                    try {
+                        if (target) {
+                            sendFn(payload, { target });
+                        } else {
+                            sendFn(payload);
+                        }
+                    } catch (e) {
+                        console.warn(`Action send failed for ${name}:`, e);
+                    }
+                },
+                on: (callback) => {
+                    const handler = (payload, peer) => {
+                        const peerId = typeof peer === 'string' ? peer : (peer && peer.peerId ? peer.peerId : peer);
+                        callback(payload, peerId);
+                    };
+                    if (typeof act.on === 'function') {
+                        act.on(handler);
+                    } else {
+                        act.onMessage = handler;
+                    }
+                }
+            };
+        }
+    } catch (err) {
+        console.error(`Failed to create action for ${name}:`, err);
+    }
+    return {
+        send: () => {},
+        on: () => {}
+    };
+}
+
 function initTrysteroActions(room) {
     if (!room) return null;
-    const [sendPlayerUpdate, onPlayerUpdate] = room.makeAction('player_update');
-    const [sendGameState, onGameState] = room.makeAction('game_state');
-    const [sendNewtPickup, onNewtPickup] = room.makeAction('newt_pickup');
-    const [sendNewtSave, onNewtSave] = room.makeAction('newt_save');
-    const [sendPlayerDisconnect, onPlayerDisconnect] = room.makeAction('player_disconnect');
-    const [sendGameOver, onGameOver] = room.makeAction('game_over');
-    const [sendPlayerName, onPlayerName] = room.makeAction('player_name');
-    const [sendPlayerHitIntent, onPlayerHitIntent] = room.makeAction('player_hit_intent');
-    const [sendPlayerHit, onPlayerHit] = room.makeAction('player_hit');
-    const [sendLobbyHandshake, onLobbyHandshake] = room.makeAction('lobby_handshake');
+    const playerUpdateAct = createActionHandler(room, 'player_update');
+    const gameStateAct = createActionHandler(room, 'game_state');
+    const newtPickupAct = createActionHandler(room, 'newt_pickup');
+    const newtSaveAct = createActionHandler(room, 'newt_save');
+    const playerDisconnectAct = createActionHandler(room, 'player_disconnect');
+    const gameOverAct = createActionHandler(room, 'game_over');
+    const playerNameAct = createActionHandler(room, 'player_name');
+    const playerHitIntentAct = createActionHandler(room, 'player_hit_intent');
+    const playerHitAct = createActionHandler(room, 'player_hit');
+    const lobbyHandshakeAct = createActionHandler(room, 'lobby_handshake');
 
     trysteroActions = {
-        sendPlayerUpdate,
-        onPlayerUpdate,
-        sendGameState,
-        onGameState,
-        sendNewtPickup,
-        onNewtPickup,
-        sendNewtSave,
-        onNewtSave,
-        sendPlayerDisconnect,
-        onPlayerDisconnect,
-        sendGameOver,
-        onGameOver,
-        sendPlayerName,
-        onPlayerName,
-        sendPlayerHitIntent,
-        onPlayerHitIntent,
-        sendPlayerHit,
-        onPlayerHit,
-        sendLobbyHandshake,
-        onLobbyHandshake
+        sendPlayerUpdate: (payload, target) => playerUpdateAct.send(payload, target),
+        onPlayerUpdate: (cb) => playerUpdateAct.on(cb),
+        sendGameState: (payload, target) => gameStateAct.send(payload, target),
+        onGameState: (cb) => gameStateAct.on(cb),
+        sendNewtPickup: (payload, target) => newtPickupAct.send(payload, target),
+        onNewtPickup: (cb) => newtPickupAct.on(cb),
+        sendNewtSave: (payload, target) => newtSaveAct.send(payload, target),
+        onNewtSave: (cb) => newtSaveAct.on(cb),
+        sendPlayerDisconnect: (payload, target) => playerDisconnectAct.send(payload, target),
+        onPlayerDisconnect: (cb) => playerDisconnectAct.on(cb),
+        sendGameOver: (payload, target) => gameOverAct.send(payload, target),
+        onGameOver: (cb) => gameOverAct.on(cb),
+        sendPlayerName: (payload, target) => playerNameAct.send(payload, target),
+        onPlayerName: (cb) => playerNameAct.on(cb),
+        sendPlayerHitIntent: (payload, target) => playerHitIntentAct.send(payload, target),
+        onPlayerHitIntent: (cb) => playerHitIntentAct.on(cb),
+        sendPlayerHit: (payload, target) => playerHitAct.send(payload, target),
+        onPlayerHit: (cb) => playerHitAct.on(cb),
+        sendLobbyHandshake: (payload, target) => lobbyHandshakeAct.send(payload, target),
+        onLobbyHandshake: (cb) => lobbyHandshakeAct.on(cb)
     };
     return trysteroActions;
 }
@@ -1337,7 +1415,7 @@ class LobbyScene extends Phaser.Scene {
         });
 
         if (trysteroRoom && trysteroActions) {
-            trysteroRoom.onPeerJoin(() => {
+            setRoomListener(trysteroRoom, 'onPeerJoin', () => {
                 trysteroActions.sendLobbyHandshake({
                     type: 'host_ready',
                     hostId: playerId,
@@ -1478,7 +1556,7 @@ class LobbyScene extends Phaser.Scene {
             }
         };
 
-        trysteroRoom.onPeerJoin(() => {
+        setRoomListener(trysteroRoom, 'onPeerJoin', () => {
             sendGuestHandshake();
         });
 
@@ -1928,7 +2006,7 @@ class GameScene extends Phaser.Scene {
         }
 
         if (trysteroRoom) {
-            trysteroRoom.onPeerLeave((peerId) => {
+            setRoomListener(trysteroRoom, 'onPeerLeave', (peerId) => {
                 this.handleMultiplayerMessage('player_disconnect', { playerId: peerId });
             });
         }
@@ -2588,7 +2666,7 @@ class GameScene extends Phaser.Scene {
                 });
             }
 
-            trysteroRoom.onPeerStream((stream, peerId) => {
+            setRoomListener(trysteroRoom, 'onPeerStream', (stream, peerId) => {
                 if (!remoteAudioEl) {
                     remoteAudioEl = document.createElement('audio');
                     remoteAudioEl.autoplay = true;

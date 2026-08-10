@@ -46,7 +46,7 @@ test('voice chat uses Trystero media streams and activates only on user interact
     assertSourceDoesNotMatch(gameSource, /Start voice chat\s*\n\s*this\.setupVoiceChat\(\)/, 'voice chat should not auto-start');
     assertSourceMatches(gameSource, /toggleMute\(\)[\s\S]*this\.setupVoiceChat\(\)/, 'mic button should opt into voice setup');
     assertSourceMatches(gameSource, /trysteroRoom\.addStream\(localStream\)/, 'local microphone stream should be added to Trystero room');
-    assertSourceMatches(gameSource, /trysteroRoom\.onPeerStream\(/, 'remote audio stream should be handled via onPeerStream');
+    assertSourceMatches(gameSource, /'onPeerStream'/, 'remote audio stream should be handled via onPeerStream');
     assertSourceMatches(gameSource, /cleanupVoiceChat\(\)/, 'voice chat cleanup function should exist');
 });
 
