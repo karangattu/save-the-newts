@@ -51,7 +51,9 @@ test('voice chat uses Trystero media streams and activates only on user interact
 });
 
 test('multiplayer lobby and room lifecycle are serverless P2P', () => {
-    assertSourceMatches(htmlSource, /trystero\/nostr/, 'index.html should include Trystero nostr module');
+    assertSourceMatches(htmlSource, /trystero@0\.25\.3\/nostr/, 'index.html should pin the Trystero nostr module');
+    assertSourceMatches(gameSource, /trystero@0\.25\.3\/nostr/, 'the dynamic nostr import should use the pinned version');
+    assertSourceMatches(gameSource, /trystero@0\.25\.3\/torrent/, 'the fallback torrent import should use the pinned version');
     assertSourceMatches(gameSource, /createRoom\(hostCharacter\)/, 'createRoom should create a P2P room with code');
     assertSourceMatches(gameSource, /joinRoom\(code, guestCharacter\)/, 'joinRoom should connect to existing P2P room code');
     assertSourceMatches(gameSource, /cleanupMultiplayerState\(\)/, 'cleanupMultiplayerState should teardown room and state');

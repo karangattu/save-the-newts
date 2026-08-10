@@ -61,10 +61,17 @@ let roomId = null;
 let playerId = null;
 let remotePlayerId = null;
 let remoteCharacter = null;
+let remotePlayerName = '';
 let lastRemoteUpdate = 0;
 
 let trysteroRoom = null;
 let trysteroActions = null;
+
+// Host world-snapshot sequence counters live outside the scene so a scene
+// restart (e.g. window resize) can't reset them and desync the guest's
+// out-of-order guard.
+let gameStateSeq = 0;
+let lastReceivedSeq = -1;
 
 // ===== VOICE CHAT STATE =====
 let localStream = null;
@@ -77,7 +84,75 @@ function generatePlayerId() {
 }
 
 function generateRoomCode() {
-    return Math.floor(1000 + Math.random() * 9000).toString();
+    const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    let code = '';
+    for (let i = 0; i < 6; i++) {
+        code += alphabet[Math.floor(Math.random() * alphabet.length)];
+    }
+    return code;
+}
+
+function applyRemoteLobbyIdentity(payload, peerId, role) {
+    const isHostIdentity = role === 'host';
+    remotePlayerId = payload[isHostIdentity ? 'hostId' : 'guestId'] || peerId;
+    remoteCharacter = payload[isHostIdentity ? 'hostCharacter' : 'guestCharacter'] ||
+        (isHostIdentity ? 'male' : 'female');
+    remotePlayerName = payload[isHostIdentity ? 'hostName' : 'guestName'] || '';
+}
+
+function createGameRestartState(scene, width = scene.scale.width, height = scene.scale.height) {
+    return {
+        score: scene.score,
+        teamScore: scene.teamScore,
+        saved: scene.saved,
+        lost: scene.lost,
+        lives: scene.lives,
+        difficulty: scene.difficulty,
+        streak: scene.streak,
+        maxStreak: scene.maxStreak,
+        achievements: { ...scene.achievements },
+        elapsedMs: Math.max(0, scene.time.now - scene.runStartTime),
+        player: {
+            xRatio: scene.player.x / width,
+            yRatio: scene.player.y / height,
+            scaleX: scene.player.scaleX
+        },
+        newts: scene.newts.getChildren().map(newt => ({
+            id: newt.newtId,
+            xRatio: newt.x / width,
+            yRatio: newt.y / height,
+            dest: newt.dest,
+            dir: newt.dir,
+            isCarried: newt.isCarried,
+            carriedBy: newt.carriedBy || null
+        })),
+        cars: scene.cars.getChildren().map(car => ({
+            id: car.carId,
+            xRatio: car.x / width,
+            yRatio: car.y / height,
+            speedRatio: car.speed / width,
+            type: car.type,
+            color: car.carColor,
+            dir: car.dir,
+            lane: car.lane,
+            w: car.w,
+            h: car.h
+        }))
+    };
+}
+
+function applyGameRestartState(scene, state) {
+    if (!state) return;
+    scene.score = state.score;
+    scene.teamScore = state.teamScore;
+    scene.saved = state.saved;
+    scene.lost = state.lost;
+    scene.lives = state.lives;
+    scene.difficulty = state.difficulty;
+    scene.streak = state.streak;
+    scene.maxStreak = state.maxStreak;
+    scene.achievements = { ...state.achievements };
+    scene.runStartTime = scene.time.now - state.elapsedMs;
 }
 
 async function getTrystero() {
@@ -85,12 +160,12 @@ async function getTrystero() {
         return window.Trystero;
     }
     try {
-        const mod = await import('https://esm.sh/trystero/nostr');
+        const mod = await import('https://esm.sh/trystero@0.25.3/nostr');
         window.Trystero = mod;
         return mod;
     } catch (e) {
         try {
-            const modTorrent = await import('https://esm.sh/trystero/torrent');
+            const modTorrent = await import('https://esm.sh/trystero@0.25.3/torrent');
             window.Trystero = modTorrent;
             return modTorrent;
         } catch (err) {
@@ -102,15 +177,21 @@ async function getTrystero() {
 
 function setRoomListener(room, eventName, handler) {
     if (!room) return;
+    // Trystero >=0.22 exposes these as accessor properties (assignment replaces the
+    // handler). Never *call* an accessor that currently holds a function — that would
+    // invoke the previous handler with the new one as its argument.
+    const desc = Object.getOwnPropertyDescriptor(room, eventName);
+    if (desc && (desc.get || desc.set)) {
+        room[eventName] = handler;
+        return;
+    }
     if (typeof room[eventName] === 'function') {
         try {
             room[eventName](handler);
-        } catch (e) {
-            room[eventName] = handler;
-        }
-    } else {
-        room[eventName] = handler;
+            return;
+        } catch (e) {}
     }
+    room[eventName] = handler;
 }
 
 function createActionHandler(room, name) {
@@ -311,7 +392,10 @@ function cleanupMultiplayerState() {
     playerId = null;
     remotePlayerId = null;
     remoteCharacter = null;
+    remotePlayerName = '';
     lastRemoteUpdate = 0;
+    gameStateSeq = 0;
+    lastReceivedSeq = -1;
 }
 
 
@@ -1256,7 +1340,8 @@ class LobbyScene extends Phaser.Scene {
             this.inputEl.parentNode.removeChild(this.inputEl);
             this.inputEl = null;
         }
-        if (isHost && this.lobbyState === 'waiting') {
+        if (this.lobbyState !== 'playing') {
+            this.lobbyState = 'closed';
             cleanupMultiplayerState();
         }
     }
@@ -1333,6 +1418,11 @@ class LobbyScene extends Phaser.Scene {
         this.menuContainer.add(creatingText);
 
         const room = await createRoom(selectedCharacter);
+
+        if (this.lobbyState !== 'creating' || !this.scene.isActive()) {
+            cleanupMultiplayerState();
+            return;
+        }
         
         if (!room) {
             creatingText.setText('Failed to create room.\nPlease try again.');
@@ -1426,8 +1516,7 @@ class LobbyScene extends Phaser.Scene {
 
             trysteroActions.onLobbyHandshake((payload, peerId) => {
                 if (payload && (payload.type === 'guest_join' || payload.type === 'guest_ready')) {
-                    remotePlayerId = payload.guestId || peerId;
-                    remoteCharacter = payload.guestCharacter || 'female';
+                    applyRemoteLobbyIdentity(payload, peerId, 'guest');
                     trysteroActions.sendLobbyHandshake({
                         type: 'host_welcome',
                         hostId: playerId,
@@ -1457,8 +1546,8 @@ class LobbyScene extends Phaser.Scene {
         const canvasRect = this.game.canvas.getBoundingClientRect();
         this.inputEl = document.createElement('input');
         this.inputEl.type = 'text';
-        this.inputEl.placeholder = '0000';
-        this.inputEl.maxLength = 4;
+        this.inputEl.placeholder = 'ABC234';
+        this.inputEl.maxLength = 6;
         this.inputEl.style.cssText = `
             position: fixed;
             left: ${canvasRect.left + width / 2}px;
@@ -1526,10 +1615,10 @@ class LobbyScene extends Phaser.Scene {
     }
 
     async attemptJoin() {
-        const code = this.inputEl.value.trim();
+        const code = this.inputEl.value.trim().toUpperCase();
         
-        if (code.length !== 4 || !/^\d{4}$/.test(code)) {
-            this.statusText.setText('Please enter a 4-digit code');
+        if (!/^[A-HJ-NP-Z2-9]{6}$/.test(code)) {
+            this.statusText.setText('Enter the 6-character code');
             this.statusText.setColor('#ff6666');
             return;
         }
@@ -1538,6 +1627,11 @@ class LobbyScene extends Phaser.Scene {
         this.statusText.setColor('#ffffff');
 
         const room = await joinRoom(code, selectedCharacter);
+
+        if (this.lobbyState !== 'joining' || !this.scene.isActive()) {
+            cleanupMultiplayerState();
+            return;
+        }
         
         if (!room || !trysteroRoom || !trysteroActions) {
             this.statusText.setText('Connection failed. Try again.');
@@ -1565,8 +1659,7 @@ class LobbyScene extends Phaser.Scene {
             if (joined) return;
             if (payload && (payload.type === 'host_welcome' || payload.type === 'host_ready')) {
                 joined = true;
-                remotePlayerId = payload.hostId || peerId;
-                remoteCharacter = payload.hostCharacter || 'male';
+                applyRemoteLobbyIdentity(payload, peerId, 'host');
                 if (payload.type === 'host_ready') {
                     sendGuestHandshake();
                 }
@@ -1580,6 +1673,8 @@ class LobbyScene extends Phaser.Scene {
     }
 
     startMultiplayerGame() {
+        // Mark as playing so the lobby's shutdown cleanup doesn't teardown the live room
+        this.lobbyState = 'playing';
         if (this.dotsTimer) this.dotsTimer.destroy();
         if (this.inputEl && this.inputEl.parentNode) {
             this.inputEl.parentNode.removeChild(this.inputEl);
@@ -1596,6 +1691,10 @@ class LobbyScene extends Phaser.Scene {
 // ===== GAME SCENE =====
 class GameScene extends Phaser.Scene {
     constructor() { super({ key: 'GameScene' }); }
+
+    init(data = {}) {
+        this.restartState = data.restartState || null;
+    }
 
     preload() {
         this.load.image('newt', 'assets/newt.png');
@@ -1628,11 +1727,9 @@ class GameScene extends Phaser.Scene {
         this.lastPlayerBroadcastAt = 0;
         this.disconnectTimer = null;
         this.partnerDisconnected = false;
-        this.partnerName = '';
+        this.partnerName = remotePlayerName;
         this.lastHitIntentAt = 0;
         this.lastHitByPlayer = new Map();
-        this.gameStateSeq = 0;
-        this.lastReceivedSeq = -1;
 
         // Achievement tracking
         this.streak = 0;
@@ -1649,6 +1746,8 @@ class GameScene extends Phaser.Scene {
             score1000: false,
             perfectStart: true // Will be set to false if newt is lost
         };
+        const restartState = this.restartState;
+        applyGameRestartState(this, restartState);
 
         this.calculateLayout();
 
@@ -1661,18 +1760,32 @@ class GameScene extends Phaser.Scene {
         // Create remote player for multiplayer
         if (this.isMultiplayer) {
             this.createRemotePlayer();
+        }
+
+        if (restartState) {
+            this.restoreRestartWorld(restartState);
+        }
+
+        if (this.isMultiplayer) {
             this.setupMultiplayerSync();
         }
+        this.restartState = null;
         
         this.createHUD();
         this.createControls();
 
-        this.scale.on('resize', () => {
+        const sceneWidth = this.scale.width;
+        const sceneHeight = this.scale.height;
+        const handleResize = () => {
             // Don't restart during game over to preserve the name input form
             if (!this.gameOver) {
-                this.scene.restart();
+                this.scene.restart({
+                    restartState: createGameRestartState(this, sceneWidth, sceneHeight)
+                });
             }
-        });
+        };
+        this.scale.on('resize', handleResize);
+        this.events.once('shutdown', () => this.scale.off('resize', handleResize));
 
         // Only host spawns cars and newts in multiplayer
         if (!this.isMultiplayer || isHost) {
@@ -1683,7 +1796,7 @@ class GameScene extends Phaser.Scene {
                 loop: true
             });
             this.time.addEvent({ delay: GAME_CONFIG.NEWT_SPAWN_RATE, callback: this.spawnNewt, callbackScope: this, loop: true });
-            this.spawnNewt();
+            if (!restartState) this.spawnNewt();
         }
 
         this.cameras.main.fadeIn(300);
@@ -1968,6 +2081,47 @@ class GameScene extends Phaser.Scene {
         this.remoteWalkTime = 0;
     }
 
+    restoreRestartWorld(state) {
+        const width = this.scale.width;
+        const height = this.scale.height;
+
+        if (state.player) {
+            this.player.x = state.player.xRatio * width;
+            this.player.y = state.player.yRatio * height;
+            this.player.scaleX = state.player.scaleX;
+        }
+
+        (state.newts || []).forEach(data => {
+            const newt = this.add.image(data.xRatio * width, data.yRatio * height, 'newt');
+            newt.setDisplaySize(GAME_CONFIG.NEWT_SIZE, GAME_CONFIG.NEWT_SIZE);
+            newt.setDepth(data.isCarried ? 55 : 25);
+            newt.dir = data.dir;
+            newt.dest = data.dest;
+            newt.isCarried = data.isCarried;
+            newt.carriedBy = data.carriedBy;
+            newt.newtId = data.id;
+            newt.rotation = newt.dir === 1 ? Math.PI / 2 : -Math.PI / 2;
+            this.newts.add(newt);
+
+            const carriedByLocal = data.isCarried &&
+                ((!this.isMultiplayer && data.carriedBy === 'local') || data.carriedBy === playerId);
+            if (carriedByLocal) {
+                this.player.carried.push(newt);
+            } else if (data.isCarried && this.remotePlayer) {
+                this.remotePlayer.carried.push(newt);
+            }
+        });
+
+        (state.cars || []).forEach(data => {
+            this.createCarFromData({
+                ...data,
+                x: data.xRatio * width,
+                y: data.yRatio * height,
+                speed: data.speedRatio * width
+            });
+        });
+    }
+
     setupMultiplayerSync() {
         if (!roomCode) return;
 
@@ -2204,9 +2358,9 @@ class GameScene extends Phaser.Scene {
             h: c.h
         }));
 
-        this.gameStateSeq++;
+        gameStateSeq++;
         const payload = {
-            seq: this.gameStateSeq,
+            seq: gameStateSeq,
             teamScore: this.teamScore,
             lives: this.lives,
             saved: this.saved,
@@ -2288,8 +2442,8 @@ class GameScene extends Phaser.Scene {
         if (isHost || this.gameOver) return;
         
         // Drop out-of-order messages
-        if (data.seq !== undefined && data.seq <= this.lastReceivedSeq) return;
-        if (data.seq !== undefined) this.lastReceivedSeq = data.seq;
+        if (data.seq !== undefined && data.seq <= lastReceivedSeq) return;
+        if (data.seq !== undefined) lastReceivedSeq = data.seq;
         
         // Host is the authoritative source for all game state on the guest
         this.teamScore = data.teamScore;
@@ -2478,14 +2632,19 @@ class GameScene extends Phaser.Scene {
         if (isHost && data.playerId === playerId) {
             return;
         }
-        if (data.newtId) {
-            const savedNewt = this.newts.getChildren().find(n => n.newtId === data.newtId);
-            if (savedNewt) {
-                if (this.remotePlayer && this.remotePlayer.carried) {
-                    this.remotePlayer.carried = this.remotePlayer.carried.filter(n => n !== savedNewt);
-                }
-                savedNewt.destroy();
+        const savedNewt = data.newtId
+            ? this.newts.getChildren().find(n => n.newtId === data.newtId)
+            : null;
+
+        if (isHost && !this.isValidRemoteNewtSave(data, savedNewt)) {
+            return;
+        }
+
+        if (savedNewt) {
+            if (this.remotePlayer && this.remotePlayer.carried) {
+                this.remotePlayer.carried = this.remotePlayer.carried.filter(n => n !== savedNewt);
             }
+            savedNewt.destroy();
         }
 
         // Update team score and stats
@@ -2496,6 +2655,18 @@ class GameScene extends Phaser.Scene {
             this.createSuccessEffect(data.x, data.y);
         }
         this.updateHUD();
+    }
+
+    isValidRemoteNewtSave(data, newt) {
+        if (!data || data.playerId !== remotePlayerId || !data.correct) return false;
+        if (!newt || newt.active === false || !newt.isCarried || newt.carriedBy !== data.playerId) return false;
+        if (!this.remotePlayer) return false;
+
+        const remoteY = this.remotePlayer.netTargetY ?? this.remotePlayer.y;
+        if (!Number.isFinite(remoteY)) return false;
+
+        return (newt.dest === 'FOREST' && remoteY < this.topSafe) ||
+            (newt.dest === 'LAKE' && remoteY > this.botSafe);
     }
 
     requestPlayerHit() {
@@ -2638,6 +2809,7 @@ class GameScene extends Phaser.Scene {
     handlePartnerName(data) {
         if (data.name) {
             this.partnerName = data.name;
+            remotePlayerName = data.name;
         }
     }
     async setupVoiceChat() {
@@ -4098,8 +4270,6 @@ class GameScene extends Phaser.Scene {
                 } else {
                     submitSuccess = true; // Guest trusts host submitted
                 }
-                // Notify partner
-                this.broadcastScoreSubmitted(displayName, submitSuccess);
             } else {
                 submitSuccess = await submitScore(displayName, finalScore, false);
             }
