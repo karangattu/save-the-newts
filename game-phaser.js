@@ -968,6 +968,32 @@ class SplashScene extends Phaser.Scene {
         hitArea.on('pointerdown', handleInput);
         this.input.keyboard.on('keydown', handleInput);
 
+        // --- QUIT BUTTON ---
+        const quitBtn = this.add.text(width - (isCompact ? 16 : 20), isCompact ? 16 : 20, '✖ QUIT', {
+            fontFamily: 'Outfit, sans-serif',
+            fontSize: isCompact ? '13px' : '15px',
+            color: '#ff6666',
+            backgroundColor: 'rgba(51, 0, 0, 0.7)',
+            padding: { left: 10, right: 10, top: 5, bottom: 5 }
+        }).setOrigin(1, 0).setDepth(200).setInteractive({ useHandCursor: true });
+
+        quitBtn.on('pointerover', () => quitBtn.setColor('#ffffff'));
+        quitBtn.on('pointerout', () => quitBtn.setColor('#ff6666'));
+        quitBtn.on('pointerdown', () => {
+            if (this.tutorialVideo) {
+                this.tutorialVideo.style.opacity = '0';
+                this.tutorialVideo.pause();
+                if (this.tutorialVideo.parentNode) this.tutorialVideo.parentNode.removeChild(this.tutorialVideo);
+                this.tutorialVideo = null;
+            }
+            if (this.soundHint && this.soundHint.parentNode) {
+                this.soundHint.parentNode.removeChild(this.soundHint);
+                this.soundHint = null;
+            }
+            if (this.bgm) { this.bgm.stop(); this.bgm.destroy(); }
+            window.location.reload();
+        });
+
         console.log("SplashScene ready. Two-step start active.");
     }
 }
@@ -1119,9 +1145,23 @@ class NameEntryScene extends Phaser.Scene {
         // Show top scores as motivation
         this.showTopScores(width, height, isMobile, isCompact);
 
-        // Cleanup on scene shutdown
-        this.events.once('shutdown', () => {
+        // Quit button
+        const quitBtn = this.add.text(width - 20, 20, '✖ QUIT', {
+            fontFamily: 'Outfit, sans-serif',
+            fontSize: '14px',
+            color: '#ff6666',
+            backgroundColor: 'rgba(51, 0, 0, 0.7)',
+            padding: { left: 10, right: 10, top: 5, bottom: 5 }
+        }).setOrigin(1, 0).setDepth(200).setInteractive({ useHandCursor: true });
+
+        quitBtn.on('pointerover', () => quitBtn.setColor('#ffffff'));
+        quitBtn.on('pointerout', () => quitBtn.setColor('#ff6666'));
+        quitBtn.on('pointerdown', () => {
             if (inputEl && inputEl.parentNode) inputEl.remove();
+            this.cameras.main.fadeOut(200, 0, 0, 0);
+            this.cameras.main.once('camerafadeoutcomplete', () => {
+                this.scene.start('SplashScene');
+            });
         });
 
         this.cameras.main.fadeIn(300);
@@ -1276,6 +1316,25 @@ class ModeSelectScene extends Phaser.Scene {
             });
         });
 
+        // Quit button
+        const quitBtn = this.add.text(width - 20, 20, '✖ QUIT', {
+            fontFamily: 'Outfit, sans-serif',
+            fontSize: '14px',
+            color: '#ff6666',
+            backgroundColor: 'rgba(51, 0, 0, 0.7)',
+            padding: { left: 10, right: 10, top: 5, bottom: 5 }
+        }).setOrigin(1, 0).setDepth(200).setInteractive({ useHandCursor: true });
+
+        quitBtn.on('pointerover', () => quitBtn.setColor('#ffffff'));
+        quitBtn.on('pointerout', () => quitBtn.setColor('#ff6666'));
+        quitBtn.on('pointerdown', () => {
+            cleanupMultiplayerState();
+            this.cameras.main.fadeOut(200, 0, 0, 0);
+            this.cameras.main.once('camerafadeoutcomplete', () => {
+                this.scene.start('SplashScene');
+            });
+        });
+
         // Show player name badge
         this.add.text(width / 2, height * 0.90, `Playing as: ${playerName}`, {
             fontFamily: 'Outfit, sans-serif',
@@ -1328,6 +1387,25 @@ class LobbyScene extends Phaser.Scene {
             this.cameras.main.fadeOut(200, 0, 0, 0);
             this.cameras.main.once('camerafadeoutcomplete', () => {
                 this.scene.start('ModeSelectScene');
+            });
+        });
+
+        // Quit button
+        const quitBtn = this.add.text(width - 20, 20, '✖ QUIT', {
+            fontFamily: 'Outfit, sans-serif',
+            fontSize: '14px',
+            color: '#ff6666',
+            backgroundColor: 'rgba(51, 0, 0, 0.7)',
+            padding: { left: 10, right: 10, top: 5, bottom: 5 }
+        }).setOrigin(1, 0).setDepth(200).setInteractive({ useHandCursor: true });
+
+        quitBtn.on('pointerover', () => quitBtn.setColor('#ffffff'));
+        quitBtn.on('pointerout', () => quitBtn.setColor('#ff6666'));
+        quitBtn.on('pointerdown', () => {
+            this.cleanup();
+            this.cameras.main.fadeOut(200, 0, 0, 0);
+            this.cameras.main.once('camerafadeoutcomplete', () => {
+                this.scene.start('SplashScene');
             });
         });
 
@@ -3021,6 +3099,23 @@ class GameScene extends Phaser.Scene {
             this.updateMicButton();
         }
 
+        // In-game Quit button (top-right next to score box / mic button)
+        const quitBtnX = this.scale.width - padding - scoreWidth - 12;
+        const quitBtnY = padding + 2;
+        this.quitBtn = this.add.text(quitBtnX, quitBtnY, '✖ QUIT', {
+            fontFamily: 'Outfit, sans-serif',
+            fontSize: this.isCompact ? '12px' : '14px',
+            color: '#ff6666',
+            backgroundColor: 'rgba(51, 0, 0, 0.75)',
+            padding: { left: 8, right: 8, top: 4, bottom: 4 }
+        }).setOrigin(1, 0).setDepth(200).setInteractive({ useHandCursor: true });
+
+        this.quitBtn.on('pointerover', () => this.quitBtn.setColor('#ffffff'));
+        this.quitBtn.on('pointerout', () => this.quitBtn.setColor('#ff6666'));
+        this.quitBtn.on('pointerdown', () => {
+            this.confirmQuitGame();
+        });
+
         this.updateHUD();
     }
 
@@ -4358,13 +4453,16 @@ class GameScene extends Phaser.Scene {
         Icons.drawExternalLink(volunteerIcon, volunteerLink.x - volunteerLink.width / 2 - 18, volunteerY + 10, 14, 0x00ff88);
         volunteerLink.on('pointerdown', () => { window.open('https://bioblitz.club/newts', '_blank'); });
 
-        // --- TRY AGAIN BUTTON ---
+        // --- TRY AGAIN & QUIT BUTTONS ---
         const retryY = Math.min(height * 0.93, volunteerY + (isCompact ? 45 : 55));
-        const retryBtnText = this.add.text(width / 2 + 15, retryY, 'TRY AGAIN', {
-            fontFamily: 'Fredoka, sans-serif', fontSize: isCompact ? '20px' : '24px', color: '#00ffff', backgroundColor: '#222', padding: { left: 45, right: 22, top: 10, bottom: 10 }
+        const btnSpacing = isCompact ? 75 : 95;
+
+        // Try Again Button
+        const retryBtnText = this.add.text(width / 2 - btnSpacing + 10, retryY, 'TRY AGAIN', {
+            fontFamily: 'Fredoka, sans-serif', fontSize: isCompact ? '16px' : '20px', color: '#00ffff', backgroundColor: '#222', padding: { left: 35, right: 15, top: 8, bottom: 8 }
         }).setOrigin(0.5).setDepth(301).setInteractive({ useHandCursor: true });
         const retryIcon = this.add.graphics().setDepth(302);
-        Icons.drawRefresh(retryIcon, retryBtnText.x - retryBtnText.width / 2 + 22, retryY, 22, 0x00ffff);
+        Icons.drawRefresh(retryIcon, retryBtnText.x - retryBtnText.width / 2 + 18, retryY, 18, 0x00ffff);
         retryBtnText.on('pointerdown', () => {
             if (this.isMultiplayer) {
                 cleanupMultiplayerState();
@@ -4372,6 +4470,17 @@ class GameScene extends Phaser.Scene {
             } else {
                 this.scene.restart();
             }
+        });
+
+        // Quit Button (returns to ModeSelectScene or SplashScene)
+        const quitGameBtnText = this.add.text(width / 2 + btnSpacing, retryY, 'QUIT', {
+            fontFamily: 'Fredoka, sans-serif', fontSize: isCompact ? '16px' : '20px', color: '#ff6666', backgroundColor: '#330000', padding: { left: 20, right: 20, top: 8, bottom: 8 }
+        }).setOrigin(0.5).setDepth(301).setInteractive({ useHandCursor: true });
+        quitGameBtnText.on('pointerdown', () => {
+            if (this.isMultiplayer) {
+                cleanupMultiplayerState();
+            }
+            this.scene.start('ModeSelectScene');
         });
     }
 
@@ -4507,6 +4616,101 @@ class GameScene extends Phaser.Scene {
                 color: '#aaaaaa'
             }).setOrigin(0.5).setDepth(301);
         }
+    }
+
+    confirmQuitGame() {
+        if (this.quitModalContainer) return;
+
+        const { width, height } = this.scale;
+        const isCompact = this.isCompact;
+
+        // Container overlay with high depth
+        const container = this.add.container(0, 0).setDepth(400);
+        this.quitModalContainer = container;
+
+        // Dark dim backdrop
+        const backdrop = this.add.rectangle(0, 0, width, height, 0x000000, 0.75)
+            .setOrigin(0)
+            .setInteractive(); // Blocks input underneath
+
+        // Modal box
+        const boxW = Math.min(width * 0.85, isCompact ? 280 : 340);
+        const boxH = isCompact ? 160 : 180;
+        const boxBg = this.add.graphics();
+        boxBg.fillStyle(0x0a1a2d, 0.95);
+        boxBg.fillRoundedRect(width / 2 - boxW / 2, height / 2 - boxH / 2, boxW, boxH, 12);
+        boxBg.lineStyle(2, 0xff3366, 1);
+        boxBg.strokeRoundedRect(width / 2 - boxW / 2, height / 2 - boxH / 2, boxW, boxH, 12);
+
+        // Warning title
+        const titleText = this.add.text(width / 2, height / 2 - boxH / 2 + (isCompact ? 20 : 25), 'QUIT GAME?', {
+            fontFamily: 'Fredoka, sans-serif',
+            fontSize: isCompact ? '20px' : '24px',
+            color: '#ff3366',
+            fontStyle: 'bold'
+        }).setOrigin(0.5);
+
+        // Subtitle message
+        const messageText = this.add.text(width / 2, height / 2 - (isCompact ? 10 : 12),
+            this.isMultiplayer ? 'Leave the multiplayer game?' : 'Your current run progress will be lost.', {
+            fontFamily: 'Outfit, sans-serif',
+            fontSize: isCompact ? '13px' : '15px',
+            color: '#cccccc',
+            align: 'center'
+        }).setOrigin(0.5);
+
+        // Buttons
+        const btnY = height / 2 + boxH / 2 - (isCompact ? 30 : 35);
+        const btnW = isCompact ? 95 : 115;
+        const btnH = isCompact ? 36 : 42;
+        const spacing = isCompact ? 60 : 75;
+
+        // Cancel button
+        const cancelBtnBg = this.add.rectangle(width / 2 - spacing, btnY, btnW, btnH, 0x222222, 0.9)
+            .setStrokeStyle(2, 0x888888, 1)
+            .setInteractive({ useHandCursor: true });
+
+        const cancelText = this.add.text(width / 2 - spacing, btnY, 'CANCEL', {
+            fontFamily: 'Fredoka, sans-serif',
+            fontSize: isCompact ? '14px' : '16px',
+            color: '#ffffff'
+        }).setOrigin(0.5);
+
+        cancelBtnBg.on('pointerdown', () => {
+            container.destroy();
+            this.quitModalContainer = null;
+        });
+
+        // Confirm Quit button
+        const confirmBtnBg = this.add.rectangle(width / 2 + spacing, btnY, btnW, btnH, 0x660022, 0.9)
+            .setStrokeStyle(2, 0xff3366, 1)
+            .setInteractive({ useHandCursor: true });
+
+        const confirmText = this.add.text(width / 2 + spacing, btnY, 'YES, QUIT', {
+            fontFamily: 'Fredoka, sans-serif',
+            fontSize: isCompact ? '14px' : '16px',
+            color: '#ff6666'
+        }).setOrigin(0.5);
+
+        confirmBtnBg.on('pointerdown', () => {
+            container.destroy();
+            this.quitModalContainer = null;
+            if (this.isMultiplayer) {
+                this.sendMultiplayerMessage('player_disconnect', { playerId: playerId });
+                cleanupMultiplayerState();
+            }
+            if (this.rainBgm) {
+                this.rainBgm.stop();
+                this.rainBgm.destroy();
+                this.rainBgm = null;
+            }
+            this.cameras.main.fadeOut(300, 0, 0, 0);
+            this.cameras.main.once('camerafadeoutcomplete', () => {
+                this.scene.start('ModeSelectScene');
+            });
+        });
+
+        container.add([backdrop, boxBg, titleText, messageText, cancelBtnBg, cancelText, confirmBtnBg, confirmText]);
     }
 }
 
@@ -4741,6 +4945,41 @@ class CharacterSelectScene extends Phaser.Scene {
             this.cameras.main.fadeOut(300, 0, 0, 0);
             this.cameras.main.once('camerafadeoutcomplete', () => {
                 this.scene.start('GameScene');
+            });
+        });
+
+        // Back button (small, top-left)
+        const backBtn = this.add.text(20, 20, '← BACK', {
+            fontFamily: 'Outfit, sans-serif',
+            fontSize: '14px',
+            color: '#888888'
+        }).setInteractive({ useHandCursor: true });
+
+        backBtn.on('pointerover', () => backBtn.setColor('#ffffff'));
+        backBtn.on('pointerout', () => backBtn.setColor('#888888'));
+        backBtn.on('pointerdown', () => {
+            this.cameras.main.fadeOut(200, 0, 0, 0);
+            this.cameras.main.once('camerafadeoutcomplete', () => {
+                this.scene.start('ModeSelectScene');
+            });
+        });
+
+        // Quit button (small, top-right)
+        const quitBtn = this.add.text(width - 20, 20, '✖ QUIT', {
+            fontFamily: 'Outfit, sans-serif',
+            fontSize: '14px',
+            color: '#ff6666',
+            backgroundColor: 'rgba(51, 0, 0, 0.7)',
+            padding: { left: 10, right: 10, top: 5, bottom: 5 }
+        }).setOrigin(1, 0).setDepth(200).setInteractive({ useHandCursor: true });
+
+        quitBtn.on('pointerover', () => quitBtn.setColor('#ffffff'));
+        quitBtn.on('pointerout', () => quitBtn.setColor('#ff6666'));
+        quitBtn.on('pointerdown', () => {
+            cleanupMultiplayerState();
+            this.cameras.main.fadeOut(200, 0, 0, 0);
+            this.cameras.main.once('camerafadeoutcomplete', () => {
+                this.scene.start('SplashScene');
             });
         });
 
