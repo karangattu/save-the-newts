@@ -8,18 +8,29 @@ function assertSourceMatches(source, pattern, label) {
     assert.ok(pattern.test(source), label);
 }
 
-test('automatic fullscreen is implemented correctly', () => {
-    // Check if pointerdown listener requests fullscreen in landscape mode
+function assertSourceDoesNotMatch(source, pattern, label) {
+    assert.ok(!pattern.test(source), label);
+}
+
+test('fullscreen is opt-in via a toggle, not automatic', () => {
+    assertSourceDoesNotMatch(
+        gameSource,
+        /window\.addEventListener\('pointerdown'[\s\S]*requestFullscreen\(/,
+        'should not request fullscreen automatically on pointerdown'
+    );
     assertSourceMatches(
         gameSource,
-        /window\.addEventListener\('pointerdown'[\s\S]*window\.innerWidth\s*>\s*window\.innerHeight[\s\S]*requestFullscreen\(/,
-        'should register pointerdown listener that requests fullscreen in landscape mode'
+        /function toggleFullscreen\(/,
+        'should expose a fullscreen toggle the player can choose'
     );
-
-    // Check if resize listener exits fullscreen when rotating back to portrait mode
+    assertSourceMatches(
+        gameSource,
+        /id\s*=\s*'fullscreen-toggle'|id:\s*'fullscreen-toggle'|id="fullscreen-toggle"/,
+        'should render a visible fullscreen control'
+    );
     assertSourceMatches(
         gameSource,
         /window\.addEventListener\('resize'[\s\S]*window\.innerWidth\s*<\s*window\.innerHeight[\s\S]*exitFullscreen\(/,
-        'should register resize listener that exits fullscreen when rotating to portrait mode'
+        'should still exit fullscreen when rotating to portrait'
     );
 });

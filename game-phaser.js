@@ -92,6 +92,82 @@ function generateRoomCode() {
     return code;
 }
 
+function normalizeRoomCode(text) {
+    const raw = String(text || '').toUpperCase();
+    const match = raw.match(/[A-HJ-NP-Z2-9]{6}/);
+    if (match) return match[0];
+    return raw.replace(/[^A-HJ-NP-Z2-9]/g, '').slice(0, 6);
+}
+
+function copyTextToClipboard(text) {
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+        return navigator.clipboard.writeText(String(text));
+    }
+    try {
+        const ta = document.createElement('textarea');
+        ta.value = String(text);
+        ta.setAttribute('readonly', '');
+        ta.style.position = 'fixed';
+        ta.style.left = '-9999px';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        return Promise.resolve();
+    } catch (err) {
+        return Promise.reject(err);
+    }
+}
+
+function readTextFromClipboard() {
+    if (navigator.clipboard && typeof navigator.clipboard.readText === 'function') {
+        return navigator.clipboard.readText().catch(() => '');
+    }
+    return Promise.resolve('');
+}
+
+function toggleFullscreen() {
+    if (document.fullscreenElement) {
+        return document.exitFullscreen().catch(() => {});
+    }
+    return document.documentElement.requestFullscreen().catch(() => {});
+}
+
+function setupFullscreenToggle() {
+    if (document.getElementById('fullscreen-toggle')) return;
+    const btn = document.createElement('button');
+    btn.id = 'fullscreen-toggle';
+    btn.type = 'button';
+    btn.setAttribute('aria-label', 'Toggle fullscreen');
+    const syncLabel = () => {
+        const on = Boolean(document.fullscreenElement);
+        btn.textContent = on ? 'EXIT FULL' : 'FULL';
+        btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    };
+    syncLabel();
+    btn.style.cssText = [
+        'position:fixed',
+        'right:12px',
+        'bottom:12px',
+        'z-index:10002',
+        'font-family:Outfit,sans-serif',
+        'font-size:12px',
+        'letter-spacing:0.06em',
+        'color:#ffffff',
+        'background:rgba(0,0,0,0.7)',
+        'border:1px solid rgba(255,255,255,0.25)',
+        'border-radius:999px',
+        'padding:6px 12px',
+        'cursor:pointer'
+    ].join(';');
+    btn.addEventListener('click', (event) => {
+        event.stopPropagation();
+        toggleFullscreen();
+    });
+    document.addEventListener('fullscreenchange', syncLabel);
+    document.body.appendChild(btn);
+}
+
 function applyRemoteLobbyIdentity(payload, peerId, role) {
     const isHostIdentity = role === 'host';
     remotePlayerId = payload[isHostIdentity ? 'hostId' : 'guestId'] || peerId;
@@ -1523,25 +1599,51 @@ class LobbyScene extends Phaser.Scene {
         this.menuContainer.destroy();
         this.menuContainer = this.add.container(0, 0);
 
-        this.add.text(width / 2, height * 0.25, 'ROOM CODE', {
+        this.add.text(width / 2, height * 0.22, 'ROOM CODE', {
             fontFamily: 'Outfit, sans-serif',
             fontSize: '14px',
             color: '#888888'
         }).setOrigin(0.5);
 
-        const codeBox = this.add.rectangle(width / 2, height * 0.35, 200, 70, 0x000000, 0.6)
-            .setStrokeStyle(3, 0x00ff88, 1);
+        const codeBox = this.add.rectangle(width / 2, height * 0.34, 220, 70, 0x000000, 0.6)
+            .setStrokeStyle(3, 0x00ff88, 1)
+            .setInteractive({ useHandCursor: true });
 
-        const codeText = this.add.text(width / 2, height * 0.35, roomCode, {
+        const codeText = this.add.text(width / 2, height * 0.34, roomCode, {
             fontFamily: 'Fredoka, sans-serif',
             fontSize: isMobile ? '36px' : '48px',
             color: '#00ff88',
             letterSpacing: 8
-        }).setOrigin(0.5);
+        }).setOrigin(0.5).setInteractive({ useHandCursor: true });
 
-        this.menuContainer.add([codeBox, codeText]);
+        const copyBtn = this.add.text(width / 2, height * 0.46, 'COPY CODE', {
+            fontFamily: 'Fredoka, sans-serif',
+            fontSize: '16px',
+            color: '#000000',
+            backgroundColor: '#00ff88',
+            padding: { left: 20, right: 20, top: 8, bottom: 8 }
+        }).setOrigin(0.5).setInteractive({ useHandCursor: true });
 
-        const waitingText = this.add.text(width / 2, height * 0.50, 'Waiting for player to join...', {
+        const copyCode = () => {
+            copyTextToClipboard(roomCode).then(() => {
+                copyBtn.setText('COPIED!');
+                this.time.delayedCall(1500, () => {
+                    if (copyBtn.active) copyBtn.setText('COPY CODE');
+                });
+            }).catch(() => {
+                copyBtn.setText('COPY FAILED');
+                this.time.delayedCall(1500, () => {
+                    if (copyBtn.active) copyBtn.setText('COPY CODE');
+                });
+            });
+        };
+        copyBtn.on('pointerdown', copyCode);
+        codeBox.on('pointerdown', copyCode);
+        codeText.on('pointerdown', copyCode);
+
+        this.menuContainer.add([codeBox, codeText, copyBtn]);
+
+        const waitingText = this.add.text(width / 2, height * 0.58, 'Waiting for player to join...', {
             fontFamily: 'Outfit, sans-serif',
             fontSize: '16px',
             color: '#ffffff'
@@ -1558,15 +1660,7 @@ class LobbyScene extends Phaser.Scene {
             loop: true
         });
 
-        const shareText = this.add.text(width / 2, height * 0.60, 
-            'Share this code with your friend!', {
-            fontFamily: 'Outfit, sans-serif',
-            fontSize: '14px',
-            color: '#aaaaaa'
-        }).setOrigin(0.5);
-        this.menuContainer.add(shareText);
-
-        const cancelBtn = this.add.text(width / 2, height * 0.75, 'CANCEL', {
+        const cancelBtn = this.add.text(width / 2, height * 0.74, 'CANCEL', {
             fontFamily: 'Fredoka, sans-serif',
             fontSize: '18px',
             color: '#ff6666',
@@ -1650,14 +1744,46 @@ class LobbyScene extends Phaser.Scene {
         this.input.keyboard.removeCapture('W,A,S,D');
         this.input.keyboard.removeCapture([32, 37, 38, 39, 40]);
 
-        this.statusText = this.add.text(width / 2, height * 0.55, '', {
+        this.inputEl.addEventListener('input', () => {
+            this.inputEl.value = normalizeRoomCode(this.inputEl.value);
+        });
+        this.inputEl.addEventListener('paste', (e) => {
+            const text = (e.clipboardData && e.clipboardData.getData('text')) || '';
+            if (!text) return;
+            e.preventDefault();
+            this.inputEl.value = normalizeRoomCode(text);
+        });
+
+        this.statusText = this.add.text(width / 2, height * 0.72, '', {
             fontFamily: 'Outfit, sans-serif',
             fontSize: '14px',
             color: '#ffffff'
         }).setOrigin(0.5);
         this.menuContainer.add(this.statusText);
 
-        const joinBtn = this.add.text(width / 2, height * 0.65, 'JOIN', {
+        const pasteBtn = this.add.text(width / 2, height * 0.52, 'PASTE', {
+            fontFamily: 'Fredoka, sans-serif',
+            fontSize: '16px',
+            color: '#00ccff',
+            backgroundColor: '#102030',
+            padding: { left: 24, right: 24, top: 8, bottom: 8 }
+        }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+        this.menuContainer.add(pasteBtn);
+
+        pasteBtn.on('pointerdown', async () => {
+            const pasted = await readTextFromClipboard();
+            const code = normalizeRoomCode(pasted);
+            if (this.inputEl) this.inputEl.value = code;
+            if (/^[A-HJ-NP-Z2-9]{6}$/.test(code)) {
+                this.statusText.setText('');
+                this.attemptJoin();
+                return;
+            }
+            this.statusText.setText(code ? 'Clipboard is not a room code' : 'Nothing to paste');
+            this.statusText.setColor('#ff6666');
+        });
+
+        const joinBtn = this.add.text(width / 2, height * 0.62, 'JOIN', {
             fontFamily: 'Fredoka, sans-serif',
             fontSize: '22px',
             color: '#000000',
@@ -1674,7 +1800,7 @@ class LobbyScene extends Phaser.Scene {
             }
         });
 
-        const cancelBtn = this.add.text(width / 2, height * 0.78, 'CANCEL', {
+        const cancelBtn = this.add.text(width / 2, height * 0.84, 'CANCEL', {
             fontFamily: 'Outfit, sans-serif',
             fontSize: '16px',
             color: '#888888'
@@ -1693,7 +1819,7 @@ class LobbyScene extends Phaser.Scene {
     }
 
     async attemptJoin() {
-        const code = this.inputEl.value.trim().toUpperCase();
+        const code = normalizeRoomCode(this.inputEl && this.inputEl.value);
         
         if (!/^[A-HJ-NP-Z2-9]{6}$/.test(code)) {
             this.statusText.setText('Enter the 6-character code');
@@ -4999,14 +5125,9 @@ const config = {
     type: Phaser.AUTO, backgroundColor: '#000000', scale: { mode: Phaser.Scale.RESIZE, parent: 'game-container' },
     dom: { createContainer: true }, scene: [SplashScene, NameEntryScene, ModeSelectScene, LobbyScene, CharacterSelectScene, GameScene]
 };
-window.addEventListener('load', () => new Phaser.Game(config));
-
-window.addEventListener('pointerdown', () => {
-    if (window.innerWidth > window.innerHeight) {
-        if (!document.fullscreenElement) {
-            document.documentElement.requestFullscreen().catch(() => {});
-        }
-    }
+window.addEventListener('load', () => {
+    new Phaser.Game(config);
+    setupFullscreenToggle();
 });
 
 window.addEventListener('resize', () => {
