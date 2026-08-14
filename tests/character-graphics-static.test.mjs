@@ -40,4 +40,9 @@ test('character graphics and expression logic are implemented correctly', () => 
         /this\.drawFemaleCharacter\(femaleGraphics,\s*selected\s*===\s*'female'\s*\?\s*'smiley'\s*:\s*'frowny'\)/,
         'updateSelection should draw female character with smiley/frowny depending on selection'
     );
+
+    // Check realistic facial features (anatomical shading, eye catchlights, lip definition)
+    assertSourceMatches(gameSource, /skinShadow\s*=/, 'characters should have dimensional skin shadow shading');
+    assertSourceMatches(gameSource, /irisOuterColor\s*=/, 'characters should have limbal ring / outer iris color');
+    assertSourceMatches(gameSource, /lipOutline\s*=/, 'characters should have defined lip outlines');
 });
