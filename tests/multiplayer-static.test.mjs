@@ -59,6 +59,20 @@ test('multiplayer lobby and room lifecycle are serverless P2P', () => {
     assertSourceMatches(gameSource, /cleanupMultiplayerState\(\)/, 'cleanupMultiplayerState should teardown room and state');
 });
 
+test('lobby create and join screens use the clipboard', () => {
+    const waitingScreen = sourceBetween('    showWaitingForPlayer()', '    showJoinRoom()');
+    const joinScreen = sourceBetween('    showJoinRoom()', '    async attemptJoin()');
+
+    assertSourceMatches(gameSource, /function normalizeRoomCode\(/, 'room codes should be normalized from typed or pasted text');
+    assertSourceMatches(gameSource, /function copyTextToClipboard\(/, 'hosts should be able to copy the room code');
+    assertSourceMatches(gameSource, /function readTextFromClipboard\(/, 'guests should be able to paste a room code');
+    assertSourceMatches(waitingScreen, /COPY CODE/, 'waiting screen should offer a copy-code control');
+    assertSourceMatches(waitingScreen, /copyTextToClipboard\(roomCode\)/, 'copy control should write the live room code');
+    assertSourceMatches(joinScreen, /PASTE/, 'join screen should offer a paste control');
+    assertSourceMatches(joinScreen, /readTextFromClipboard\(/, 'paste control should read the clipboard');
+    assertSourceMatches(joinScreen, /normalizeRoomCode\(/, 'join input should sanitize typed and pasted codes');
+});
+
 test('database setup keeps leaderboard reads cheap', () => {
     assertSourceMatches(sqlSource, /idx_leaderboard_score_desc/, 'leaderboard top-score query should be indexed');
 });

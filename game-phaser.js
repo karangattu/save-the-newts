@@ -92,6 +92,82 @@ function generateRoomCode() {
     return code;
 }
 
+function normalizeRoomCode(text) {
+    const raw = String(text || '').toUpperCase();
+    const match = raw.match(/[A-HJ-NP-Z2-9]{6}/);
+    if (match) return match[0];
+    return raw.replace(/[^A-HJ-NP-Z2-9]/g, '').slice(0, 6);
+}
+
+function copyTextToClipboard(text) {
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+        return navigator.clipboard.writeText(String(text));
+    }
+    try {
+        const ta = document.createElement('textarea');
+        ta.value = String(text);
+        ta.setAttribute('readonly', '');
+        ta.style.position = 'fixed';
+        ta.style.left = '-9999px';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        return Promise.resolve();
+    } catch (err) {
+        return Promise.reject(err);
+    }
+}
+
+function readTextFromClipboard() {
+    if (navigator.clipboard && typeof navigator.clipboard.readText === 'function') {
+        return navigator.clipboard.readText().catch(() => '');
+    }
+    return Promise.resolve('');
+}
+
+function toggleFullscreen() {
+    if (document.fullscreenElement) {
+        return document.exitFullscreen().catch(() => {});
+    }
+    return document.documentElement.requestFullscreen().catch(() => {});
+}
+
+function setupFullscreenToggle() {
+    if (document.getElementById('fullscreen-toggle')) return;
+    const btn = document.createElement('button');
+    btn.id = 'fullscreen-toggle';
+    btn.type = 'button';
+    btn.setAttribute('aria-label', 'Toggle fullscreen');
+    const syncLabel = () => {
+        const on = Boolean(document.fullscreenElement);
+        btn.textContent = on ? 'EXIT FULL' : 'FULL';
+        btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    };
+    syncLabel();
+    btn.style.cssText = [
+        'position:fixed',
+        'right:12px',
+        'bottom:12px',
+        'z-index:10002',
+        'font-family:Outfit,sans-serif',
+        'font-size:12px',
+        'letter-spacing:0.06em',
+        'color:#ffffff',
+        'background:rgba(0,0,0,0.7)',
+        'border:1px solid rgba(255,255,255,0.25)',
+        'border-radius:999px',
+        'padding:6px 12px',
+        'cursor:pointer'
+    ].join(';');
+    btn.addEventListener('click', (event) => {
+        event.stopPropagation();
+        toggleFullscreen();
+    });
+    document.addEventListener('fullscreenchange', syncLabel);
+    document.body.appendChild(btn);
+}
+
 function applyRemoteLobbyIdentity(payload, peerId, role) {
     const isHostIdentity = role === 'host';
     remotePlayerId = payload[isHostIdentity ? 'hostId' : 'guestId'] || peerId;
@@ -943,6 +1019,16 @@ function drawMalePlayerGlobal(g, isPlayer2 = false, expression = 'frowny') {
     g.fillStyle(0x000000, 0.4); g.fillEllipse(0, 28, 35, 12);
     g.fillStyle(0x2c3e50); g.fillRoundedRect(-12, 8, 10, 22, 3); g.fillRoundedRect(2, 8, 10, 22, 3);
     const skinColor = isPlayer2 ? 0xd4a574 : 0xfce4d6;
+    const skinShadow = isPlayer2 ? 0xb07d50 : 0xebb89b;
+    const skinHighlight = isPlayer2 ? 0xe8be90 : 0xfff5ee;
+    const blushColor = isPlayer2 ? 0xd96b5b : 0xf48b8b;
+    const irisColor = isPlayer2 ? 0x3388ee : 0x6e4a2e;
+    const irisOuterColor = isPlayer2 ? 0x004499 : 0x3a2416;
+    const browColor = isPlayer2 ? 0x22150c : 0x2e1d14;
+    const noseColor = isPlayer2 ? 0xb8906a : 0xdb9f8c;
+    const lipOutline = isPlayer2 ? 0x883530 : 0xa64545;
+    const lipColor = isPlayer2 ? 0xba5a52 : 0xd97777;
+
     g.fillStyle(skinColor);
     g.fillCircle(-20, -5, 6);
     g.fillCircle(20, -5, 6);
@@ -962,53 +1048,129 @@ function drawMalePlayerGlobal(g, isPlayer2 = false, expression = 'frowny') {
     g.fillRect(-12, -18, 8, 32);
     g.fillRect(4, -18, 8, 32);
     g.fillRect(-18, -2, 36, 8);
-    g.fillStyle(0x3d2314);
-    g.fillEllipse(-12, -26, 6, 12);
-    g.fillEllipse(12, -26, 6, 12);
-    g.fillStyle(skinColor); g.fillCircle(0, -26, 14);
-    g.fillStyle(0xffcccc, 0.4);
-    g.fillCircle(-8, -23, 3);
-    g.fillCircle(8, -23, 3);
+
+    g.fillStyle(skinShadow);
+    g.fillEllipse(0, -13, 10, 4);
+
+    g.fillStyle(skinColor);
+    g.fillCircle(-14, -26, 3.5);
+    g.fillCircle(14, -26, 3.5);
+    g.fillStyle(skinShadow, 0.6);
+    g.fillCircle(-14, -26, 1.8);
+    g.fillCircle(14, -26, 1.8);
+
+    g.fillStyle(skinColor);
+    g.fillCircle(0, -26, 14);
+
+    g.fillStyle(blushColor, 0.25);
+    g.fillEllipse(-7.5, -23, 4.5, 3);
+    g.fillEllipse(7.5, -23, 4.5, 3);
+
     g.fillStyle(0xffffff);
-    g.fillEllipse(-5, -28, 4, 3.5);
-    g.fillEllipse(5, -28, 4, 3.5);
-    const irisColor = isPlayer2 ? 0x0066cc : 0x4a3728;
+    g.fillEllipse(-5.5, -28, 4.5, 3.2);
+    g.fillEllipse(5.5, -28, 4.5, 3.2);
+    g.fillStyle(0xdcd8d4, 0.5);
+    g.fillEllipse(-5.5, -29, 4, 1.6);
+    g.fillEllipse(5.5, -29, 4, 1.6);
+
+    g.fillStyle(irisOuterColor);
+    g.fillCircle(-5.5, -28, 2.3);
+    g.fillCircle(5.5, -28, 2.3);
     g.fillStyle(irisColor);
-    g.fillCircle(-5, -28, 2.2);
-    g.fillCircle(5, -28, 2.2);
-    g.fillStyle(0x000000);
-    g.fillCircle(-5, -28, 1.2);
-    g.fillCircle(5, -28, 1.2);
+    g.fillCircle(-5.5, -28, 1.9);
+    g.fillCircle(5.5, -28, 1.9);
+    g.fillStyle(0x050505);
+    g.fillCircle(-5.5, -28, 1.1);
+    g.fillCircle(5.5, -28, 1.1);
     g.fillStyle(0xffffff);
-    g.fillCircle(-4, -29, 0.8);
-    g.fillCircle(6, -29, 0.8);
-    g.lineStyle(1.5, 0x3d2314);
+    g.fillCircle(-4.5, -29, 0.8);
+    g.fillCircle(6.5, -29, 0.8);
+    g.fillStyle(0xffffff, 0.6);
+    g.fillCircle(-6.2, -27.2, 0.45);
+    g.fillCircle(4.8, -27.2, 0.45);
+
+    g.lineStyle(1.4, 0x22150c);
     g.beginPath();
-    g.arc(-5, -34, 4, Math.PI * 0.15, Math.PI * 0.85, false);
+    g.arc(-5.5, -29, 3.6, Math.PI * 1.1, Math.PI * 1.9, false);
     g.strokePath();
     g.beginPath();
-    g.arc(5, -34, 4, Math.PI * 0.15, Math.PI * 0.85, false);
+    g.arc(5.5, -29, 3.6, Math.PI * 1.1, Math.PI * 1.9, false);
     g.strokePath();
-    const noseColor = isPlayer2 ? 0xb8906a : 0xcc9988;
-    g.fillStyle(noseColor); g.fillEllipse(0, -22, 4, 2);
-    g.lineStyle(2, 0x2c3e50);
+
+    g.lineStyle(1.8, browColor);
     g.beginPath();
     if (expression === 'smiley') {
-        g.arc(0, -21, 5, 0.1 * Math.PI, 0.9 * Math.PI, false);
+        g.arc(-5.5, -33.5, 4.5, Math.PI * 0.18, Math.PI * 0.82, false);
+        g.strokePath();
+        g.beginPath();
+        g.arc(5.5, -33.5, 4.5, Math.PI * 0.18, Math.PI * 0.82, false);
     } else {
-        g.arc(0, -13, 5, 1.1 * Math.PI, 1.9 * Math.PI, false);
+        g.lineBetween(-9, -32.5, -2.5, -34.2);
+        g.strokePath();
+        g.beginPath();
+        g.lineBetween(2.5, -34.2, 9, -32.5);
     }
     g.strokePath();
+
+    g.fillStyle(skinHighlight, 0.35);
+    g.fillRoundedRect(-0.8, -28, 1.6, 5, 0.8);
+    g.fillStyle(noseColor);
+    g.fillCircle(0, -22.5, 2);
+    g.fillStyle(skinShadow, 0.6);
+    g.fillEllipse(-2.2, -22.2, 1.3, 1.0);
+    g.fillEllipse(2.2, -22.2, 1.3, 1.0);
+
+    if (expression === 'smiley') {
+        g.lineStyle(1.6, lipOutline);
+        g.beginPath();
+        g.arc(0, -19.5, 4.5, 0.12 * Math.PI, 0.88 * Math.PI, false);
+        g.strokePath();
+        g.fillStyle(0xffffff, 0.9);
+        g.fillEllipse(0, -18.2, 3.4, 1.3);
+        g.fillStyle(lipColor);
+        g.fillEllipse(0, -16.8, 3.6, 1.4);
+    } else {
+        g.lineStyle(1.6, lipOutline);
+        g.beginPath();
+        g.lineBetween(-3.5, -17.5, 3.5, -17.5);
+        g.strokePath();
+        g.fillStyle(lipColor);
+        g.fillEllipse(0, -16.2, 3.2, 1.3);
+    }
+
+    g.fillStyle(0x3d2314);
+    g.fillTriangle(-12, -28, -13, -21, -9, -24);
+    g.fillTriangle(12, -28, 13, -21, 9, -24);
+    g.fillTriangle(-5, -34, -2, -30, 0, -34);
+
     const capColor = isPlayer2 ? 0x0066cc : 0xff0000;
     const capDarkColor = isPlayer2 ? 0x004499 : 0xcc0000;
-    g.fillStyle(capColor); g.fillEllipse(0, -40, 26, 14);
-    g.fillStyle(capDarkColor); g.fillRect(-13, -42, 26, 6);
+    g.fillStyle(0x000000, 0.25);
+    g.fillEllipse(0, -32, 22, 6);
+    g.fillStyle(capColor);
+    g.fillEllipse(0, -40, 26, 14);
+    g.fillStyle(capDarkColor);
+    g.fillRoundedRect(-13, -42, 26, 6, 2);
+    g.fillStyle(capDarkColor);
+    g.fillCircle(0, -47, 2.5);
 }
 
 function drawFemalePlayerGlobal(g, isPlayer2 = false, expression = 'frowny') {
     g.fillStyle(0x000000, 0.4); g.fillEllipse(0, 28, 35, 12);
     g.fillStyle(0x2c3e50); g.fillRoundedRect(-12, 8, 10, 22, 3); g.fillRoundedRect(2, 8, 10, 22, 3);
     const skinColor = isPlayer2 ? 0xd4a574 : 0xfce4d6;
+    const skinShadow = isPlayer2 ? 0xb07d50 : 0xebb89b;
+    const skinHighlight = isPlayer2 ? 0xe8be90 : 0xfff5ee;
+    const blushColor = isPlayer2 ? 0xd96b5b : 0xf48b8b;
+    const irisColor = isPlayer2 ? 0x3ca86e : 0x7a4422;
+    const irisOuterColor = isPlayer2 ? 0x1e6e44 : 0x4a2a1a;
+    const browColor = isPlayer2 ? 0x5a1800 : 0x2e1d14;
+    const noseColor = isPlayer2 ? 0xc4a088 : 0xdb9f8c;
+    const lipOutline = isPlayer2 ? 0x993530 : 0xc75060;
+    const lipColor = isPlayer2 ? 0xc75850 : 0xeb7888;
+    const hairColor = isPlayer2 ? 0x8b2500 : 0x3d2314;
+    const hairHighlight = isPlayer2 ? 0xa83c14 : 0x5a3d2b;
+
     g.fillStyle(skinColor);
     g.fillCircle(-20, -5, 6);
     g.fillCircle(20, -5, 6);
@@ -1028,72 +1190,125 @@ function drawFemalePlayerGlobal(g, isPlayer2 = false, expression = 'frowny') {
     g.fillRect(-12, -18, 8, 32);
     g.fillRect(4, -18, 8, 32);
     g.fillRect(-18, -2, 36, 8);
-    const hairColor = isPlayer2 ? 0x8b2500 : 0x3d2314;
-    const hairHighlight = isPlayer2 ? 0xa83c14 : 0x5a3d2b;
+
     g.fillStyle(hairColor);
-    g.fillEllipse(0, -30, 22, 18);
-    g.fillEllipse(-14, -15, 12, 34);
-    g.fillEllipse(14, -15, 12, 34);
-    g.fillEllipse(-12, 5, 9, 16);
-    g.fillEllipse(12, 5, 9, 16);
+    g.fillEllipse(0, -32, 24, 20);
+    g.fillEllipse(-15, -14, 11, 32);
+    g.fillEllipse(15, -14, 11, 32);
+    g.fillEllipse(-13, 6, 8, 16);
+    g.fillEllipse(13, 6, 8, 16);
     g.fillStyle(hairHighlight);
-    g.fillEllipse(-10, -22, 4, 20);
-    g.fillEllipse(10, -22, 4, 20);
-    g.fillStyle(skinColor); g.fillCircle(0, -26, 13);
+    g.fillEllipse(-11, -22, 3.5, 18);
+    g.fillEllipse(11, -22, 3.5, 18);
+
+    g.fillStyle(skinShadow);
+    g.fillEllipse(0, -13, 10, 4);
+
+    g.fillStyle(skinColor);
+    g.fillCircle(-13.5, -26, 3);
+    g.fillCircle(13.5, -26, 3);
+    g.fillStyle(isPlayer2 ? 0xffd700 : 0x00ffff, 0.9);
+    g.fillCircle(-13.5, -24, 1.2);
+    g.fillCircle(13.5, -24, 1.2);
+
+    g.fillStyle(skinColor);
+    g.fillCircle(0, -26, 13.5);
+
+    g.fillStyle(blushColor, 0.35);
+    g.fillEllipse(-7.5, -23, 4.5, 3);
+    g.fillEllipse(7.5, -23, 4.5, 3);
+
+    g.fillStyle(0xffffff);
+    g.fillEllipse(-5.5, -28, 4.5, 3.4);
+    g.fillEllipse(5.5, -28, 4.5, 3.4);
+
+    g.fillStyle(irisOuterColor);
+    g.fillCircle(-5.5, -28, 2.4);
+    g.fillCircle(5.5, -28, 2.4);
+    g.fillStyle(irisColor);
+    g.fillCircle(-5.5, -28, 2.0);
+    g.fillCircle(5.5, -28, 2.0);
+    g.fillStyle(0x050505);
+    g.fillCircle(-5.5, -28, 1.1);
+    g.fillCircle(5.5, -28, 1.1);
+    g.fillStyle(0xffffff);
+    g.fillCircle(-4.5, -29, 0.9);
+    g.fillCircle(6.5, -29, 0.9);
+    g.fillStyle(0xffffff, 0.65);
+    g.fillCircle(-6.2, -27.2, 0.45);
+    g.fillCircle(4.8, -27.2, 0.45);
+
+    g.lineStyle(1.6, 0x1a0f08);
+    g.beginPath();
+    g.arc(-5.5, -29.2, 3.6, Math.PI * 1.08, Math.PI * 1.92, false);
+    g.strokePath();
+    g.beginPath();
+    g.arc(5.5, -29.2, 3.6, Math.PI * 1.08, Math.PI * 1.92, false);
+    g.strokePath();
+
+    g.lineBetween(-8.5, -29, -10.5, -31);
+    g.lineBetween(-7.5, -30.5, -9, -33);
+    g.lineBetween(8.5, -29, 10.5, -31);
+    g.lineBetween(7.5, -30.5, 9, -33);
+
+    g.lineStyle(1.4, browColor);
+    g.beginPath();
+    if (expression === 'smiley') {
+        g.arc(-5.5, -33.5, 4.8, Math.PI * 0.15, Math.PI * 0.85, false);
+        g.strokePath();
+        g.beginPath();
+        g.arc(5.5, -33.5, 4.8, Math.PI * 0.15, Math.PI * 0.85, false);
+    } else {
+        g.lineBetween(-9, -32.5, -2.5, -34.2);
+        g.strokePath();
+        g.beginPath();
+        g.lineBetween(2.5, -34.2, 9, -32.5);
+    }
+    g.strokePath();
+
+    g.fillStyle(skinHighlight, 0.3);
+    g.fillRoundedRect(-0.6, -28, 1.2, 4.5, 0.6);
+    g.fillStyle(noseColor);
+    g.fillEllipse(0, -23.5, 2.2, 1.5);
+    g.fillStyle(skinShadow, 0.6);
+    g.fillCircle(-1.4, -23.2, 0.6);
+    g.fillCircle(1.4, -23.2, 0.6);
+
+    if (expression === 'smiley') {
+        g.lineStyle(1.6, lipOutline);
+        g.beginPath();
+        g.arc(0, -20, 4.4, 0.12 * Math.PI, 0.88 * Math.PI, false);
+        g.strokePath();
+        g.fillStyle(0xffffff, 0.95);
+        g.fillEllipse(0, -18.4, 3.4, 1.3);
+        g.fillStyle(lipColor);
+        g.fillEllipse(0, -17.2, 3.6, 1.5);
+        g.fillStyle(0xffffff, 0.5);
+        g.fillEllipse(0, -17, 1.5, 0.6);
+    } else {
+        g.lineStyle(1.5, lipOutline);
+        g.beginPath();
+        g.lineBetween(-3.2, -18, 3.2, -18);
+        g.strokePath();
+        g.fillStyle(lipColor);
+        g.fillEllipse(0, -16.8, 3, 1.3);
+        g.fillStyle(0xffffff, 0.35);
+        g.fillCircle(0, -16.8, 0.6);
+    }
+
     g.fillStyle(hairColor);
-    g.fillEllipse(0, -34, 18, 8);
-    g.fillEllipse(-6, -33, 8, 6);
-    g.fillEllipse(6, -33, 8, 6);
+    g.fillEllipse(-5, -34, 10, 8);
+    g.fillEllipse(5, -34, 10, 8);
     g.fillEllipse(0, -38, 20, 10);
-    g.fillEllipse(0, -34, 18, 8);
-    g.fillEllipse(-6, -33, 8, 6);
-    g.fillEllipse(6, -33, 8, 6);
-    g.fillEllipse(0, -38, 20, 10);
-    g.fillEllipse(0, -34, 18, 8);
-    g.fillEllipse(-6, -33, 8, 6);
-    g.fillEllipse(6, -33, 8, 6);
     if (isPlayer2) {
         g.fillStyle(0x9933ff);
         g.fillRoundedRect(-14, -38, 28, 5, 2);
-    }
-    g.fillStyle(0xffcccc, 0.5);
-    g.fillCircle(-8, -23, 4);
-    g.fillCircle(8, -23, 4);
-    g.fillStyle(0xffffff);
-    g.fillEllipse(-5, -28, 4, 3.5);
-    g.fillEllipse(5, -28, 4, 3.5);
-    const irisColor = isPlayer2 ? 0x2e8b57 : 0x4a3728;
-    g.fillStyle(irisColor);
-    g.fillCircle(-5, -28, 2.2);
-    g.fillCircle(5, -28, 2.2);
-    g.fillStyle(0x000000);
-    g.fillCircle(-5, -28, 1.2);
-    g.fillCircle(5, -28, 1.2);
-    g.fillStyle(0xffffff);
-    g.fillCircle(-4, -29, 0.8);
-    g.fillCircle(6, -29, 0.8);
-    g.lineStyle(1.5, 0x000000);
-    g.lineBetween(-7, -30, -8, -33);
-    g.lineBetween(-5, -31, -5, -34);
-    g.lineBetween(5, -31, 5, -34);
-    g.lineBetween(7, -30, 8, -33);
-    g.lineStyle(1.5, hairColor);
-    g.beginPath();
-    g.arc(-5, -34, 5, Math.PI * 0.15, Math.PI * 0.85, false);
-    g.strokePath();
-    g.beginPath();
-    g.arc(5, -34, 5, Math.PI * 0.15, Math.PI * 0.85, false);
-    g.strokePath();
-    const noseColor = isPlayer2 ? 0xc4a088 : 0xe8c4b8;
-    g.fillStyle(noseColor); g.fillEllipse(0, -24, 2.5, 1.5);
-    g.lineStyle(2.5, 0xe07070);
-    g.beginPath();
-    if (expression === 'smiley') {
-        g.arc(0, -21, 5, 0.1 * Math.PI, 0.9 * Math.PI, false);
     } else {
-        g.arc(0, -13, 5, 1.1 * Math.PI, 1.9 * Math.PI, false);
+        g.fillStyle(0xff3399);
+        g.fillRoundedRect(-14, -38, 28, 5, 2);
     }
-    g.strokePath();
+    g.fillStyle(hairHighlight, 0.7);
+    g.fillEllipse(0, -35, 12, 3);
 }
 
 // ===== SPLASH SCENE =====
@@ -1914,25 +2129,51 @@ class LobbyScene extends Phaser.Scene {
         this.menuContainer.destroy();
         this.menuContainer = this.add.container(0, 0);
 
-        this.add.text(width / 2, height * 0.25, 'ROOM CODE', {
+        this.add.text(width / 2, height * 0.22, 'ROOM CODE', {
             fontFamily: 'Outfit, sans-serif',
             fontSize: '14px',
             color: '#888888'
         }).setOrigin(0.5);
 
-        const codeBox = this.add.rectangle(width / 2, height * 0.35, 200, 70, 0x000000, 0.6)
-            .setStrokeStyle(3, 0x00ff88, 1);
+        const codeBox = this.add.rectangle(width / 2, height * 0.34, 220, 70, 0x000000, 0.6)
+            .setStrokeStyle(3, 0x00ff88, 1)
+            .setInteractive({ useHandCursor: true });
 
-        const codeText = this.add.text(width / 2, height * 0.35, roomCode, {
+        const codeText = this.add.text(width / 2, height * 0.34, roomCode, {
             fontFamily: 'Fredoka, sans-serif',
             fontSize: isMobile ? '36px' : '48px',
             color: '#00ff88',
             letterSpacing: 8
-        }).setOrigin(0.5);
+        }).setOrigin(0.5).setInteractive({ useHandCursor: true });
 
-        this.menuContainer.add([codeBox, codeText]);
+        const copyBtn = this.add.text(width / 2, height * 0.46, 'COPY CODE', {
+            fontFamily: 'Fredoka, sans-serif',
+            fontSize: '16px',
+            color: '#000000',
+            backgroundColor: '#00ff88',
+            padding: { left: 20, right: 20, top: 8, bottom: 8 }
+        }).setOrigin(0.5).setInteractive({ useHandCursor: true });
 
-        const waitingText = this.add.text(width / 2, height * 0.50, 'Waiting for player to join...', {
+        const copyCode = () => {
+            copyTextToClipboard(roomCode).then(() => {
+                copyBtn.setText('COPIED!');
+                this.time.delayedCall(1500, () => {
+                    if (copyBtn.active) copyBtn.setText('COPY CODE');
+                });
+            }).catch(() => {
+                copyBtn.setText('COPY FAILED');
+                this.time.delayedCall(1500, () => {
+                    if (copyBtn.active) copyBtn.setText('COPY CODE');
+                });
+            });
+        };
+        copyBtn.on('pointerdown', copyCode);
+        codeBox.on('pointerdown', copyCode);
+        codeText.on('pointerdown', copyCode);
+
+        this.menuContainer.add([codeBox, codeText, copyBtn]);
+
+        const waitingText = this.add.text(width / 2, height * 0.58, 'Waiting for player to join...', {
             fontFamily: 'Outfit, sans-serif',
             fontSize: '16px',
             color: '#ffffff'
@@ -1949,15 +2190,7 @@ class LobbyScene extends Phaser.Scene {
             loop: true
         });
 
-        const shareText = this.add.text(width / 2, height * 0.60, 
-            'Share this code with your friend!', {
-            fontFamily: 'Outfit, sans-serif',
-            fontSize: '14px',
-            color: '#aaaaaa'
-        }).setOrigin(0.5);
-        this.menuContainer.add(shareText);
-
-        const cancelBtn = this.add.text(width / 2, height * 0.75, 'CANCEL', {
+        const cancelBtn = this.add.text(width / 2, height * 0.74, 'CANCEL', {
             fontFamily: 'Fredoka, sans-serif',
             fontSize: '18px',
             color: '#ff6666',
@@ -2041,14 +2274,46 @@ class LobbyScene extends Phaser.Scene {
         this.input.keyboard.removeCapture('W,A,S,D');
         this.input.keyboard.removeCapture([32, 37, 38, 39, 40]);
 
-        this.statusText = this.add.text(width / 2, height * 0.55, '', {
+        this.inputEl.addEventListener('input', () => {
+            this.inputEl.value = normalizeRoomCode(this.inputEl.value);
+        });
+        this.inputEl.addEventListener('paste', (e) => {
+            const text = (e.clipboardData && e.clipboardData.getData('text')) || '';
+            if (!text) return;
+            e.preventDefault();
+            this.inputEl.value = normalizeRoomCode(text);
+        });
+
+        this.statusText = this.add.text(width / 2, height * 0.72, '', {
             fontFamily: 'Outfit, sans-serif',
             fontSize: '14px',
             color: '#ffffff'
         }).setOrigin(0.5);
         this.menuContainer.add(this.statusText);
 
-        const joinBtn = this.add.text(width / 2, height * 0.65, 'JOIN', {
+        const pasteBtn = this.add.text(width / 2, height * 0.52, 'PASTE', {
+            fontFamily: 'Fredoka, sans-serif',
+            fontSize: '16px',
+            color: '#00ccff',
+            backgroundColor: '#102030',
+            padding: { left: 24, right: 24, top: 8, bottom: 8 }
+        }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+        this.menuContainer.add(pasteBtn);
+
+        pasteBtn.on('pointerdown', async () => {
+            const pasted = await readTextFromClipboard();
+            const code = normalizeRoomCode(pasted);
+            if (this.inputEl) this.inputEl.value = code;
+            if (/^[A-HJ-NP-Z2-9]{6}$/.test(code)) {
+                this.statusText.setText('');
+                this.attemptJoin();
+                return;
+            }
+            this.statusText.setText(code ? 'Clipboard is not a room code' : 'Nothing to paste');
+            this.statusText.setColor('#ff6666');
+        });
+
+        const joinBtn = this.add.text(width / 2, height * 0.62, 'JOIN', {
             fontFamily: 'Fredoka, sans-serif',
             fontSize: '22px',
             color: '#000000',
@@ -2065,7 +2330,7 @@ class LobbyScene extends Phaser.Scene {
             }
         });
 
-        const cancelBtn = this.add.text(width / 2, height * 0.78, 'CANCEL', {
+        const cancelBtn = this.add.text(width / 2, height * 0.84, 'CANCEL', {
             fontFamily: 'Outfit, sans-serif',
             fontSize: '16px',
             color: '#888888'
@@ -2084,7 +2349,7 @@ class LobbyScene extends Phaser.Scene {
     }
 
     async attemptJoin() {
-        const code = this.inputEl.value.trim().toUpperCase();
+        const code = normalizeRoomCode(this.inputEl && this.inputEl.value);
         
         if (!/^[A-HJ-NP-Z2-9]{6}$/.test(code)) {
             this.statusText.setText('Enter the 6-character code');
@@ -5439,14 +5704,9 @@ const config = {
     type: Phaser.AUTO, backgroundColor: '#000000', scale: { mode: Phaser.Scale.RESIZE, parent: 'game-container' },
     dom: { createContainer: true }, scene: [SplashScene, NameEntryScene, ModeSelectScene, LobbyScene, CharacterSelectScene, GameScene]
 };
-window.addEventListener('load', () => new Phaser.Game(config));
-
-window.addEventListener('pointerdown', () => {
-    if (window.innerWidth > window.innerHeight) {
-        if (!document.fullscreenElement) {
-            document.documentElement.requestFullscreen().catch(() => {});
-        }
-    }
+window.addEventListener('load', () => {
+    new Phaser.Game(config);
+    setupFullscreenToggle();
 });
 
 window.addEventListener('resize', () => {

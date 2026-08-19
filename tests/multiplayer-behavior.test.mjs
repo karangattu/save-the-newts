@@ -5,18 +5,32 @@ import vm from 'node:vm';
 
 const gameSource = readFileSync(new URL('../game-phaser.js', import.meta.url), 'utf8');
 
-function loadGameApi() {
+function loadGameApi(overrides = {}) {
     const window = {
         addEventListener() {},
         innerWidth: 900,
         innerHeight: 700,
-        supabase: null
+        supabase: null,
+        ...overrides.window
     };
+    const clipboard = overrides.clipboard || {
+        written: '',
+        writeText(text) {
+            this.written = String(text);
+            return Promise.resolve();
+        },
+        readText() {
+            return Promise.resolve(this.written);
+        }
+    };
+    const doc = overrides.document || {};
+    const nav = 'navigator' in overrides ? overrides.navigator : { clipboard };
     const sandbox = {
         console: { log() {}, warn() {}, error() {} },
         window,
-        navigator: {},
-        document: {},
+        navigator: nav,
+        clipboard,
+        document: doc,
         setTimeout,
         clearTimeout,
         requestAnimationFrame() {},
@@ -34,6 +48,15 @@ function loadGameApi() {
             LobbyScene,
             applyRemoteLobbyIdentity:
                 typeof applyRemoteLobbyIdentity === 'function' ? applyRemoteLobbyIdentity : null,
+            normalizeRoomCode:
+                typeof normalizeRoomCode === 'function' ? normalizeRoomCode : null,
+            copyTextToClipboard:
+                typeof copyTextToClipboard === 'function' ? copyTextToClipboard : null,
+            readTextFromClipboard:
+                typeof readTextFromClipboard === 'function' ? readTextFromClipboard : null,
+            toggleFullscreen:
+                typeof toggleFullscreen === 'function' ? toggleFullscreen : null,
+            clipboard,
             createGameRestartState:
                 typeof createGameRestartState === 'function' ? createGameRestartState : null,
             applyGameRestartState:
@@ -82,6 +105,86 @@ test('room codes use six easy-to-read characters', () => {
     for (let i = 0; i < 100; i++) {
         assert.match(api.generateRoomCode(), /^[A-HJ-NP-Z2-9]{6}$/);
     }
+});
+
+test('pasted chat text keeps the six-character room code', () => {
+    const api = loadGameApi();
+    assert.equal(typeof api.normalizeRoomCode, 'function');
+    assert.equal(api.normalizeRoomCode('abc234'), 'ABC234');
+    assert.equal(api.normalizeRoomCode('join ABC234 now!'), 'ABC234');
+    assert.equal(api.normalizeRoomCode('ab c'), 'ABC');
+    assert.equal(api.normalizeRoomCode('IO10XY'), 'XY');
+});
+
+test('copying a room code writes it to the clipboard', async () => {
+    const api = loadGameApi();
+    assert.equal(typeof api.copyTextToClipboard, 'function');
+    await api.copyTextToClipboard('ABC234');
+    assert.equal(api.clipboard.written, 'ABC234');
+});
+
+test('joining can read a room code back from the clipboard', async () => {
+    const api = loadGameApi();
+    assert.equal(typeof api.readTextFromClipboard, 'function');
+    api.clipboard.written = '  join k7m3pq please  ';
+    assert.equal(api.normalizeRoomCode(await api.readTextFromClipboard()), 'K7M3PQ');
+});
+
+test('clipboard fallback works when navigator clipboard is unavailable', async () => {
+    let execCommandArg = null;
+    let appendedEl = null;
+    const mockDoc = {
+        createElement(tag) {
+            return {
+                tagName: tag,
+                value: '',
+                style: {},
+                setAttribute() {},
+                select() {}
+            };
+        },
+        body: {
+            appendChild(el) { appendedEl = el; },
+            removeChild() { appendedEl = null; }
+        },
+        execCommand(cmd) { execCommandArg = cmd; return true; }
+    };
+    const api = loadGameApi({
+        navigator: {},
+        document: mockDoc
+    });
+
+    await api.copyTextToClipboard('XYZ890');
+    assert.equal(execCommandArg, 'copy');
+
+    const emptyClipboardText = await api.readTextFromClipboard();
+    assert.equal(emptyClipboardText, '');
+});
+
+test('toggleFullscreen enters and exits fullscreen cleanly', async () => {
+    let requested = false;
+    let exited = false;
+    const mockDoc = {
+        fullscreenElement: null,
+        documentElement: {
+            requestFullscreen() {
+                requested = true;
+                return Promise.resolve();
+            }
+        },
+        exitFullscreen() {
+            exited = true;
+            return Promise.resolve();
+        }
+    };
+
+    const api = loadGameApi({ document: mockDoc });
+    await api.toggleFullscreen();
+    assert.equal(requested, true);
+
+    mockDoc.fullscreenElement = {};
+    await api.toggleFullscreen();
+    assert.equal(exited, true);
 });
 
 test('the host rejects a save for a newt that does not exist', () => {
