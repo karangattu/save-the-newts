@@ -399,6 +399,272 @@ function cleanupMultiplayerState() {
 }
 
 
+// ===== REAL-TIME ALMA BRIDGE ROAD FACTS & CONSERVATION DATA =====
+const ALMA_BRIDGE_FACTS = [
+    {
+        title: "36,000+ Documented Casualties",
+        category: "Massive Roadkill Scale",
+        fact: "Since 2017, BioBlitz Club Newt Patrol volunteers have recorded over 36,000 dead newts along a 4.2-mile stretch of Alma Bridge Road near Lexington Reservoir.",
+        stat: "36,000+ lost since 2017",
+        source: "BioBlitz Club Newt Patrol"
+    },
+    {
+        title: "40% Crossing Mortality Rate",
+        category: "High Risk Corridor",
+        fact: "A scientific study found nearly 14,000 adult California newts attempted to cross Alma Bridge Road in a single season, with roughly 40% crushed by vehicles before reaching breeding waters.",
+        stat: "~40% mortality without rescue",
+        source: "Midpeninsula Regional Open Space District"
+    },
+    {
+        title: "0.05 MPH: The Slow Crawl",
+        category: "Biology & Speed",
+        fact: "Pacific newts crawl at only 0.03 to 0.1 mph. It takes a newt 20 to 45 minutes to cross a 2-lane road, leaving them exposed to oncoming traffic for dangerously long periods.",
+        stat: "20-45 mins to cross 2 lanes",
+        source: "Amphibian Research Studies"
+    },
+    {
+        title: "The Fallen Leaf Illusion",
+        category: "Driver Awareness",
+        fact: "Drivers often unknowingly run over newts because wet, dark-orange newts look identical to fallen autumn sycamore and oak leaves glistening in wet tire tracks.",
+        stat: "Indistinguishable from wet leaves",
+        source: "Newt Patrol Field Observations"
+    },
+    {
+        title: "Potent Poison, Zero Armor",
+        category: "Predator Defense vs. Cars",
+        fact: "California newts produce powerful tetrodotoxin (TTX) that deters predators like birds and raccoons, but their toxin provides zero defense against 4,000-pound vehicles.",
+        stat: "TTX protects against predators, not tires",
+        source: "California Department of Fish and Wildlife"
+    },
+    {
+        title: "The Newt Passage Project",
+        category: "Conservation Solutions",
+        fact: "Thanks to volunteer data, Midpeninsula Open Space and Santa Clara County are actively designing wildlife tunnels, elevated road spans, and directional fencing to save the population.",
+        stat: "Wildlife underpasses in planning",
+        source: "Alma Bridge Road Newt Passage Project"
+    },
+    {
+        title: "First Rain Triggers Migration",
+        category: "Seasonal Breeding",
+        fact: "Pacific newts spend the dry summer underground in oak forests and begin their perilous trek to Lexington Reservoir upon the first heavy winter rains between November and March.",
+        stat: "Winter rainy night migration",
+        source: "Santa Clara County Parks"
+    },
+    {
+        title: "Buckets & Flashlights in the Rain",
+        category: "Community Science",
+        fact: "Dedicated volunteers walk Alma Bridge Road in the dead of night through pouring rain, using headlamps and buckets to safely carry newts across and log real-time scientific data.",
+        stat: "100+ volunteer nights per season",
+        source: "bioblitz.club/newts"
+    }
+];
+
+let lastFactIndex = -1;
+function getRandomNewtFact() {
+    let index;
+    if (ALMA_BRIDGE_FACTS.length <= 1) return ALMA_BRIDGE_FACTS[0];
+    do {
+        index = Math.floor(Math.random() * ALMA_BRIDGE_FACTS.length);
+    } while (index === lastFactIndex);
+    lastFactIndex = index;
+    return ALMA_BRIDGE_FACTS[index];
+}
+
+function showNewtFactModal(scene, customFactIndex = null, onClose = null) {
+    if (scene._factModalContainer) {
+        scene._factModalContainer.destroy();
+        scene._factModalContainer = null;
+    }
+
+    const { width, height } = scene.scale;
+    const isCompact = isCompactViewport(width, height);
+    const isMobile = width < 500;
+
+    let factIndex = (typeof customFactIndex === 'number' && customFactIndex >= 0 && customFactIndex < ALMA_BRIDGE_FACTS.length)
+        ? customFactIndex
+        : Math.floor(Math.random() * ALMA_BRIDGE_FACTS.length);
+
+    const container = scene.add.container(0, 0).setDepth(600);
+    scene._factModalContainer = container;
+
+    // Dark dim background backdrop
+    const backdrop = scene.add.rectangle(0, 0, width, height, 0x000000, 0.88)
+        .setOrigin(0)
+        .setInteractive(); // Blocks input underneath
+    container.add(backdrop);
+
+    const modalWidth = Math.min(width * 0.90, isMobile ? 320 : (isCompact ? 380 : 450));
+    const modalHeight = isMobile ? 370 : (isCompact ? 390 : 420);
+    const modalX = width / 2;
+    const modalY = height / 2;
+
+    const modalBg = scene.add.graphics();
+    container.add(modalBg);
+
+    const modalElements = [];
+    function renderFactContent(idx) {
+        // Clear previous dynamic elements
+        modalElements.forEach(el => el.destroy());
+        modalElements.length = 0;
+
+        const currentFact = ALMA_BRIDGE_FACTS[idx];
+
+        // Draw modal background
+        modalBg.clear();
+        modalBg.fillStyle(0x071b26, 0.98);
+        modalBg.fillRoundedRect(modalX - modalWidth / 2, modalY - modalHeight / 2, modalWidth, modalHeight, 14);
+        modalBg.lineStyle(3, 0x00ff88, 1);
+        modalBg.strokeRoundedRect(modalX - modalWidth / 2, modalY - modalHeight / 2, modalWidth, modalHeight, 14);
+
+        // Header icon & badge
+        const headerIcon = scene.add.graphics();
+        Icons.drawBulb(headerIcon, modalX - (isMobile ? 85 : 105), modalY - modalHeight / 2 + (isMobile ? 24 : 28), isMobile ? 18 : 22, 0xffcc00);
+        modalElements.push(headerIcon);
+
+        const headerTitle = scene.add.text(modalX + (isMobile ? 10 : 12), modalY - modalHeight / 2 + (isMobile ? 24 : 28), 'ALMA BRIDGE FACTS', {
+            fontFamily: 'Fredoka, sans-serif',
+            fontSize: isMobile ? '16px' : (isCompact ? '18px' : '21px'),
+            color: '#ffcc00',
+            fontStyle: 'bold'
+        }).setOrigin(0.5);
+        modalElements.push(headerTitle);
+
+        // Category Tag Pill
+        const tagText = scene.add.text(modalX + (isMobile ? 7 : 9), modalY - modalHeight / 2 + (isMobile ? 54 : 60), currentFact.category.toUpperCase(), {
+            fontFamily: 'Outfit, sans-serif',
+            fontSize: isMobile ? '10px' : '11px',
+            color: '#00ffff',
+            backgroundColor: 'rgba(0, 255, 255, 0.12)',
+            padding: { left: 18, right: 8, top: 3, bottom: 3 }
+        }).setOrigin(0.5);
+        modalElements.push(tagText);
+
+        const tagIcon = scene.add.graphics();
+        Icons.drawPin(tagIcon, tagText.x - tagText.width / 2 + (isMobile ? 7 : 8), tagText.y, isMobile ? 12 : 14, 0x00ffff);
+        modalElements.push(tagIcon);
+
+        // Fact Title
+        const titleText = scene.add.text(modalX, modalY - modalHeight / 2 + (isMobile ? 88 : 96), currentFact.title, {
+            fontFamily: 'Fredoka, sans-serif',
+            fontSize: isMobile ? '16px' : (isCompact ? '18px' : '20px'),
+            color: '#ffffff',
+            align: 'center',
+            wordWrap: { width: modalWidth - (isMobile ? 36 : 48) }
+        }).setOrigin(0.5);
+        modalElements.push(titleText);
+
+        // Stat highlight card
+        const statCardY = modalY - modalHeight / 2 + (isMobile ? 134 : 146);
+        const statCardH = isMobile ? 32 : 36;
+        const statCard = scene.add.graphics();
+        statCard.fillStyle(0x0a2d33, 0.8);
+        statCard.fillRoundedRect(modalX - (modalWidth - 40) / 2, statCardY - statCardH / 2, modalWidth - 40, statCardH, 8);
+        statCard.lineStyle(1.5, 0x00ccff, 0.7);
+        statCard.strokeRoundedRect(modalX - (modalWidth - 40) / 2, statCardY - statCardH / 2, modalWidth - 40, statCardH, 8);
+        modalElements.push(statCard);
+
+        const statText = scene.add.text(modalX + 8, statCardY, currentFact.stat, {
+            fontFamily: 'Fredoka, sans-serif',
+            fontSize: isMobile ? '12px' : '13px',
+            color: '#00ff88',
+            align: 'center'
+        }).setOrigin(0.5);
+        modalElements.push(statText);
+
+        const statIcon = scene.add.graphics();
+        Icons.drawBolt(statIcon, statText.x - statText.width / 2 - 10, statCardY, isMobile ? 14 : 16, 0x00ff88);
+        modalElements.push(statIcon);
+
+        // Detailed Fact Narrative
+        const narrativeY = modalY - modalHeight / 2 + (isMobile ? 210 : 225);
+        const narrativeText = scene.add.text(modalX, narrativeY, currentFact.fact, {
+            fontFamily: 'Outfit, sans-serif',
+            fontSize: isMobile ? '12px' : (isCompact ? '13px' : '14px'),
+            color: '#ddf5ee',
+            align: 'center',
+            lineSpacing: isMobile ? 3 : 5,
+            wordWrap: { width: modalWidth - (isMobile ? 36 : 44) }
+        }).setOrigin(0.5);
+        modalElements.push(narrativeText);
+
+        // Source Attribution Link
+        const sourceY = modalY + modalHeight / 2 - (isMobile ? 76 : 82);
+        const sourceText = scene.add.text(modalX, sourceY, `Source: ${currentFact.source}`, {
+            fontFamily: 'Outfit, sans-serif',
+            fontSize: isMobile ? '10px' : '11px',
+            color: '#88bb99',
+            fontStyle: 'italic'
+        }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+        sourceText.on('pointerdown', () => window.open('https://bioblitz.club/newts', '_blank'));
+        modalElements.push(sourceText);
+
+        // Action Buttons: "Next Fact ❯" and "Close"
+        const btnY = modalY + modalHeight / 2 - (isMobile ? 32 : 36);
+        const btnWidth = isMobile ? 105 : 125;
+        const btnHeight = isMobile ? 36 : 40;
+        const btnGap = isMobile ? 55 : 68;
+
+        // Next Fact Button
+        const nextBg = scene.add.rectangle(modalX - btnGap, btnY, btnWidth, btnHeight, 0x113a22, 0.95)
+            .setStrokeStyle(2, 0x00ff88, 1)
+            .setInteractive({ useHandCursor: true });
+        modalElements.push(nextBg);
+
+        const nextText = scene.add.text(modalX - btnGap, btnY, 'NEXT FACT ❯', {
+            fontFamily: 'Fredoka, sans-serif',
+            fontSize: isMobile ? '12px' : '13px',
+            color: '#00ff88'
+        }).setOrigin(0.5);
+        modalElements.push(nextText);
+
+        nextBg.on('pointerover', () => nextBg.setFillStyle(0x195230, 1));
+        nextBg.on('pointerout', () => nextBg.setFillStyle(0x113a22, 0.95));
+        nextBg.on('pointerdown', () => {
+            factIndex = (factIndex + 1) % ALMA_BRIDGE_FACTS.length;
+            renderFactContent(factIndex);
+        });
+
+        // Close Button
+        const closeBg = scene.add.rectangle(modalX + btnGap, btnY, btnWidth, btnHeight, 0x222222, 0.95)
+            .setStrokeStyle(2, 0x888888, 1)
+            .setInteractive({ useHandCursor: true });
+        modalElements.push(closeBg);
+
+        const closeText = scene.add.text(modalX + btnGap, btnY, 'GOT IT! ✕', {
+            fontFamily: 'Fredoka, sans-serif',
+            fontSize: isMobile ? '12px' : '13px',
+            color: '#ffffff'
+        }).setOrigin(0.5);
+        modalElements.push(closeText);
+
+        const closeModal = () => {
+            modalElements.forEach(el => el.destroy());
+            container.destroy();
+            scene._factModalContainer = null;
+            if (typeof onClose === 'function') onClose();
+        };
+
+        closeBg.on('pointerover', () => closeBg.setFillStyle(0x333333, 1));
+        closeBg.on('pointerout', () => closeBg.setFillStyle(0x222222, 0.95));
+        closeBg.on('pointerdown', closeModal);
+
+        // Corner Close X
+        const cornerX = scene.add.text(modalX + modalWidth / 2 - 18, modalY - modalHeight / 2 + 18, '✕', {
+            fontFamily: 'Fredoka, sans-serif',
+            fontSize: '16px',
+            color: '#888888'
+        }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+        cornerX.on('pointerdown', closeModal);
+        cornerX.on('pointerover', () => cornerX.setColor('#ffffff'));
+        cornerX.on('pointerout', () => cornerX.setColor('#888888'));
+        modalElements.push(cornerX);
+    }
+
+    renderFactContent(factIndex);
+    return container;
+}
+
+
 // Character-specific stats
 const CHARACTER_STATS = {
     male: {
@@ -547,6 +813,81 @@ const Icons = {
         // Diagonal slash
         g.lineStyle(stroke + 0.5, color);
         g.lineBetween(x - s * 0.7, y - s * 0.9, x + s * 0.7, y + s * 0.9);
+    },
+
+    drawBulb(g, x, y, size = 20, color = 0xffcc00, stroke = 2) {
+        const s = size / 2;
+        g.lineStyle(stroke, color);
+        // Bulb dome
+        g.beginPath();
+        g.arc(x, y - s * 0.2, s * 0.6, Math.PI * 0.75, Math.PI * 0.25, true);
+        g.lineTo(x + s * 0.3, y + s * 0.35);
+        g.lineTo(x - s * 0.3, y + s * 0.35);
+        g.closePath();
+        g.strokePath();
+        // Bulb base threads
+        g.lineBetween(x - s * 0.22, y + s * 0.55, x + s * 0.22, y + s * 0.55);
+        g.lineBetween(x - s * 0.15, y + s * 0.75, x + s * 0.15, y + s * 0.75);
+    },
+
+    drawInfo(g, x, y, size = 20, color = 0x00ffff, stroke = 2) {
+        const s = size / 2;
+        g.lineStyle(stroke, color);
+        g.strokeCircle(x, y, s * 0.85);
+        g.fillStyle(color, 1);
+        g.fillCircle(x, y - s * 0.35, s * 0.14);
+        g.lineBetween(x, y - s * 0.05, x, y + s * 0.45);
+    },
+
+    drawUser(g, x, y, size = 20, color = 0x00ff88, stroke = 2) {
+        const s = size / 2;
+        g.lineStyle(stroke, color);
+        // Head
+        g.strokeCircle(x, y - s * 0.35, s * 0.35);
+        // Shoulders
+        g.beginPath();
+        g.arc(x, y + s * 0.8, s * 0.75, Math.PI * 1.15, Math.PI * 1.85, false);
+        g.strokePath();
+    },
+
+    drawUsers(g, x, y, size = 22, color = 0x00ccff, stroke = 2) {
+        const s = size / 2;
+        g.lineStyle(stroke, color);
+        // Main user (center/left)
+        g.strokeCircle(x - s * 0.25, y - s * 0.35, s * 0.3);
+        g.beginPath();
+        g.arc(x - s * 0.25, y + s * 0.8, s * 0.65, Math.PI * 1.15, Math.PI * 1.85, false);
+        g.strokePath();
+        // Secondary user (behind/right)
+        g.strokeCircle(x + s * 0.45, y - s * 0.45, s * 0.25);
+        g.beginPath();
+        g.arc(x + s * 0.45, y + s * 0.7, s * 0.55, Math.PI * 1.3, Math.PI * 1.75, false);
+        g.strokePath();
+    },
+
+    drawBolt(g, x, y, size = 20, color = 0x00ff88) {
+        const w = size * 0.55;
+        const h = size * 0.9;
+        g.fillStyle(color, 1);
+        g.beginPath();
+        g.moveTo(x + w * 0.1, y - h * 0.55);
+        g.lineTo(x - w * 0.5, y - h * 0.05);
+        g.lineTo(x - w * 0.05, y - h * 0.05);
+        g.lineTo(x - w * 0.5, y + h * 0.55);
+        g.lineTo(x + w * 0.55, y + h * 0.05);
+        g.lineTo(x + w * 0.1, y + h * 0.05);
+        g.closePath();
+        g.fillPath();
+    },
+
+    drawPin(g, x, y, size = 18, color = 0x00ffff, stroke = 2) {
+        const s = size / 2;
+        g.lineStyle(stroke, color);
+        g.strokeCircle(x, y - s * 0.3, s * 0.35);
+        g.beginPath();
+        g.moveTo(x, y + s * 0.1);
+        g.lineTo(x, y + s * 0.85);
+        g.strokePath();
     }
 };
 
@@ -979,7 +1320,8 @@ class SplashScene extends Phaser.Scene {
 
         quitBtn.on('pointerover', () => quitBtn.setColor('#ffffff'));
         quitBtn.on('pointerout', () => quitBtn.setColor('#ff6666'));
-        quitBtn.on('pointerdown', () => {
+        quitBtn.on('pointerdown', (pointer) => {
+            if (pointer && pointer.event) pointer.event.stopPropagation();
             if (this.tutorialVideo) {
                 this.tutorialVideo.style.opacity = '0';
                 this.tutorialVideo.pause();
@@ -992,6 +1334,25 @@ class SplashScene extends Phaser.Scene {
             }
             if (this.bgm) { this.bgm.stop(); this.bgm.destroy(); }
             window.location.reload();
+        });
+
+        // --- ALMA BRIDGE FACTS BUTTON ---
+        const factsBtn = this.add.text((isCompact ? 16 : 20) + 18, isCompact ? 16 : 20, 'DID YOU KNOW?', {
+            fontFamily: 'Fredoka, sans-serif',
+            fontSize: isCompact ? '12px' : '14px',
+            color: '#00ff88',
+            backgroundColor: 'rgba(0, 40, 20, 0.85)',
+            padding: { left: 16, right: 10, top: 5, bottom: 5 }
+        }).setOrigin(0, 0).setDepth(200).setInteractive({ useHandCursor: true });
+
+        const factsIcon = this.add.graphics().setDepth(201);
+        Icons.drawBulb(factsIcon, factsBtn.x + 8, factsBtn.y + factsBtn.height / 2, isCompact ? 12 : 14, 0xffcc00);
+
+        factsBtn.on('pointerover', () => factsBtn.setColor('#ffffff'));
+        factsBtn.on('pointerout', () => factsBtn.setColor('#00ff88'));
+        factsBtn.on('pointerdown', (pointer) => {
+            if (pointer && pointer.event) pointer.event.stopPropagation();
+            showNewtFactModal(this);
         });
 
         console.log("SplashScene ready. Two-step start active.");
@@ -1238,11 +1599,14 @@ class ModeSelectScene extends Phaser.Scene {
             .setStrokeStyle(3, 0x00ff88, 1)
             .setInteractive({ useHandCursor: true });
 
-        this.add.text(width / 2, singleY - 12, '👤 SINGLE PLAYER', {
+        const singleText = this.add.text(width / 2 + 10, singleY - 12, 'SINGLE PLAYER', {
             fontFamily: 'Fredoka, sans-serif',
             fontSize: isMobile ? '18px' : (isCompact ? '22px' : '26px'),
             color: '#00ff88'
         }).setOrigin(0.5);
+
+        const singleIcon = this.add.graphics();
+        Icons.drawUser(singleIcon, singleText.x - singleText.width / 2 - (isMobile ? 12 : 16), singleY - 12, isMobile ? 18 : 22, 0x00ff88);
 
         this.add.text(width / 2, singleY + 16, 'Classic solo adventure', {
             fontFamily: 'Outfit, sans-serif',
@@ -1256,11 +1620,14 @@ class ModeSelectScene extends Phaser.Scene {
             .setStrokeStyle(3, 0x00ccff, 1)
             .setInteractive({ useHandCursor: true });
 
-        this.add.text(width / 2, multiY - 12, '👥 MULTIPLAYER', {
+        const multiText = this.add.text(width / 2 + 12, multiY - 12, 'MULTIPLAYER', {
             fontFamily: 'Fredoka, sans-serif',
             fontSize: isMobile ? '18px' : (isCompact ? '22px' : '26px'),
             color: '#00ccff'
         }).setOrigin(0.5);
+
+        const multiIcon = this.add.graphics();
+        Icons.drawUsers(multiIcon, multiText.x - multiText.width / 2 - (isMobile ? 14 : 18), multiY - 12, isMobile ? 20 : 24, 0x00ccff);
 
         this.add.text(width / 2, multiY + 16, 'Team up with a friend!', {
             fontFamily: 'Outfit, sans-serif',
@@ -1336,11 +1703,35 @@ class ModeSelectScene extends Phaser.Scene {
         });
 
         // Show player name badge
-        this.add.text(width / 2, height * 0.90, `Playing as: ${playerName}`, {
+        this.add.text(width / 2, height * 0.88, `Playing as: ${playerName}`, {
             fontFamily: 'Outfit, sans-serif',
             fontSize: '13px',
             color: '#666666'
         }).setOrigin(0.5);
+
+        // Alma Bridge Facts button
+        const factsBtn = this.add.text(width / 2 + 10, height * 0.94, 'Alma Bridge Road Facts', {
+            fontFamily: 'Fredoka, sans-serif',
+            fontSize: isMobile ? '12px' : '14px',
+            color: '#00ff88',
+            backgroundColor: 'rgba(0, 40, 20, 0.85)',
+            padding: { left: 24, right: 12, top: 5, bottom: 5 }
+        }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+
+        const factsIcon = this.add.graphics().setDepth(201);
+        Icons.drawBulb(factsIcon, factsBtn.x - factsBtn.width / 2 + 12, factsBtn.y, isMobile ? 13 : 15, 0xffcc00);
+
+        factsBtn.on('pointerover', () => {
+            factsBtn.setColor('#ffffff');
+            factsBtn.setBackgroundColor('rgba(0, 80, 40, 0.95)');
+        });
+        factsBtn.on('pointerout', () => {
+            factsBtn.setColor('#00ff88');
+            factsBtn.setBackgroundColor('rgba(0, 40, 20, 0.85)');
+        });
+        factsBtn.on('pointerdown', () => {
+            showNewtFactModal(this);
+        });
 
         this.cameras.main.fadeIn(300);
     }
@@ -4444,17 +4835,66 @@ class GameScene extends Phaser.Scene {
         const leaderboardStartY = summaryBoxY + summaryBoxHeight / 2 + (isCompact ? 14 : 20);
         await this.showGameOverLeaderboard(width, height, isCompact, leaderboardStartY, finalScore, displayName, submitSuccess);
 
+        // --- DID YOU KNOW? REAL-TIME ALMA BRIDGE FACT CARD ---
+        const factData = getRandomNewtFact();
+        const factCardY = Math.min(height * 0.77, leaderboardStartY + (isCompact ? 150 : 180));
+        const factCardW = Math.min(width * 0.86, isCompact ? 320 : 380);
+        const factCardH = isCompact ? 38 : 46;
+
+        const factCardBg = this.add.graphics().setDepth(301);
+        factCardBg.fillStyle(0x061e24, 0.95);
+        factCardBg.fillRoundedRect(width / 2 - factCardW / 2, factCardY - factCardH / 2, factCardW, factCardH, 8);
+        factCardBg.lineStyle(1.5, 0x00ff88, 0.8);
+        factCardBg.strokeRoundedRect(width / 2 - factCardW / 2, factCardY - factCardH / 2, factCardW, factCardH, 8);
+
+        const factIcon = this.add.graphics().setDepth(302);
+        Icons.drawBulb(factIcon, width / 2 - factCardW / 2 + (isCompact ? 18 : 22), factCardY, isCompact ? 16 : 18, 0xffcc00);
+
+        const factTextContent = isCompact
+            ? `DID YOU KNOW? ${factData.stat}`
+            : `DID YOU KNOW? ${factData.title} · Tap for more`;
+
+        const factCardText = this.add.text(width / 2 + (isCompact ? 8 : 10), factCardY, factTextContent, {
+            fontFamily: 'Fredoka, sans-serif',
+            fontSize: isCompact ? '11px' : '13px',
+            color: '#aaffdd'
+        }).setOrigin(0.5).setDepth(302);
+
+        const factCardHit = this.add.rectangle(width / 2, factCardY, factCardW, factCardH, 0x000000, 0)
+            .setDepth(303)
+            .setInteractive({ useHandCursor: true });
+
+        factCardHit.on('pointerover', () => {
+            factCardBg.clear();
+            factCardBg.fillStyle(0x0c313b, 1);
+            factCardBg.fillRoundedRect(width / 2 - factCardW / 2, factCardY - factCardH / 2, factCardW, factCardH, 8);
+            factCardBg.lineStyle(2, 0x00ffff, 1);
+            factCardBg.strokeRoundedRect(width / 2 - factCardW / 2, factCardY - factCardH / 2, factCardW, factCardH, 8);
+            factCardText.setColor('#00ffff');
+        });
+        factCardHit.on('pointerout', () => {
+            factCardBg.clear();
+            factCardBg.fillStyle(0x061e24, 0.95);
+            factCardBg.fillRoundedRect(width / 2 - factCardW / 2, factCardY - factCardH / 2, factCardW, factCardH, 8);
+            factCardBg.lineStyle(1.5, 0x00ff88, 0.8);
+            factCardBg.strokeRoundedRect(width / 2 - factCardW / 2, factCardY - factCardH / 2, factCardW, factCardH, 8);
+            factCardText.setColor('#aaffdd');
+        });
+        factCardHit.on('pointerdown', () => {
+            showNewtFactModal(this);
+        });
+
         // --- VOLUNTEER LINK ---
-        const volunteerY = Math.min(height * 0.84, leaderboardStartY + (isCompact ? 190 : 230));
-        const volunteerBg = this.add.rectangle(width / 2, volunteerY, width * 0.82, isCompact ? 46 : 54, 0x004422, 0.9).setStrokeStyle(2, 0x00ff88).setOrigin(0.5).setDepth(301);
-        this.add.text(width / 2, volunteerY - 8, 'Want to help real newts?', { fontFamily: 'Fredoka, sans-serif', fontSize: isCompact ? '13px' : '15px', color: '#ffffff' }).setOrigin(0.5).setDepth(302);
-        const volunteerLink = this.add.text(width / 2 + 10, volunteerY + 10, 'Volunteer at bioblitz.club/newts', { fontFamily: 'Fredoka, sans-serif', fontSize: isCompact ? '14px' : '16px', color: '#00ff88', fontStyle: 'bold' }).setOrigin(0.5).setDepth(302).setInteractive({ useHandCursor: true });
+        const volunteerY = Math.min(height * 0.85, factCardY + (isCompact ? 44 : 52));
+        const volunteerBg = this.add.rectangle(width / 2, volunteerY, width * 0.82, isCompact ? 40 : 48, 0x004422, 0.9).setStrokeStyle(2, 0x00ff88).setOrigin(0.5).setDepth(301);
+        this.add.text(width / 2, volunteerY - (isCompact ? 6 : 8), 'Want to help real newts?', { fontFamily: 'Fredoka, sans-serif', fontSize: isCompact ? '12px' : '14px', color: '#ffffff' }).setOrigin(0.5).setDepth(302);
+        const volunteerLink = this.add.text(width / 2 + 10, volunteerY + (isCompact ? 8 : 10), 'Volunteer at bioblitz.club/newts', { fontFamily: 'Fredoka, sans-serif', fontSize: isCompact ? '13px' : '15px', color: '#00ff88', fontStyle: 'bold' }).setOrigin(0.5).setDepth(302).setInteractive({ useHandCursor: true });
         const volunteerIcon = this.add.graphics().setDepth(303);
-        Icons.drawExternalLink(volunteerIcon, volunteerLink.x - volunteerLink.width / 2 - 18, volunteerY + 10, 14, 0x00ff88);
+        Icons.drawExternalLink(volunteerIcon, volunteerLink.x - volunteerLink.width / 2 - 18, volunteerY + (isCompact ? 8 : 10), 14, 0x00ff88);
         volunteerLink.on('pointerdown', () => { window.open('https://bioblitz.club/newts', '_blank'); });
 
         // --- TRY AGAIN & QUIT BUTTONS ---
-        const retryY = Math.min(height * 0.93, volunteerY + (isCompact ? 45 : 55));
+        const retryY = Math.min(height * 0.94, volunteerY + (isCompact ? 42 : 52));
         const btnSpacing = isCompact ? 75 : 95;
 
         // Try Again Button
