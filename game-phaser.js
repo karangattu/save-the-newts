@@ -1329,7 +1329,7 @@ function drawFemalePlayerGlobal(g, isPlayer2 = false, expression = 'frowny') {
     g.fillCircle(-6.2, -27.2, 0.45);
     g.fillCircle(4.8, -27.2, 0.45);
 
-    g.lineStyle(1.2, 0x1a0f08);
+    g.lineStyle(1, 0x1a0f08, 0.5);
     g.beginPath();
     g.arc(-5.5, -29.2, 3.6, Math.PI * 1.08, Math.PI * 1.92, false);
     g.strokePath();
@@ -1341,13 +1341,13 @@ function drawFemalePlayerGlobal(g, isPlayer2 = false, expression = 'frowny') {
     g.lineBetween(-8.5, -29, -10, -30.5);
     g.lineBetween(8.5, -29, 10, -30.5);
 
-    g.lineStyle(1.4, browColor);
+    g.lineStyle(1, browColor, 0.6);
     g.beginPath();
     if (expression === 'smiley') {
-        g.arc(-5.5, -33.5, 4.8, Math.PI * 0.15, Math.PI * 0.85, false);
+        g.arc(-5.5, -35, 3.5, Math.PI * 1.15, Math.PI * 1.85, false);
         g.strokePath();
         g.beginPath();
-        g.arc(5.5, -33.5, 4.8, Math.PI * 0.15, Math.PI * 0.85, false);
+        g.arc(5.5, -35, 3.5, Math.PI * 1.15, Math.PI * 1.85, false);
     } else {
         g.lineBetween(-9, -32.5, -2.5, -34.2);
         g.strokePath();
