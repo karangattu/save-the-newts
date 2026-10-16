@@ -1183,7 +1183,7 @@ function drawMalePlayerGlobal(g, isPlayer2 = false, expression = 'frowny') {
     g.arc(5.5, -29, 3.6, Math.PI * 1.1, Math.PI * 1.9, false);
     g.strokePath();
 
-    g.lineStyle(1.8, browColor);
+    g.lineStyle(1.4, browColor);
     g.beginPath();
     if (expression === 'smiley') {
         g.arc(-5.5, -33.5, 4.5, Math.PI * 0.18, Math.PI * 0.82, false);
@@ -1199,12 +1199,19 @@ function drawMalePlayerGlobal(g, isPlayer2 = false, expression = 'frowny') {
     g.strokePath();
 
     g.fillStyle(skinHighlight, 0.35);
-    g.fillRoundedRect(-0.8, -28, 1.6, 5, 0.8);
+    g.fillEllipse(-1.2, -25.5, 1.8, 3.2);
     g.fillStyle(noseColor);
-    g.fillCircle(0, -22.5, 2);
-    g.fillStyle(skinShadow, 0.6);
-    g.fillEllipse(-2.2, -22.2, 1.3, 1.0);
-    g.fillEllipse(2.2, -22.2, 1.3, 1.0);
+    g.fillEllipse(0, -23.2, 2.4, 1.8);
+    g.fillStyle(skinShadow, 0.35);
+    g.fillEllipse(0, -22.2, 2.6, 1.2);
+
+    // Natural soft sideburns (replaces hard cheek triangles)
+    g.fillStyle(0x3d2314);
+    g.fillEllipse(-11.6, -24.5, 3.4, 6.8);
+    g.fillEllipse(11.6, -24.5, 3.4, 6.8);
+    g.fillStyle(0x3d2314, 0.35);
+    g.fillEllipse(-11.6, -22.8, 1.8, 3.6);
+    g.fillEllipse(11.6, -22.8, 1.8, 3.6);
 
     if (expression === 'smiley') {
         g.lineStyle(1.6, lipOutline);
@@ -1224,26 +1231,12 @@ function drawMalePlayerGlobal(g, isPlayer2 = false, expression = 'frowny') {
         g.fillEllipse(0, -16.2, 3.2, 1.3);
     }
 
-    g.fillStyle(0x3d2314);
-    g.fillTriangle(-12, -28, -13, -21, -9, -24);
-    g.fillTriangle(12, -28, 13, -21, 9, -24);
-    g.fillTriangle(-5, -34, -2, -30, 0, -34);
-
-    // ===== ANATOMICAL DETAIL LAYER =====
-    g.fillStyle(skinShadow, 0.18);
-    g.fillEllipse(0, -14, 20, 5);
-    g.fillEllipse(-9, -21, 4.5, 3);
-    g.fillEllipse(9, -21, 4.5, 3);
-    g.lineStyle(1, 0x22150c, 0.42);
-    g.lineBetween(-7, -34, 7, -34);
-    g.lineBetween(-4, -19.5, 4, -19.5);
-    if (expression === 'smiley') {
-        g.fillStyle(0xffffff, 0.95);
-        g.fillRoundedRect(-2.4, -18.6, 4.8, 1.3, 0.65);
-    }
-    g.fillStyle(skinHighlight, 0.18);
-    g.fillEllipse(-2, -24, 2.5, 4);
-    g.fillEllipse(2, -24, 2.5, 4);
+    // ===== NATURAL SOFT SHADING (no harsh lines) =====
+    g.fillStyle(skinShadow, 0.14);
+    g.fillEllipse(0, -14.5, 18, 4.5);
+    g.fillStyle(skinHighlight, 0.16);
+    g.fillEllipse(-2.4, -24.5, 2.4, 3.8);
+    g.fillEllipse(2.4, -24.5, 2.4, 3.8);
 
     const capColor = isPlayer2 ? 0x0066cc : 0xff0000;
     const capDarkColor = isPlayer2 ? 0x004499 : 0xcc0000;
@@ -1316,7 +1309,7 @@ function drawFemalePlayerGlobal(g, isPlayer2 = false, expression = 'frowny') {
     g.fillStyle(skinColor);
     g.fillCircle(0, -26, 13.5);
 
-    g.fillStyle(blushColor, 0.35);
+    g.fillStyle(blushColor, 0.25);
     g.fillEllipse(-7.5, -23, 4.5, 3);
     g.fillEllipse(7.5, -23, 4.5, 3);
 
@@ -1340,7 +1333,7 @@ function drawFemalePlayerGlobal(g, isPlayer2 = false, expression = 'frowny') {
     g.fillCircle(-6.2, -27.2, 0.45);
     g.fillCircle(4.8, -27.2, 0.45);
 
-    g.lineStyle(1.6, 0x1a0f08);
+    g.lineStyle(1.2, 0x1a0f08);
     g.beginPath();
     g.arc(-5.5, -29.2, 3.6, Math.PI * 1.08, Math.PI * 1.92, false);
     g.strokePath();
@@ -1348,10 +1341,9 @@ function drawFemalePlayerGlobal(g, isPlayer2 = false, expression = 'frowny') {
     g.arc(5.5, -29.2, 3.6, Math.PI * 1.08, Math.PI * 1.92, false);
     g.strokePath();
 
-    g.lineBetween(-8.5, -29, -10.5, -31);
-    g.lineBetween(-7.5, -30.5, -9, -33);
-    g.lineBetween(8.5, -29, 10.5, -31);
-    g.lineBetween(7.5, -30.5, 9, -33);
+    g.lineStyle(1, 0x1a0f08, 0.55);
+    g.lineBetween(-8.5, -29, -10, -30.5);
+    g.lineBetween(8.5, -29, 10, -30.5);
 
     g.lineStyle(1.4, browColor);
     g.beginPath();
@@ -1369,12 +1361,11 @@ function drawFemalePlayerGlobal(g, isPlayer2 = false, expression = 'frowny') {
     g.strokePath();
 
     g.fillStyle(skinHighlight, 0.3);
-    g.fillRoundedRect(-0.6, -28, 1.2, 4.5, 0.6);
+    g.fillEllipse(-1.4, -25.8, 1.8, 3.0);
     g.fillStyle(noseColor);
     g.fillEllipse(0, -23.5, 2.2, 1.5);
-    g.fillStyle(skinShadow, 0.6);
-    g.fillCircle(-1.4, -23.2, 0.6);
-    g.fillCircle(1.4, -23.2, 0.6);
+    g.fillStyle(skinShadow, 0.35);
+    g.fillEllipse(0, -22.8, 2.0, 1.0);
 
     if (expression === 'smiley') {
         g.lineStyle(1.6, lipOutline);
@@ -1398,21 +1389,12 @@ function drawFemalePlayerGlobal(g, isPlayer2 = false, expression = 'frowny') {
         g.fillCircle(0, -16.8, 0.6);
     }
 
-    // ===== ANATOMICAL DETAIL LAYER =====
-    g.fillStyle(skinShadow, 0.16);
-    g.fillEllipse(0, -12, 17, 4.5);
-    g.fillEllipse(-9, -21.5, 4.5, 3);
-    g.fillEllipse(9, -21.5, 4.5, 3);
-    g.lineStyle(1, 0x1a0f08, 0.4);
-    g.lineBetween(-4, -27, 4, -27);
-    g.lineBetween(-3, -19.8, 3, -19.8);
-    if (expression === 'smiley') {
-        g.fillStyle(0xffffff, 0.96);
-        g.fillRoundedRect(-2.6, -18.5, 5.2, 1.4, 0.7);
-    }
-    g.fillStyle(skinHighlight, 0.18);
-    g.fillEllipse(-2.2, -24.5, 2.6, 4.2);
-    g.fillEllipse(2.2, -24.5, 2.6, 4.2);
+    // ===== NATURAL SOFT SHADING (no harsh lines) =====
+    g.fillStyle(skinShadow, 0.13);
+    g.fillEllipse(0, -12.5, 16, 4);
+    g.fillStyle(skinHighlight, 0.16);
+    g.fillEllipse(-2.4, -24.8, 2.4, 3.8);
+    g.fillEllipse(2.4, -24.8, 2.4, 3.8);
     g.fillStyle(hairHighlight, 0.45);
     g.fillEllipse(-7, -33, 3, 9);
     g.fillEllipse(7, -33, 3, 9);
