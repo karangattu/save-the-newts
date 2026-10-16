@@ -34,6 +34,7 @@ jobs:
         run: |
           echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
           echo "ANDROID_HOME=$ANDROID_HOME"
+          export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH"
           sdkmanager --install "platform-tools" "platforms;android-34" "build-tools;34.0.0" --sdk_root="$ANDROID_SDK_ROOT"
           yes | sdkmanager --licenses --sdk_root="$ANDROID_SDK_ROOT" || true
 
