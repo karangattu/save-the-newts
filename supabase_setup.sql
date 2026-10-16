@@ -34,6 +34,94 @@ end $$;
 create index if not exists idx_leaderboard_score_desc
   on public.leaderboard (score desc, created_at asc);
 
+-- Lightweight room ledger used for two-player lobby lookup and cleanup.
+-- Game traffic itself stays on Trystero WebRTC to stay inside free-tier limits.
+create table if not exists public.rooms (
+  room_code text primary key,
+  host_id text not null,
+  guest_id text,
+  host_character text not null default 'male',
+  guest_character text not null default 'female',
+  status text not null default 'waiting',
+  last_seen_at timestamptz not null default timezone('utc'::text, now()),
+  created_at timestamptz not null default timezone('utc'::text, now())
+);
+
+alter table public.rooms enable row level security;
+
+grant select, insert, update on public.rooms to anon, authenticated;
+
+create index if not exists idx_rooms_last_seen_at
+  on public.rooms (last_seen_at desc);
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_policies
+    where schemaname = 'public'
+      and tablename = 'rooms'
+      and policyname = 'Enable read room access for all users'
+  ) then
+    create policy "Enable read room access for all users"
+      on public.rooms
+      for select
+      to anon, authenticated
+      using (true);
+  else
+    alter policy "Enable read room access for all users"
+      on public.rooms
+      to anon, authenticated
+      using (true);
+  end if;
+end $$;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_policies
+    where schemaname = 'public'
+      and tablename = 'rooms'
+      and policyname = 'Enable insert room access for all users'
+  ) then
+    create policy "Enable insert room access for all users"
+      on public.rooms
+      for insert
+      to anon, authenticated
+      with check (true);
+  else
+    alter policy "Enable insert room access for all users"
+      on public.rooms
+      to anon, authenticated
+      with check (true);
+  end if;
+end $$;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_policies
+    where schemaname = 'public'
+      and tablename = 'rooms'
+      and policyname = 'Enable update room access for all users'
+  ) then
+    create policy "Enable update room access for all users"
+      on public.rooms
+      for update
+      to anon, authenticated
+      using (true)
+      with check (true);
+  else
+    alter policy "Enable update room access for all users"
+      on public.rooms
+      to anon, authenticated
+      using (true)
+      with check (true);
+  end if;
+end $$;
+
 do $$
 begin
   if not exists (
