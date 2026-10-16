@@ -1,0 +1,8 @@
+{
+  "appId": "com.newtpatrol.savethenewts",
+  "appName": "Save the Newts",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "https"
+  }
+}
