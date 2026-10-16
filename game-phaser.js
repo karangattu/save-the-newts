@@ -818,6 +818,10 @@ function showNewtFactModal(scene, customFactIndex = null, onClose = null) {
         cornerX.on('pointerover', () => cornerX.setColor('#ffffff'));
         cornerX.on('pointerout', () => cornerX.setColor('#888888'));
         modalElements.push(cornerX);
+
+        // Keep all modal content inside the modal container so it renders
+        // above the dim backdrop (depth 600) instead of hidden beneath it.
+        modalElements.forEach(el => container.add(el));
     }
 
     renderFactContent(factIndex);

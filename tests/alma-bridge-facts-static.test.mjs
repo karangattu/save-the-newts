@@ -30,4 +30,7 @@ test('Alma Bridge Road facts dataset and interactive modal are properly defined'
     // Verify SplashScene and ModeSelectScene fact button triggers
     assertSourceMatches(gameSource, /SplashScene[\s\S]*showNewtFactModal\(this\)/, 'SplashScene should have fact modal trigger');
     assertSourceMatches(gameSource, /ModeSelectScene[\s\S]*showNewtFactModal\(this\)/, 'ModeSelectScene should have fact modal trigger');
+
+    // Modal content must live inside the modal container so it renders above the backdrop
+    assertSourceMatches(gameSource, /modalElements\.forEach\(el => container\.add\(el\)\)/, 'modal content should be added to the modal container');
 });
