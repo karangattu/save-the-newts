@@ -47,6 +47,85 @@ async function getLeaderboard() {
     }
 }
 
+async function lookupRoom(roomId) {
+    if (!supabaseClient || !roomId) return null;
+    try {
+        const { data, error } = await supabaseClient
+            .from('rooms')
+            .select('room_code, host_id, guest_id, host_character, guest_character, status, last_seen_at')
+            .eq('room_code', roomId)
+            .maybeSingle();
+        if (error) return null;
+        return data || null;
+    } catch (e) {
+        return null;
+    }
+}
+
+async function registerRoom(roomId, hostId, hostCharacter) {
+    if (!supabaseClient || !roomId) return false;
+    try {
+        const { error } = await supabaseClient
+            .from('rooms')
+            .upsert({
+                room_code: roomId,
+                host_id: hostId,
+                host_character: hostCharacter || selectedCharacter || 'male',
+                status: 'waiting',
+                last_seen_at: new Date().toISOString()
+            }, { onConflict: 'room_code' });
+        if (error) return false;
+        return true;
+    } catch (e) {
+        return false;
+    }
+}
+
+async function updateRoomGuest(roomId, guestId, guestCharacter) {
+    if (!supabaseClient || !roomId) return false;
+    try {
+        const { error } = await supabaseClient
+            .from('rooms')
+            .update({
+                guest_id: guestId,
+                guest_character: guestCharacter || selectedCharacter || 'female',
+                status: 'playing',
+                last_seen_at: new Date().toISOString()
+            })
+            .eq('room_code', roomId);
+        if (error) return false;
+        return true;
+    } catch (e) {
+        return false;
+    }
+}
+
+async function touchRoom(roomId) {
+    if (!supabaseClient || !roomId) return false;
+    try {
+        await supabaseClient
+            .from('rooms')
+            .update({ last_seen_at: new Date().toISOString() })
+            .eq('room_code', roomId);
+        return true;
+    } catch (e) {
+        return false;
+    }
+}
+
+async function removeRoom(roomId) {
+    if (!supabaseClient || !roomId) return false;
+    try {
+        await supabaseClient
+            .from('rooms')
+            .delete()
+            .eq('room_code', roomId);
+        return true;
+    } catch (e) {
+        return false;
+    }
+}
+
 // ===== SELECTED CHARACTER =====
 let selectedCharacter = 'male'; // 'male' or 'female'
 
@@ -400,6 +479,7 @@ async function createRoom(hostCharacter) {
 
     const room = await initTrysteroRoom(code);
     if (!room) return null;
+    registerRoom(code, hostId, hostCharacter).catch(() => {});
 
     return {
         id: code,
@@ -419,6 +499,7 @@ async function joinRoom(code, guestCharacter) {
 
     const room = await initTrysteroRoom(code);
     if (!room) return null;
+    updateRoomGuest(code, guestId, guestCharacter).catch(() => {});
 
     return {
         id: code,
@@ -460,6 +541,9 @@ function cleanupTrysteroRoom() {
 }
 
 function cleanupMultiplayerState() {
+    if (supabaseClient && roomCode && isHost) {
+        removeRoom(roomCode).catch(() => {});
+    }
     cleanupTrysteroRoom();
     gameMode = 'single';
     isHost = false;
@@ -1002,7 +1086,9 @@ const MULTIPLAYER_CONFIG = {
     RATIO_PRECISION: 1000,
     REMOTE_INTERPOLATION: 0.35,
     CAR_CORRECTION: 0.2,
-    DATA_CHANNEL_RETRY_MS: 2500
+    DATA_CHANNEL_RETRY_MS: 2500,
+    ROOM_HEARTBEAT_MS: 30000,
+    CONNECTION_QUALITY_SAMPLE_MS: 1000
 };
 
 function quantizeRatio(value) {
@@ -1142,6 +1228,22 @@ function drawMalePlayerGlobal(g, isPlayer2 = false, expression = 'frowny') {
     g.fillTriangle(-12, -28, -13, -21, -9, -24);
     g.fillTriangle(12, -28, 13, -21, 9, -24);
     g.fillTriangle(-5, -34, -2, -30, 0, -34);
+
+    // ===== ANATOMICAL DETAIL LAYER =====
+    g.fillStyle(skinShadow, 0.18);
+    g.fillEllipse(0, -14, 20, 5);
+    g.fillEllipse(-9, -21, 4.5, 3);
+    g.fillEllipse(9, -21, 4.5, 3);
+    g.lineStyle(1, 0x22150c, 0.42);
+    g.lineBetween(-7, -34, 7, -34);
+    g.lineBetween(-4, -19.5, 4, -19.5);
+    if (expression === 'smiley') {
+        g.fillStyle(0xffffff, 0.95);
+        g.fillRoundedRect(-2.4, -18.6, 4.8, 1.3, 0.65);
+    }
+    g.fillStyle(skinHighlight, 0.18);
+    g.fillEllipse(-2, -24, 2.5, 4);
+    g.fillEllipse(2, -24, 2.5, 4);
 
     const capColor = isPlayer2 ? 0x0066cc : 0xff0000;
     const capDarkColor = isPlayer2 ? 0x004499 : 0xcc0000;
@@ -1296,6 +1398,24 @@ function drawFemalePlayerGlobal(g, isPlayer2 = false, expression = 'frowny') {
         g.fillCircle(0, -16.8, 0.6);
     }
 
+    // ===== ANATOMICAL DETAIL LAYER =====
+    g.fillStyle(skinShadow, 0.16);
+    g.fillEllipse(0, -12, 17, 4.5);
+    g.fillEllipse(-9, -21.5, 4.5, 3);
+    g.fillEllipse(9, -21.5, 4.5, 3);
+    g.lineStyle(1, 0x1a0f08, 0.4);
+    g.lineBetween(-4, -27, 4, -27);
+    g.lineBetween(-3, -19.8, 3, -19.8);
+    if (expression === 'smiley') {
+        g.fillStyle(0xffffff, 0.96);
+        g.fillRoundedRect(-2.6, -18.5, 5.2, 1.4, 0.7);
+    }
+    g.fillStyle(skinHighlight, 0.18);
+    g.fillEllipse(-2.2, -24.5, 2.6, 4.2);
+    g.fillEllipse(2.2, -24.5, 2.6, 4.2);
+    g.fillStyle(hairHighlight, 0.45);
+    g.fillEllipse(-7, -33, 3, 9);
+    g.fillEllipse(7, -33, 3, 9);
     g.fillStyle(hairColor);
     g.fillEllipse(-5, -34, 10, 8);
     g.fillEllipse(5, -34, 10, 8);
@@ -2966,6 +3086,7 @@ class GameScene extends Phaser.Scene {
 
         if (this.broadcastTimer) this.broadcastTimer.destroy();
         if (this.gameStateBroadcastTimer) this.gameStateBroadcastTimer.destroy();
+        if (this.roomHeartbeatTimer) this.roomHeartbeatTimer.destroy();
 
         this.broadcastTimer = this.time.addEvent({
             delay: this.getPlayerUpdateDelay(),
@@ -2978,6 +3099,12 @@ class GameScene extends Phaser.Scene {
             this.gameStateBroadcastTimer = this.time.addEvent({
                 delay: this.getWorldUpdateDelay(),
                 callback: this.broadcastGameState,
+                callbackScope: this,
+                loop: true
+            });
+            this.roomHeartbeatTimer = this.time.addEvent({
+                delay: MULTIPLAYER_CONFIG.ROOM_HEARTBEAT_MS,
+                callback: () => { touchRoom(roomCode); },
                 callbackScope: this,
                 loop: true
             });
@@ -3092,6 +3219,28 @@ class GameScene extends Phaser.Scene {
             h: c.h
         }));
 
+        // Build deltas instead of repeating the full world snapshot each tick.
+        if (!this.lastBroadcastWorldState) {
+            this.lastBroadcastWorldState = { newts: new Map(), cars: new Map() };
+        }
+        const previousNewts = this.lastBroadcastWorldState.newts;
+        const previousCars = this.lastBroadcastWorldState.cars;
+        const currentNewts = new Map(newtsData.map(n => [n.id, n]));
+        const currentCars = new Map(carsData.map(c => [c.id, c]));
+
+        const changedNewts = newtsData.filter(n => {
+            const previous = previousNewts.get(n.id);
+            return !previous || JSON.stringify(previous) !== JSON.stringify(n);
+        });
+        const removedNewts = [...previousNewts.keys()].filter(id => !currentNewts.has(id));
+        const changedCars = carsData.filter(c => {
+            const previous = previousCars.get(c.id);
+            return !previous || JSON.stringify(previous) !== JSON.stringify(c);
+        });
+        const removedCars = [...previousCars.keys()].filter(id => !currentCars.has(id));
+
+        this.lastBroadcastWorldState = { newts: currentNewts, cars: currentCars };
+
         gameStateSeq++;
         const payload = {
             seq: gameStateSeq,
@@ -3100,8 +3249,17 @@ class GameScene extends Phaser.Scene {
             saved: this.saved,
             lost: this.lost,
             difficulty: this.difficulty,
-            newts: newtsData,
-            cars: carsData
+            newtsDelta: {
+                upsert: changedNewts,
+                remove: removedNewts
+            },
+            carsDelta: {
+                upsert: changedCars,
+                remove: removedCars
+            },
+            // Backward-compatible fields for older guests during rolling updates.
+            newts: changedNewts.length === newtsData.length ? newtsData : undefined,
+            cars: changedCars.length === carsData.length ? carsData : undefined
         };
 
         this.sendMultiplayerMessage('game_state', payload, { volatile: true });
@@ -3186,12 +3344,116 @@ class GameScene extends Phaser.Scene {
         this.lost = data.lost;
         this.difficulty = data.difficulty;
         
-        // Sync newts and cars (for guest)
-        this.syncNewts(data.newts);
-        if (data.cars) {
-            this.syncCars(data.cars);
+        // Sync newts and cars (for guest) using delta snapshots when available.
+        if (data.newtsDelta || data.carsDelta) {
+            this.syncNewtsDelta(data.newtsDelta);
+            this.syncCarsDelta(data.carsDelta);
+        } else {
+            this.syncNewts(data.newts);
+            if (data.cars) {
+                this.syncCars(data.cars);
+            }
         }
         this.updateHUD();
+    }
+
+    syncNewtsDelta(delta) {
+        if (!delta) return;
+
+        const w = this.scale.width;
+        const h = this.scale.height;
+        const currentNewts = new Map();
+        this.newts.getChildren().forEach(n => {
+            if (n.newtId) currentNewts.set(n.newtId, n);
+        });
+
+        (delta.upsert || []).forEach(nData => {
+            const existing = currentNewts.get(nData.id);
+
+            const localX = nData.xRatio * w;
+            const localY = nData.yRatio * h;
+
+            if (existing) {
+                if (!nData.isCarried) {
+                    existing.x = localX;
+                    existing.y = localY;
+                    existing.visible = true;
+                } else {
+                    if (nData.carriedBy === playerId) {
+                        existing.visible = true;
+                    } else if (nData.carriedBy && nData.carriedBy !== playerId) {
+                        if (this.remotePlayer && !this.remotePlayer.carried.includes(existing)) {
+                            this.remotePlayer.carried.push(existing);
+                        }
+                        existing.visible = true;
+                    }
+                }
+                existing.isCarried = nData.isCarried;
+                existing.carriedBy = nData.carriedBy;
+                existing.dir = nData.dir || existing.dir;
+                existing.dest = nData.dest || existing.dest;
+                currentNewts.delete(nData.id);
+            } else if (!nData.isCarried) {
+                const newt = this.add.image(localX, localY, 'newt');
+                newt.setDisplaySize(GAME_CONFIG.NEWT_SIZE, GAME_CONFIG.NEWT_SIZE);
+                newt.setDepth(25);
+                newt.dir = nData.dir || 1;
+                newt.dest = nData.dest;
+                newt.isCarried = false;
+                newt.newtId = nData.id;
+                newt.rotation = newt.dir === 1 ? Math.PI / 2 : -Math.PI / 2;
+                this.newts.add(newt);
+            }
+        });
+
+        (delta.remove || []).forEach(id => {
+            const newt = currentNewts.get(id);
+            if (newt) newt.destroy();
+            currentNewts.delete(id);
+        });
+
+        if (this.remotePlayer && this.remotePlayer.carried) {
+            this.remotePlayer.carried = this.remotePlayer.carried.filter(n => n && n.active && n.isCarried);
+        }
+    }
+
+    syncCarsDelta(delta) {
+        if (!delta) return;
+
+        const w = this.scale.width;
+        const h = this.scale.height;
+        const currentCars = new Map();
+        this.cars.getChildren().forEach(c => {
+            if (c.carId) currentCars.set(c.carId, c);
+        });
+
+        (delta.upsert || []).forEach(cData => {
+            const existing = currentCars.get(cData.id);
+
+            const localX = cData.xRatio * w;
+            const localY = cData.yRatio * h;
+            const localSpeed = cData.speedRatio ? cData.speedRatio * w : cData.speed;
+
+            if (existing) {
+                existing.targetX = localX;
+                existing.targetY = localY;
+                existing.speed = localSpeed;
+                currentCars.delete(cData.id);
+            } else {
+                this.createCarFromData({
+                    ...cData,
+                    x: localX,
+                    y: localY,
+                    speed: localSpeed
+                });
+            }
+        });
+
+        (delta.remove || []).forEach(id => {
+            const car = currentCars.get(id);
+            if (car) car.destroy();
+            currentCars.delete(id);
+        });
     }
 
     syncNewts(newtsData) {
@@ -5701,8 +5963,13 @@ class CharacterSelectScene extends Phaser.Scene {
 }
 
 const config = {
-    type: Phaser.AUTO, backgroundColor: '#000000', scale: { mode: Phaser.Scale.RESIZE, parent: 'game-container' },
-    dom: { createContainer: true }, scene: [SplashScene, NameEntryScene, ModeSelectScene, LobbyScene, CharacterSelectScene, GameScene]
+    type: Phaser.AUTO,
+    backgroundColor: '#000000',
+    render: { antialias: true, pixelArt: false, roundPixels: false, powerPreference: 'high-performance' },
+    resolution: window.devicePixelRatio || 1,
+    scale: { mode: Phaser.Scale.RESIZE, parent: 'game-container' },
+    dom: { createContainer: true },
+    scene: [SplashScene, NameEntryScene, ModeSelectScene, LobbyScene, CharacterSelectScene, GameScene]
 };
 window.addEventListener('load', () => {
     new Phaser.Game(config);
