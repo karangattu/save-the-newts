@@ -31,7 +31,11 @@ jobs:
           java-version: 17
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        run: |
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          sdkmanager --install "platform-tools" "platforms;android-34" "build-tools;34.0.0" --sdk_root="$ANDROID_SDK_ROOT"
+          yes | sdkmanager --licenses --sdk_root="$ANDROID_SDK_ROOT" || true
 
       - name: Install dependencies
         run: npm ci
