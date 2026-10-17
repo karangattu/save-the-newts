@@ -41,6 +41,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Run tests
+        run: npm test
+
       - name: Prepare web assets
         run: |
           rm -rf www
@@ -53,6 +56,9 @@ jobs:
 
       - name: Sync Capacitor web assets
         run: npx cap sync android
+
+      - name: Apply app icon and release version
+        run: npm run android:brand
 
       - name: Build debug APK
         run: cd android && ./gradlew assembleDebug --stacktrace

@@ -1,12 +1,14 @@
 {
   "name": "save-the-newts",
   "private": true,
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Help rescue newts crossing Alma Bridge Road — educational arcade game, installable on Android.",
   "scripts": {
     "prepare:web": "rm -rf www && mkdir -p www && cp index.html styles.css game-phaser.js www/ && cp -r assets www/",
     "cap:add:android": "npx cap add android",
-    "cap:sync": "npx cap sync android"
+    "cap:sync": "npx cap sync android",
+    "android:brand": "node scripts/prepare-android.mjs",
+    "test": "node --test tests/*.test.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^6.2.0",
