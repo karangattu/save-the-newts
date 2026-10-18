@@ -5941,15 +5941,20 @@ class CharacterSelectScene extends Phaser.Scene {
 }
 
 const config = {
-    type: Phaser.AUTO,
+    // Guarded so a missing engine shows the boot error instead of throwing at parse time.
+    type: (typeof Phaser !== 'undefined' ? Phaser.AUTO : 0),
     backgroundColor: '#000000',
     render: { antialias: true, pixelArt: false, roundPixels: false, powerPreference: 'high-performance' },
     resolution: window.devicePixelRatio || 1,
-    scale: { mode: Phaser.Scale.RESIZE, parent: 'game-container' },
+    scale: { mode: (typeof Phaser !== 'undefined' ? Phaser.Scale.RESIZE : 'RESIZE'), parent: 'game-container' },
     dom: { createContainer: true },
     scene: [SplashScene, NameEntryScene, ModeSelectScene, LobbyScene, CharacterSelectScene, GameScene]
 };
 window.addEventListener('load', () => {
+    if (typeof Phaser === 'undefined') {
+        console.error('Phaser failed to load (vendor/phaser.min.js missing).');
+        return;
+    }
     new Phaser.Game(config);
     setupFullscreenToggle();
 });
