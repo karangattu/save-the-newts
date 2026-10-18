@@ -50,6 +50,7 @@ jobs:
           mkdir -p www
           cp index.html styles.css game-phaser.js www/
           cp -r assets www/
+          cp -r vendor www/
 
       - name: Add Android platform
         run: npx cap add android
